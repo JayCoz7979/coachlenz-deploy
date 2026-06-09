@@ -4,65 +4,55 @@ from typing import Optional
 
 class Settings(BaseSettings):
     # Database
-    database_url: str
+    DATABASE_URL: str
 
     # Auth
-    secret_key: str
-    algorithm: str = "HS256"
-    access_token_expire_minutes: int = 30
-    refresh_token_expire_days: int = 30
+    SECRET_KEY: str
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
 
     # Cloudflare R2
-    r2_account_id: str
-    r2_access_key_id: str
-    r2_secret_access_key: str
-    r2_bucket_name: str
-    r2_endpoint_url: str
-    r2_presigned_expiry_seconds: int = 604800  # 7 days
+    R2_ACCOUNT_ID: str = ""
+    R2_ACCESS_KEY_ID: str = ""
+    R2_SECRET_ACCESS_KEY: str = ""
+    R2_BUCKET_NAME: str = "coachlenz-film"
 
     # Anthropic
-    anthropic_api_key: str
-    anthropic_model: str = "claude-sonnet-4-5"
+    ANTHROPIC_API_KEY: str = ""
+    ANTHROPIC_MODEL: str = "claude-sonnet-4-5"
 
     # Stripe
-    stripe_secret_key: str
-    stripe_webhook_secret: str
-    stripe_price_starter_monthly: str = ""
-    stripe_price_starter_annual: str = ""
-    stripe_price_program_monthly: str = ""
-    stripe_price_program_annual: str = ""
-    stripe_price_athletic_dept_monthly: str = ""
-    stripe_price_athletic_dept_annual: str = ""
-    stripe_price_district_monthly: str = ""
-    stripe_price_district_annual: str = ""
-    stripe_price_coach_tenure_athletic: str = ""
-    stripe_price_coach_tenure_district: str = ""
+    STRIPE_SECRET_KEY: str = ""
+    STRIPE_WEBHOOK_SECRET: str = ""
+    STRIPE_PRICE_COACH: str = ""
+    STRIPE_PRICE_ATHLETIC_DEPT: str = ""
+    STRIPE_PRICE_DISTRICT: str = ""
 
     # Resend
-    resend_api_key: str
-    email_from: str = "CoachLenz <noreply@cosbyaisolutions.com>"
-    admin_email: str = "info@cosbyaisolutions.com"
+    RESEND_API_KEY: str = ""
+    RESEND_DOMAIN: str = "cosbyaisolutions.com"
 
     # Twilio
-    twilio_account_sid: str
-    twilio_auth_token: str
-    twilio_verify_sid: str
+    TWILIO_ACCOUNT_SID: str = ""
+    TWILIO_AUTH_TOKEN: str = ""
+    TWILIO_VERIFY_SID: str = ""
 
     # Sentry
-    sentry_dsn: Optional[str] = None
+    SENTRY_DSN: Optional[str] = None
 
     # App
-    app_url: str = "https://coachlenz.com"
-    environment: str = "production"
-    max_upload_bytes: int = 21474836480  # 20GB
-    trial_days: int = 14
-    trial_game_limit: int = 1
+    APP_URL: str = "https://coachlenz.com"
+    ENVIRONMENT: str = "production"
+    MAX_UPLOAD_BYTES: int = 21474836480  # 20GB
+    TRIAL_DAYS: int = 14
+    TRIAL_GAME_LIMIT: int = 1
 
     # Encryption
-    fernet_key: str
+    FERNET_KEY: str = ""
 
-    # Founding slots
-    founding_slots_per_tier: int = 50
+    # Admin
+    ADMIN_PASSWORD: str = "ChangeMeNow!"
 
     class Config:
         env_file = ".env"
