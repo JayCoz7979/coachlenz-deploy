@@ -15,15 +15,15 @@ from .routers import (
     playlists, assignments, packages, notifications, me,
 )
 
-if settings.sentry_dsn:
-    sentry_sdk.init(dsn=settings.sentry_dsn, traces_sample_rate=0.1, environment=settings.environment)
+if settings.SENTRY_DSN:
+    sentry_sdk.init(dsn=settings.SENTRY_DSN, traces_sample_rate=0.1, environment=settings.ENVIRONMENT)
 
 limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(
     title="CoachLenz API",
     version="1.0.0",
-    docs_url="/docs" if settings.environment != "production" else None,
+    docs_url="/docs" if settings.ENVIRONMENT != "production" else None,
     redoc_url=None,
 )
 
@@ -32,7 +32,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.app_url, "http://localhost:3000"],
+    allow_origins=[settings.APP_URL, "http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
