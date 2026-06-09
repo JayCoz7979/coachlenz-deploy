@@ -1,10 +1,11 @@
 'use client'
+import { Suspense } from 'react'
 import { useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import api from '@/lib/api'
 
-export default function OnboardingPage() {
+function OnboardingForm() {
   const router = useRouter()
   const params = useSearchParams()
   const [form, setForm] = useState({ name: '', email: '', password: '', org_name: '', referral_code: params.get('ref') || '' })
@@ -73,5 +74,13 @@ export default function OnboardingPage() {
         </p>
       </div>
     </div>
+  )
+}
+
+export default function OnboardingPage() {
+  return (
+    <Suspense>
+      <OnboardingForm />
+    </Suspense>
   )
 }
