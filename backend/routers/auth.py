@@ -11,7 +11,7 @@ from backend.services.abuse_prevention import get_risk_score, fingerprint_reques
 from backend.services.trial import TRIAL_DAYS
 from backend.services.email_service import send_welcome_email
 import uuid
-from python_slugify import slugify
+from slugify import slugify
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 

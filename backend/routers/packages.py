@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime, timedelta
 import uuid
-from python_slugify import slugify
+from slugify import slugify
 from backend.models.base import get_db
 from backend.models.user import User
 from backend.models.comms import FilmPackage
