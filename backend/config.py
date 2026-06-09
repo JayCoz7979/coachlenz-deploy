@@ -4,55 +4,59 @@ from typing import Optional
 
 class Settings(BaseSettings):
     # Database
-    DATABASE_URL: str
+    database_url: str
 
     # Auth
-    SECRET_KEY: str
-    ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
-    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
+    secret_key: str
+    algorithm: str = "HS256"
+    access_token_expire_minutes: int = 30
+    refresh_token_expire_days: int = 30
 
     # Cloudflare R2
-    R2_ACCOUNT_ID: str = ""
-    R2_ACCESS_KEY_ID: str = ""
-    R2_SECRET_ACCESS_KEY: str = ""
-    R2_BUCKET_NAME: str = "coachlenz-film"
+    r2_account_id: str = ""
+    r2_access_key_id: str = ""
+    r2_secret_access_key: str = ""
+    r2_bucket_name: str = "coachlenz-film"
+    r2_endpoint_url: str = ""
+    r2_presigned_expiry_seconds: int = 604800  # 7 days
 
     # Anthropic
-    ANTHROPIC_API_KEY: str = ""
-    ANTHROPIC_MODEL: str = "claude-sonnet-4-5"
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-sonnet-4-5"
 
     # Stripe
-    STRIPE_SECRET_KEY: str = ""
-    STRIPE_WEBHOOK_SECRET: str = ""
-    STRIPE_PRICE_COACH: str = ""
-    STRIPE_PRICE_ATHLETIC_DEPT: str = ""
-    STRIPE_PRICE_DISTRICT: str = ""
+    stripe_secret_key: str = ""
+    stripe_webhook_secret: str = ""
+    stripe_price_coach: str = ""
+    stripe_price_athletic_dept: str = ""
+    stripe_price_district: str = ""
 
     # Resend
-    RESEND_API_KEY: str = ""
-    RESEND_DOMAIN: str = "cosbyaisolutions.com"
+    resend_api_key: str = ""
+    resend_domain: str = "cosbyaisolutions.com"
+    email_from: str = "CoachLenz <noreply@cosbyaisolutions.com>"
+    admin_email: str = "info@cosbyaisolutions.com"
 
     # Twilio
-    TWILIO_ACCOUNT_SID: str = ""
-    TWILIO_AUTH_TOKEN: str = ""
-    TWILIO_VERIFY_SID: str = ""
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_verify_sid: str = ""
 
     # Sentry
-    SENTRY_DSN: Optional[str] = None
+    sentry_dsn: Optional[str] = None
 
     # App
-    APP_URL: str = "https://coachlenz.com"
-    ENVIRONMENT: str = "production"
-    MAX_UPLOAD_BYTES: int = 21474836480  # 20GB
-    TRIAL_DAYS: int = 14
-    TRIAL_GAME_LIMIT: int = 1
+    app_url: str = "https://coachlenz.com"
+    environment: str = "production"
+    max_upload_bytes: int = 21474836480  # 20GB
+    trial_days: int = 14
+    trial_game_limit: int = 1
 
     # Encryption
-    FERNET_KEY: str = ""
+    fernet_key: str = ""
 
     # Admin
-    ADMIN_PASSWORD: str = "ChangeMeNow!"
+    admin_password: str = "ChangeMeNow!"
 
     class Config:
         env_file = ".env"
