@@ -1,8 +1,10 @@
 import Link from 'next/link'
+import IntroOverlay from '@/components/IntroOverlay'
 
 export default function Home() {
   return (
     <div className="min-h-screen bg-gray-950 flex flex-col">
+      <IntroOverlay />
       <header className="border-b border-gray-800 px-8 py-4 flex items-center justify-between">
         <div className="text-2xl font-bold text-brand-400">CoachLenz</div>
         <div className="flex gap-4">
