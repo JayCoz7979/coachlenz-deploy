@@ -12,7 +12,7 @@ from .config import settings
 from .routers import (
     auth, teams, games, clips, events, reports, upload, jobs,
     billing, referrals, teams_of_month, coaches, admin, threads,
-    playlists, assignments, packages, notifications, me,
+    playlists, assignments, packages, notifications, me, files,
 )
 
 if settings.SENTRY_DSN:
@@ -72,6 +72,7 @@ app.include_router(assignments.router)
 app.include_router(packages.router)
 app.include_router(notifications.router)
 app.include_router(me.router)
+app.include_router(files.router)
 
 
 @app.get("/health")
