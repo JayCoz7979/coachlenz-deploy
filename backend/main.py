@@ -1,3 +1,4 @@
+import asyncio
 import sentry_sdk
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +15,13 @@ from .routers import (
     billing, referrals, teams_of_month, coaches, admin, threads,
     playlists, assignments, packages, notifications, me, files,
 )
+from .workers.worker_analysis import AnalysisWorker
+from .workers.worker_drip import DripWorker
+from .workers.worker_ingest import IngestWorker
+from .workers.worker_packages import PackagesWorker
+from .workers.worker_referrals import ReferralsWorker
+from .workers.worker_reports import ReportsWorker
+from .workers.worker_survey import SurveyWorker
 
 if settings.SENTRY_DSN:
     sentry_sdk.init(dsn=settings.SENTRY_DSN, traces_sample_rate=0.1, environment=settings.ENVIRONMENT)
@@ -52,6 +60,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(SecurityHeadersMiddleware)
+
+
+@app.on_event("startup")
+async def start_workers():
+    for WorkerClass in [AnalysisWorker, DripWorker, IngestWorker, PackagesWorker, ReferralsWorker, ReportsWorker, SurveyWorker]:
+        asyncio.create_task(WorkerClass().run_forever())
 
 app.include_router(auth.router)
 app.include_router(teams.router)
