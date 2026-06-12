@@ -13,7 +13,7 @@ from .config import settings
 from .routers import (
     auth, teams, games, clips, events, reports, upload, jobs,
     billing, referrals, teams_of_month, coaches, admin, threads,
-    playlists, assignments, packages, notifications, me, files,
+    playlists, assignments, packages, notifications, me, files, ingest,
 )
 from .workers.worker_analysis import AnalysisWorker
 from .workers.worker_drip import DripWorker
@@ -87,6 +87,7 @@ app.include_router(packages.router)
 app.include_router(notifications.router)
 app.include_router(me.router)
 app.include_router(files.router)
+app.include_router(ingest.router)
 
 
 @app.get("/health")
