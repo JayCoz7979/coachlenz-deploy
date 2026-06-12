@@ -30,7 +30,10 @@ export default function GamesPage() {
         <div className="max-w-4xl mx-auto">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-2xl font-bold">Games</h2>
-            <button onClick={() => router.push('/games/upload')} className="btn-primary flex items-center gap-2"><Plus size={16} /> Upload Film</button>
+            <div className="flex gap-2">
+              <button onClick={() => router.push('/games/upload?tab=url')} className="btn-secondary flex items-center gap-2"><Plus size={16} /> Import URL</button>
+              <button onClick={() => router.push('/games/upload')} className="btn-primary flex items-center gap-2"><Plus size={16} /> Upload Film</button>
+            </div>
           </div>
           <div className="space-y-3">
             {games.map(g => (

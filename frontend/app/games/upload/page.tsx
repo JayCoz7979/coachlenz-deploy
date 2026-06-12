@@ -3,8 +3,9 @@ import { useEffect, useState, useRef } from 'react'
 import Sidebar from '@/components/layout/Sidebar'
 import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import axios from 'axios'
+import { Suspense } from 'react'
 
 const SPORTS = ['football','flag_football','basketball','baseball','softball','volleyball','soccer']
 
@@ -30,10 +31,11 @@ function detectSource(url: string): string {
 
 type Tab = 'upload' | 'url'
 
-export default function UploadPage() {
+function UploadPageInner() {
   const { user, isLoading, fetchMe } = useAuth()
   const router = useRouter()
-  const [tab, setTab] = useState<Tab>('upload')
+  const searchParams = useSearchParams()
+  const [tab, setTab] = useState<Tab>(searchParams.get('tab') === 'url' ? 'url' : 'upload')
   const [teams, setTeams] = useState<any[]>([])
   const [form, setForm] = useState({ title: '', sport: 'football', team_id: '', opponent: '', game_date: '', is_home: '' })
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setForm(f => ({ ...f, [k]: e.target.value }))
@@ -256,5 +258,13 @@ export default function UploadPage() {
         </div>
       </main>
     </div>
+  )
+}
+
+export default function UploadPage() {
+  return (
+    <Suspense>
+      <UploadPageInner />
+    </Suspense>
   )
 }
