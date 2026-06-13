@@ -73,16 +73,21 @@ export default function GamesPage() {
           </div>
           <div className="space-y-3">
             {games.map(g => (
-              <div key={g.id} className="card flex items-center justify-between">
-                <div>
-                  <div className="font-semibold flex items-center gap-2"><Film size={16} className="text-brand-400" />{g.title}</div>
-                  <div className="text-sm text-gray-400 mt-1 flex items-center gap-2">
-                    {statusIcon(g.status)} {g.status} · {g.sport?.replace(/_/g,' ')} {g.opponent && `vs ${g.opponent}`}
-                    {g.is_trial_game && <span className="text-yellow-400 text-xs">TRIAL</span>}
+              <Link key={g.id} href={`/games/${g.id}`} style={{ textDecoration: 'none', display: 'block' }}>
+                <div className="card flex items-center justify-between" style={{ cursor: 'pointer', transition: 'border-color 0.15s' }}
+                  onMouseEnter={e => (e.currentTarget as HTMLElement).style.borderColor = 'rgba(201,168,76,0.25)'}
+                  onMouseLeave={e => (e.currentTarget as HTMLElement).style.borderColor = 'rgba(255,255,255,0.06)'}
+                >
+                  <div>
+                    <div className="font-semibold flex items-center gap-2"><Film size={16} className="text-brand-400" />{g.title}</div>
+                    <div className="text-sm text-gray-400 mt-1 flex items-center gap-2">
+                      {statusIcon(g.status)} {g.status} · {g.sport?.replace(/_/g,' ')} {g.opponent && `vs ${g.opponent}`}
+                      {g.is_trial_game && <span className="text-yellow-400 text-xs">TRIAL</span>}
+                    </div>
                   </div>
+                  <div className="text-xs text-gray-500">{g.game_date || new Date(g.created_at).toLocaleDateString()}</div>
                 </div>
-                <div className="text-xs text-gray-500">{g.game_date || new Date(g.created_at).toLocaleDateString()}</div>
-              </div>
+              </Link>
             ))}
             {games.length === 0 && <div className="text-center text-gray-500 py-12">No games yet. Upload your first game film.</div>}
           </div>
