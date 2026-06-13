@@ -382,7 +382,12 @@ export default function GamePage() {
   const handleGenerateReport = async () => {
     setReportPending(true)
     try {
-      const res = await api.post('/reports', { game_id: id })
+      const res = await api.post('/reports', {
+        title: `${game.title} Tendency Report`,
+        sport: game.sport,
+        game_ids: [id],
+        report_type: 'opponent',
+      })
       router.push(`/reports/${res.data.id}`)
     } catch {
       showToast('Failed to start report generation')
