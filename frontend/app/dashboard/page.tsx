@@ -4,7 +4,7 @@ import Sidebar from '@/components/layout/Sidebar'
 import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
 import { useRouter } from 'next/navigation'
-import { Film, FileText, Users, TrendingUp } from 'lucide-react'
+import { Film, FileText, Users, TrendingUp, Link2, Upload } from 'lucide-react'
 import Link from 'next/link'
 
 export default function DashboardPage() {
@@ -64,9 +64,22 @@ export default function DashboardPage() {
           </div>
           <div className="grid md:grid-cols-2 gap-4">
             <div className="card">
-              <h3 className="font-semibold mb-4 flex items-center gap-2"><TrendingUp size={18} className="text-brand-400" /> Quick Actions</h3>
+              <h3 className="font-semibold mb-4 flex items-center gap-2"><TrendingUp size={18} className="text-brand-400" /> Add Film</h3>
               <div className="space-y-2">
-                <Link href="/games/upload" className="btn-primary w-full block text-center">Upload Game Film</Link>
+                <Link
+                  href="/games/upload?tab=url"
+                  className="btn-primary w-full flex items-center justify-center gap-2"
+                  style={{ background: '#C9A84C', color: '#1c1c1c' }}
+                >
+                  <Link2 size={16} /> Import from YouTube / Hudl / Vimeo
+                </Link>
+                <Link
+                  href="/games/upload"
+                  className="btn-secondary w-full flex items-center justify-center gap-2"
+                >
+                  <Upload size={16} /> Upload a File
+                </Link>
+                <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', margin: '8px 0' }} />
                 <Link href="/reports" className="btn-secondary w-full block text-center">View Reports</Link>
                 <Link href="/teams" className="btn-secondary w-full block text-center">Manage Teams</Link>
               </div>
