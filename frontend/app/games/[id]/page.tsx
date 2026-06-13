@@ -4,7 +4,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Sidebar from '@/components/layout/Sidebar'
 import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
-import { ChevronLeft, Tag, Play, Trash2, Clock, FileText, Loader2, CheckCircle, AlertCircle } from 'lucide-react'
+import { ChevronLeft, Tag, Play, Trash2, Clock, FileText, Loader2, CheckCircle, AlertCircle, Zap } from 'lucide-react'
 import Link from 'next/link'
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -31,6 +31,7 @@ interface TaggedEvent {
   yards_gained: number | null
   personnel: string | null
   motion: boolean
+  extra_data?: { auto_detected?: boolean; confidence?: number }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -48,7 +49,7 @@ const PERSONNEL = ['11', '12', '21', '22', '10', '20', '13', '00']
 
 // ── Status Banner ─────────────────────────────────────────────────────────
 function StatusBanner({ status }: { status: string }) {
-  if (status === 'ready') return null
+  if (status === 'ready' || status === 'analyzing') return null
   const processing = ['queued', 'downloading', 'processing'].includes(status)
   return (
     <div style={{
@@ -306,6 +307,9 @@ function PlayLog({
               {ev.result && <span style={{ color: ev.result === 'Touchdown' ? '#2d8c40' : ev.result === 'Interception' || ev.result === 'Fumble' ? '#e07070' : '#7a7a6e' }}>{ev.result}</span>}
               {ev.yards_gained != null && <span style={{ color: '#7a7a6e' }}>{ev.yards_gained > 0 ? '+' : ''}{ev.yards_gained} yds</span>}
               {ev.motion && <span style={{ fontSize: 10, color: '#7a7a6e', fontStyle: 'italic' }}>motion</span>}
+              {ev.extra_data?.auto_detected && (
+                <span style={{ fontSize: 9, color: '#C9A84C', letterSpacing: '0.1em', opacity: 0.7 }}>AI</span>
+              )}
             </div>
           </div>
           <button
@@ -334,6 +338,13 @@ export default function GamePage() {
   const [tab, setTab] = useState<'tag' | 'log'>('tag')
   const [reportPending, setReportPending] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
+  const [detectStatus, setDetectStatus] = useState<null | {
+    game_status: string
+    job_status: string | null
+    plays_detected: number
+    error: string | null
+  }>(null)
+  const detectPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => { fetchMe() }, [])
   useEffect(() => { if (!isLoading && !user) router.push('/login') }, [isLoading, user])
@@ -342,7 +353,50 @@ export default function GamePage() {
     if (!user || !id) return
     api.get(`/games/${id}`).then(r => setGame(r.data))
     api.get(`/events?game_id=${id}`).then(r => setEvents(r.data)).catch(() => {})
+    // Check if there's a running detect job
+    api.get(`/games/${id}/auto-detect/status`).then(r => {
+      setDetectStatus(r.data)
+      if (['queued', 'running'].includes(r.data.job_status) || r.data.game_status === 'analyzing') {
+        startDetectPoll()
+      }
+    }).catch(() => {})
   }, [user, id])
+
+  const startDetectPoll = () => {
+    if (detectPollRef.current) return
+    detectPollRef.current = setInterval(async () => {
+      try {
+        const r = await api.get(`/games/${id}/auto-detect/status`)
+        setDetectStatus(r.data)
+        const done = !['queued', 'running'].includes(r.data.job_status ?? '') && r.data.game_status !== 'analyzing'
+        if (done) {
+          clearInterval(detectPollRef.current!)
+          detectPollRef.current = null
+          // Reload events
+          const evRes = await api.get(`/events?game_id=${id}`)
+          setEvents(evRes.data)
+          if (r.data.plays_detected > 0) {
+            showToast(`${r.data.plays_detected} plays auto-detected`)
+            setTab('log')
+          }
+        }
+      } catch {}
+    }, 4000)
+  }
+
+  useEffect(() => () => { if (detectPollRef.current) clearInterval(detectPollRef.current) }, [])
+
+  const handleAutoDetect = async () => {
+    try {
+      await api.post(`/games/${id}/auto-detect`)
+      const r = await api.get(`/games/${id}/auto-detect/status`)
+      setDetectStatus(r.data)
+      startDetectPoll()
+      showToast('AI play detection started…')
+    } catch (e: any) {
+      showToast(e?.response?.data?.detail ?? 'Failed to start detection')
+    }
+  }
 
   const showToast = (msg: string) => {
     setToast(msg)
@@ -453,6 +507,84 @@ export default function GamePage() {
           {/* Video column */}
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '16px 16px 16px 20px' }}>
             <StatusBanner status={game.status} />
+
+            {/* Auto-detect banner */}
+            {game.status === 'ready' && (() => {
+              const isRunning = detectStatus && (['queued', 'running'].includes(detectStatus.job_status ?? '') || detectStatus.game_status === 'analyzing')
+              const isDone = detectStatus && detectStatus.job_status === 'done'
+              const isError = detectStatus?.job_status === 'error'
+              const neverRun = !detectStatus?.job_status
+
+              if (isRunning) return (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12,
+                  background: 'rgba(201,168,76,0.07)', border: '1px solid rgba(201,168,76,0.2)',
+                  borderRadius: 6, padding: '10px 16px', fontSize: 13,
+                }}>
+                  <Loader2 size={14} style={{ color: '#C9A84C', animation: 'spin 1s linear infinite' }} />
+                  <span style={{ color: '#C9A84C', fontWeight: 600 }}>AI is scanning your film for plays…</span>
+                  {detectStatus.plays_detected > 0 && (
+                    <span style={{ color: '#7a7a6e', marginLeft: 4 }}>{detectStatus.plays_detected} found so far</span>
+                  )}
+                </div>
+              )
+
+              if (isDone) return (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12,
+                  background: 'rgba(45,140,64,0.07)', border: '1px solid rgba(45,140,64,0.2)',
+                  borderRadius: 6, padding: '10px 16px', fontSize: 13,
+                }}>
+                  <CheckCircle size={14} style={{ color: '#2d8c40' }} />
+                  <span style={{ color: '#2d8c40', fontWeight: 600 }}>
+                    {detectStatus.plays_detected} plays auto-detected
+                  </span>
+                  <span style={{ color: '#7a7a6e', marginLeft: 4 }}>— review in the Play Log, edit any you need.</span>
+                  <button onClick={handleAutoDetect} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#7a7a6e', fontSize: 11, cursor: 'pointer' }}>
+                    Re-run
+                  </button>
+                </div>
+              )
+
+              if (isError) return (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12,
+                  background: 'rgba(224,112,112,0.07)', border: '1px solid rgba(224,112,112,0.2)',
+                  borderRadius: 6, padding: '10px 16px', fontSize: 13,
+                }}>
+                  <AlertCircle size={14} style={{ color: '#e07070' }} />
+                  <span style={{ color: '#e07070' }}>Auto-detection failed. Tag plays manually or </span>
+                  <button onClick={handleAutoDetect} style={{ background: 'none', border: 'none', color: '#C9A84C', fontSize: 13, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
+                    try again
+                  </button>
+                </div>
+              )
+
+              // Never run or idle — show CTA
+              return (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12,
+                  background: 'rgba(201,168,76,0.07)', border: '1px solid rgba(201,168,76,0.2)',
+                  borderRadius: 6, padding: '10px 16px',
+                }}>
+                  <Zap size={15} style={{ color: '#C9A84C', flexShrink: 0 }} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#f8f6f0' }}>Auto-detect plays with AI</div>
+                    <div style={{ fontSize: 11, color: '#7a7a6e' }}>Claude Vision scans the film and tags every play automatically — usually under 5 minutes.</div>
+                  </div>
+                  <button
+                    onClick={handleAutoDetect}
+                    style={{
+                      background: '#C9A84C', color: '#1c1c1c', border: 'none', borderRadius: 4,
+                      padding: '8px 16px', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                      letterSpacing: '0.06em', flexShrink: 0,
+                    }}
+                  >
+                    AUTO-DETECT
+                  </button>
+                </div>
+              )
+            })()}
 
             <div style={{
               flex: 1, background: '#000', borderRadius: 6, overflow: 'hidden',

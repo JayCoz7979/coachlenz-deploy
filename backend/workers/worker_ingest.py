@@ -6,6 +6,7 @@ import tempfile
 from backend.workers.base import BaseWorker
 from backend.models.base import AsyncSessionLocal
 from backend.models.game import Game
+from backend.models.job import Job
 from backend.services.r2 import generate_presigned_download_url, save_local_file, _use_local
 from sqlalchemy import select, update
 
@@ -129,8 +130,30 @@ class IngestWorker(BaseWorker):
             )
             await db.commit()
 
+        # Auto-queue AI play detection now that the film is ready
+        await self._queue_ai_detect(game_id)
+
         logger.info(f"[ingest] game {game_id} ready, duration={int(duration)}s")
         return {"game_id": game_id, "duration_seconds": int(duration), "source_type": source_type}
+
+    async def _queue_ai_detect(self, game_id: str) -> None:
+        from backend.config import settings as cfg
+        if not cfg.ANTHROPIC_API_KEY:
+            logger.info(f"[ingest] skipping auto-detect for {game_id}: ANTHROPIC_API_KEY not set")
+            return
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(select(Game).where(Game.id == game_id))
+            game = result.scalar_one_or_none()
+            if not game:
+                return
+            job = Job(
+                organization_id=game.organization_id,
+                job_type="ai_detect",
+                payload={"game_id": game_id},
+            )
+            db.add(job)
+            await db.commit()
+        logger.info(f"[ingest] auto-detect job queued for game {game_id}")
 
     def _probe_duration(self, path_or_url: str) -> float:
         try:

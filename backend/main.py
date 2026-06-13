@@ -13,8 +13,9 @@ from .config import settings
 from .routers import (
     auth, teams, games, clips, events, reports, upload, jobs,
     billing, referrals, teams_of_month, coaches, admin, threads,
-    playlists, assignments, packages, notifications, me, files, ingest,
+    playlists, assignments, packages, notifications, me, files, ingest, ai_detect,
 )
+from .workers.worker_ai_detect import AiDetectWorker
 from .workers.worker_analysis import AnalysisWorker
 from .workers.worker_drip import DripWorker
 from .workers.worker_ingest import IngestWorker
@@ -64,7 +65,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 
 @app.on_event("startup")
 async def start_workers():
-    for WorkerClass in [AnalysisWorker, DripWorker, IngestWorker, PackagesWorker, ReferralsWorker, ReportsWorker, SurveyWorker]:
+    for WorkerClass in [AiDetectWorker, AnalysisWorker, DripWorker, IngestWorker, PackagesWorker, ReferralsWorker, ReportsWorker, SurveyWorker]:
         asyncio.create_task(WorkerClass().run_forever())
 
 app.include_router(auth.router)
@@ -88,6 +89,7 @@ app.include_router(notifications.router)
 app.include_router(me.router)
 app.include_router(files.router)
 app.include_router(ingest.router)
+app.include_router(ai_detect.router)
 
 
 @app.get("/health")
