@@ -118,13 +118,17 @@ async def capture_hudl_stream(page_url: str, timeout_s: int = 75) -> dict:
 
             page = await context.new_page()
 
+            hudl_api_seen: set[str] = set()
+
             def note_url(url: str):
                 nonlocal total_requests
                 total_requests += 1
-                if re.search(r'\.(m3u8|mpd)', url, re.IGNORECASE):
+                low = url.lower()
+                if re.search(r'\.(m3u8|mpd)', low) or "/manifest" in low or "/playlist" in low:
                     found.add(url)
-                if any(k in url.lower() for k in ("manifest", "playback", "stream", "/video", "media", "api/v3")):
-                    seen_media.add(url[:160])
+                # Track Hudl's own video/API calls (ignore the ad-network noise).
+                if "hudl.com" in low and any(k in low for k in ("api", "video", "playback", "stream", "vcloud", "graphql", "manifest")):
+                    hudl_api_seen.add(url[:180])
 
             page.on("request", lambda req: note_url(req.url))
 
@@ -145,12 +149,24 @@ async def capture_hudl_stream(page_url: str, timeout_s: int = 75) -> dict:
             page.on("response", lambda resp: asyncio.create_task(on_response(resp)))
 
             try:
-                await page.goto(page_url, wait_until="load", timeout=timeout_s * 1000)
+                await page.goto(page_url, wait_until="domcontentloaded", timeout=timeout_s * 1000)
             except Exception as e:
                 raise HudlCaptureError(f"could not open Hudl page: {e}")
 
-            # Force playback by every available means.
             await page.wait_for_timeout(3000)
+
+            # Dismiss cookie/consent banners that block the player.
+            consent_texts = ["Accept All", "Accept all", "Accept", "I Agree", "Agree", "Got it", "Continue", "OK", "Allow all"]
+            for t in consent_texts:
+                try:
+                    btn = page.get_by_role("button", name=re.compile(t, re.IGNORECASE))
+                    if await btn.count() > 0:
+                        await btn.first.click(timeout=1200)
+                        await page.wait_for_timeout(500)
+                except Exception:
+                    pass
+
+            # Force playback by every available means.
             for sel in PLAY_SELECTORS:
                 try:
                     el = await page.query_selector(sel)
@@ -159,9 +175,14 @@ async def capture_hudl_stream(page_url: str, timeout_s: int = 75) -> dict:
                         await page.wait_for_timeout(600)
                 except Exception:
                     continue
+            # Click the center of the viewport (often the video surface).
+            try:
+                await page.mouse.click(683, 384)
+            except Exception:
+                pass
             try:
                 await page.evaluate(
-                    "() => { const v = document.querySelector('video'); if (v) { v.muted = true; v.play && v.play(); } }"
+                    "() => { document.querySelectorAll('video').forEach(v => { try { v.muted = true; const p = v.play(); if (p && p.catch) p.catch(()=>{}); } catch(e){} }); }"
                 )
             except Exception:
                 pass
@@ -172,15 +193,22 @@ async def capture_hudl_stream(page_url: str, timeout_s: int = 75) -> dict:
                 pass
 
             # Poll for a manifest for up to the remaining budget.
-            for _ in range(20):
+            for _ in range(24):
                 if found:
                     break
                 await page.wait_for_timeout(1500)
 
             if not found:
+                # Diagnose: report Hudl's own API calls + video element state.
+                try:
+                    vstate = await page.evaluate(
+                        "() => { const v = document.querySelector('video'); return v ? {src: v.currentSrc||v.src||'', rs: v.readyState, err: v.error ? v.error.code : null, n: document.querySelectorAll('video').length} : {none:true}; }"
+                    )
+                except Exception:
+                    vstate = "n/a"
                 logger.warning(
-                    f"[hudl] no manifest. requests={total_requests} media-ish URLs seen: "
-                    + " | ".join(sorted(seen_media)[:12])
+                    f"[hudl] no manifest. requests={total_requests} videoState={vstate} "
+                    f"hudl-api URLs: " + (" | ".join(sorted(hudl_api_seen)[:15]) or "NONE")
                 )
                 raise HudlCaptureError(
                     "no video stream found — the film may be private/login-gated, "
