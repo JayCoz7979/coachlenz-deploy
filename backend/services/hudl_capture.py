@@ -67,15 +67,20 @@ def _cookie_pairs_from_netscape(text: str):
 
 
 def _rank(url: str) -> int:
-    """Prefer master/playlist manifests, then HLS over DASH."""
+    """Prefer HLS/DASH master manifests, then highest-res direct MP4."""
     u = url.lower()
     score = 0
     if "master" in u or "playlist" in u:
+        score += 20
+    if ".m3u8" in u or ".mpd" in u:
+        score += 15
+    if ".mp4" in u:
         score += 10
-    if "/api/v3" in u:
-        score += 5
-    if ".m3u8" in u:
-        score += 2
+    # Prefer higher resolution for direct files.
+    for res, pts in (("1080", 4), ("720", 3), ("540", 2), ("480", 1)):
+        if res in u:
+            score += pts
+            break
     return score
 
 
@@ -125,11 +130,10 @@ async def capture_hudl_stream(page_url: str, timeout_s: int = 75) -> dict:
                 total_requests += 1
                 low = url.lower()
                 # Hudl serves highlights as direct MP4 on vg.hudl.com, and full
-                # film sometimes as HLS/DASH. Capture all of these.
-                if (re.search(r'\.(m3u8|mpd|mp4)(\?|$)', low)
-                        or "vg.hudl.com" in low or "/manifest" in low or "/playlist" in low):
-                    if "hudl" in low or ".m3u8" in low or ".mpd" in low:
-                        found.add(url)
+                # film sometimes as HLS/DASH. Only accept actual video URLs —
+                # NOT thumbnails (.jpg) or other assets on the same host.
+                if re.search(r'\.(m3u8|mpd|mp4)(\?|$)', low) or "/manifest" in low or "/playlist" in low:
+                    found.add(url)
                 if "hudl.com" in low and any(k in low for k in ("api", "video", "playback", "stream", "vcloud", "graphql", "manifest")):
                     hudl_api_seen.add(url[:180])
 
@@ -213,7 +217,7 @@ async def capture_hudl_stream(page_url: str, timeout_s: int = 75) -> dict:
                     )
                     for u in urls or []:
                         lu = u.lower()
-                        if lu.startswith("http") and ("vg.hudl.com" in lu or re.search(r'\.(mp4|m3u8|mpd)(\?|$)', lu)):
+                        if lu.startswith("http") and re.search(r'\.(mp4|m3u8|mpd)(\?|$)', lu):
                             found.add(u)
                 except Exception:
                     pass
