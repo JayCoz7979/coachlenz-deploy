@@ -201,9 +201,15 @@ async def capture_hudl_stream(
             page = await context.new_page()
 
             # Authenticate with the coach's connected account, if provided.
+            # Login failure is NON-FATAL: public links still capture without it.
+            login_error = None
             if credentials and credentials.get("email") and credentials.get("password"):
                 logger.info(f"[capture] logging into {provider} as connected account")
-                await _perform_login(page, provider, credentials["email"], credentials["password"])
+                try:
+                    await _perform_login(page, provider, credentials["email"], credentials["password"])
+                except HudlCaptureError as e:
+                    login_error = str(e)
+                    logger.warning(f"[capture] {provider} login failed (continuing unauthenticated): {e}")
 
             hudl_api_seen: set[str] = set()
 
@@ -322,6 +328,11 @@ async def capture_hudl_stream(
                     f"[hudl] no manifest. requests={total_requests} videoState={vstate} "
                     f"hudl-api URLs: " + (" | ".join(sorted(hudl_api_seen)[:15]) or "NONE")
                 )
+                if login_error:
+                    raise HudlCaptureError(
+                        f"no video stream found, and the account login failed ({login_error}). "
+                        f"For private film, the connected account must log in successfully."
+                    )
                 raise HudlCaptureError(
                     "no video stream found — the film may be private/login-gated, "
                     "or Hudl changed its player"
