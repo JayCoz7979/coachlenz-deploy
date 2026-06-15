@@ -242,9 +242,9 @@ function UploadPageInner() {
                   {detectedSource && (
                     <p className="text-xs text-brand-400 mt-1">Detected: {SOURCE_LABELS[detectedSource] || detectedSource}</p>
                   )}
-                  {/^https?:\/\/fan\.hudl\.com/i.test(videoUrl) && (
+                  {/hudl\.com/i.test(videoUrl) && (
                     <div className="mt-2 text-xs bg-yellow-400/10 border border-yellow-400/30 rounded-lg p-2.5 text-gray-300">
-                      <span className="text-yellow-300 font-medium">Heads up:</span> this is a Hudl <span className="text-yellow-200">Fan</span> link (fan.hudl.com), which is a protected streaming page and can't be imported. To bring in this film: open it in your Hudl <span className="text-gray-200">coaching account</span>, download the video, and use the <span className="text-gray-200">Upload File</span> tab.
+                      <span className="text-yellow-300 font-medium">Hudl links can't be imported.</span> Hudl serves film as protected streaming, so no link (Fan or coaching) can be pulled in. Instead: in your Hudl <span className="text-gray-200">coaching account</span>, open the video → <span className="text-gray-200">Download → Get Download Link</span>, then switch to the <span className="text-gray-200">Upload File</span> tab and upload the file. (Only coach/admin accounts can download from Hudl.)
                     </div>
                   )}
                   <div className="mt-2 flex flex-wrap gap-2">
@@ -255,8 +255,9 @@ function UploadPageInner() {
 
                   {/* Source guidance */}
                   <div className="mt-3 text-xs text-gray-400 bg-gray-800/60 border border-gray-700 rounded-lg p-3 space-y-1.5">
-                    <p><span className="text-gray-300 font-medium">Hudl:</span> In Hudl, open the video, click <span className="text-gray-200">Share</span>, copy the share link, and paste it here. Use a freshly created share link — older links can expire.</p>
-                    <p><span className="text-gray-300 font-medium">Tip:</span> Paste the link right after copying it. We copy the video into your CoachLenz library at import, so once it's in, it's yours permanently — even if the original link later expires.</p>
+                    <p><span className="text-gray-300 font-medium">Hudl:</span> Hudl links can't be imported here. In Hudl (coach account), open the video → <span className="text-gray-200">Download → Get Download Link</span>, then use the <span className="text-gray-200">Upload File</span> tab.</p>
+                    <p><span className="text-gray-300 font-medium">YouTube, Vimeo, Google Drive, Dropbox, direct video links:</span> paste the link and we'll import it.</p>
+                    <p><span className="text-gray-300 font-medium">Tip:</span> Once imported, the film is copied into your CoachLenz library permanently — it stays yours even if the original link later changes.</p>
                   </div>
                 </div>
 
