@@ -49,6 +49,20 @@ class IngestWorker(BaseWorker):
         return {"game_id": game_id, "duration_seconds": int(duration)}
 
     async def _ingest_from_url(self, game_id: str, source_url: str, source_type: str) -> dict:
+        try:
+            return await self._ingest_from_url_inner(game_id, source_url, source_type)
+        except Exception as e:
+            # Don't leave the game stuck in "downloading" — surface the failure.
+            async with AsyncSessionLocal() as db:
+                await db.execute(
+                    update(Game).where(Game.id == game_id).values(
+                        status="error", error_message=str(e)[:480]
+                    )
+                )
+                await db.commit()
+            raise
+
+    async def _ingest_from_url_inner(self, game_id: str, source_url: str, source_type: str) -> dict:
         logger.info(f"[ingest] downloading {source_type} for game {game_id}")
 
         async with AsyncSessionLocal() as db:
@@ -65,7 +79,9 @@ class IngestWorker(BaseWorker):
             yt_dlp_cmd = [
                 "yt-dlp",
                 "--no-playlist",
-                "--format", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+                # Permissive selector: prefer mp4 but fall back to any best video+audio,
+                # then any single best stream. Avoids "Requested format is not available".
+                "--format", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best[ext=mp4]/best",
                 "--merge-output-format", "mp4",
                 "--output", out_template,
                 "--no-warnings",
