@@ -246,7 +246,7 @@ function UploadPageInner() {
                   )}
                   {/hudl\.com/i.test(videoUrl) && (
                     <div className="mt-2 text-xs bg-green-500/10 border border-green-500/30 rounded-lg p-2.5 text-gray-300">
-                      <span className="text-green-400 font-medium">Hudl link detected.</span> We'll open it, capture the film, and import it automatically. Public/shared Hudl links work directly. For private team film, download it from your Hudl coach account and use the <span className="text-gray-200">Upload File</span> tab.
+                      <span className="text-green-400 font-medium">Hudl link detected.</span> We'll capture and import it automatically. For private team film, <a href="/settings/connections" className="text-green-400 underline">connect your Hudl account</a> once and it imports with one click.
                     </div>
                   )}
                   {/nfhsnetwork\.com/i.test(videoUrl) && (

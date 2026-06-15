@@ -4,7 +4,7 @@ import { usePathname } from 'next/navigation'
 import { useAuth } from '@/lib/auth'
 import {
   LayoutDashboard, Users, Film, FileText, Settings,
-  Trophy, UserCircle, Share2, ShieldCheck, LogOut, Upload,
+  Trophy, UserCircle, Share2, ShieldCheck, LogOut, Upload, Link2,
 } from 'lucide-react'
 
 const NAV_SECTIONS = [
@@ -28,6 +28,7 @@ const NAV_SECTIONS = [
   {
     label: 'Account',
     items: [
+      { href: '/settings/connections', label: 'Connected Accounts', icon: Link2 },
       { href: '/referrals', label: 'Referrals', icon: Share2 },
       { href: '/admin', label: 'Admin', icon: ShieldCheck, requiresAdmin: true },
       { href: '/settings/billing', label: 'Settings', icon: Settings },

@@ -112,9 +112,35 @@ class IngestWorker(BaseWorker):
             if source_type in ("hudl", "nfhs"):
                 cookies_env = "NFHS_COOKIES" if source_type == "nfhs" else "HUDL_COOKIES"
                 logger.info(f"[ingest] capturing {source_type} stream for game {game_id}")
+
+                # Use the org's connected account login, if one exists.
+                credentials = None
+                try:
+                    async with AsyncSessionLocal() as db:
+                        from backend.models.source_connection import SourceConnection
+                        from backend.services.encryption import decrypt_json
+                        gres = await db.execute(select(Game).where(Game.id == game_id))
+                        g = gres.scalar_one_or_none()
+                        if g:
+                            cres = await db.execute(
+                                select(SourceConnection).where(
+                                    SourceConnection.organization_id == g.organization_id,
+                                    SourceConnection.provider == source_type,
+                                )
+                            )
+                            conn = cres.scalar_one_or_none()
+                            if conn:
+                                credentials = decrypt_json(conn.encrypted_credentials)
+                                logger.info(f"[ingest] using connected {source_type} account for capture")
+                except Exception as e:
+                    logger.warning(f"[ingest] could not load {source_type} connection: {e}")
+
                 from backend.services.hudl_capture import capture_hudl_stream, HudlCaptureError
                 try:
-                    cap = await capture_hudl_stream(source_url, timeout_s=75, cookies_env=cookies_env)
+                    cap = await capture_hudl_stream(
+                        source_url, timeout_s=90, cookies_env=cookies_env,
+                        credentials=credentials, provider=source_type,
+                    )
                 except HudlCaptureError as e:
                     site = "NFHS Network" if source_type == "nfhs" else "Hudl"
                     raise ValueError(

@@ -84,11 +84,77 @@ def _rank(url: str) -> int:
     return score
 
 
-async def capture_hudl_stream(page_url: str, timeout_s: int = 75, cookies_env: str = "HUDL_COOKIES") -> dict:
+async def _perform_login(page, provider: str, email: str, password: str) -> None:
+    """Best-effort headless login. Raises HudlCaptureError on clear failure."""
+    if provider == "hudl":
+        login_url = "https://www.hudl.com/login"
+    elif provider == "nfhs":
+        login_url = "https://www.nfhsnetwork.com/users/sign_in"
+    else:
+        return
+
+    await page.goto(login_url, wait_until="domcontentloaded", timeout=45000)
+    await page.wait_for_timeout(2000)
+
+    # Fill email/username.
+    email_sel = "input[type='email'], input[name='username'], input[name='email'], #username, #email, #uniqueId"
+    try:
+        await page.fill(email_sel, email, timeout=8000)
+    except Exception:
+        raise HudlCaptureError("login page did not load as expected (email field not found)")
+
+    # Some flows require a "Continue"/"Next" before the password appears.
+    for label in ("Continue", "Next"):
+        try:
+            btn = page.get_by_role("button", name=re.compile(label, re.IGNORECASE))
+            if await btn.count() > 0:
+                await btn.first.click(timeout=2000)
+                await page.wait_for_timeout(1500)
+        except Exception:
+            pass
+
+    pwd_sel = "input[type='password'], input[name='password'], #password"
+    try:
+        await page.fill(pwd_sel, password, timeout=8000)
+    except Exception:
+        raise HudlCaptureError("password field not found (login flow may have changed or needs 2FA)")
+
+    for label in ("Log In", "Sign In", "Login", "Continue"):
+        try:
+            btn = page.get_by_role("button", name=re.compile(f"^{label}$", re.IGNORECASE))
+            if await btn.count() > 0:
+                await btn.first.click(timeout=2500)
+                break
+        except Exception:
+            continue
+    else:
+        try:
+            await page.keyboard.press("Enter")
+        except Exception:
+            pass
+
+    await page.wait_for_timeout(5000)
+    # Heuristic success check: we left the login page.
+    if "login" in page.url.lower() or "sign_in" in page.url.lower():
+        raise HudlCaptureError(
+            "login did not complete — check the credentials, or the account may require "
+            "two-factor/verification that we can't complete automatically"
+        )
+    logger.info(f"[capture] {provider} login OK, now at {page.url[:80]}")
+
+
+async def capture_hudl_stream(
+    page_url: str,
+    timeout_s: int = 75,
+    cookies_env: str = "HUDL_COOKIES",
+    credentials: dict | None = None,
+    provider: str = "hudl",
+) -> dict:
     """
     Generic streaming-page capture (works for Hudl, NFHS Network, and similar
     THEOplayer/HLS sites). `cookies_env` names the env var holding a Netscape
-    cookie file used to authenticate login-gated content.
+    cookie file; `credentials` ({email, password}) triggers an in-browser login
+    first — used for the coach's connected account.
     """
     from playwright.async_api import async_playwright
     from urllib.parse import urlparse
@@ -133,6 +199,11 @@ async def capture_hudl_stream(page_url: str, timeout_s: int = 75, cookies_env: s
                         logger.warning(f"[capture] could not apply {cookies_env}: {e}")
 
             page = await context.new_page()
+
+            # Authenticate with the coach's connected account, if provided.
+            if credentials and credentials.get("email") and credentials.get("password"):
+                logger.info(f"[capture] logging into {provider} as connected account")
+                await _perform_login(page, provider, credentials["email"], credentials["password"])
 
             hudl_api_seen: set[str] = set()
 

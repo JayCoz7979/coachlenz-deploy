@@ -1,45 +1,58 @@
 import type { Config } from 'tailwindcss'
 
 const config: Config = {
-  content: ['./app/**/*.{ts,tsx}', './components/**/*.{ts,tsx}'],
+  content: [
+    './pages/**/*.{js,ts,jsx,tsx,mdx}',
+    './components/**/*.{js,ts,jsx,tsx,mdx}',
+    './app/**/*.{js,ts,jsx,tsx,mdx}',
+  ],
   theme: {
     extend: {
+      colors: {
+        green: {
+          DEFAULT: '#1a5c2a',
+          mid: '#236b32',
+          light: '#2d8c40',
+          400: '#2d8c40',
+          500: '#1a5c2a',
+          600: '#236b32',
+        },
+        gold: {
+          DEFAULT: '#C9A84C',
+          light: '#e2c06a',
+          400: '#C9A84C',
+          500: '#e2c06a',
+        },
+        charcoal: {
+          DEFAULT: '#1c1c1c',
+          mid: '#2e2e2e',
+          light: '#3d3d3d',
+        },
+        brand: {
+          DEFAULT: '#1a5c2a',
+          mid: '#236b32',
+          light: '#2d8c40',
+          400: '#2d8c40',
+          500: '#1a5c2a',
+          600: '#236b32',
+        },
+        error: '#e07070',
+      },
       fontFamily: {
-        display: ['var(--font-syne)', 'sans-serif'],
+        display: ['var(--font-bebas)', 'sans-serif'],
         sans: ['var(--font-dm-sans)', 'system-ui', 'sans-serif'],
         mono: ['var(--font-dm-mono)', 'monospace'],
       },
-      colors: {
-        bg: {
-          1: '#07090d',
-          2: '#0d1018',
-          3: '#12161f',
-          4: '#171d29',
-          5: '#1c2333',
-        },
-        brand: {
-          DEFAULT: '#4a8525',
-          light: '#22c55e',
-          mid: '#3a6b1e',
-          dark: '#2d5016',
-          400: '#22c55e',
-          500: '#4a8525',
-          600: '#3a6b1e',
-        },
-        gold: {
-          DEFAULT: '#c9a84c',
-          light: '#e8c96a',
-          400: '#c9a84c',
-          500: '#e8c96a',
-        },
-        cl: {
-          text: '#edf0f8',
-          text2: '#a8b8cc',
-          text3: '#6a7d95',
-        },
+      borderRadius: {
+        none: '0',
+        sm: '2px',
+        DEFAULT: '4px',
+        md: '4px',
+        lg: '6px',
       },
     },
   },
   plugins: [],
 }
+
 export default config
