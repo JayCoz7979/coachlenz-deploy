@@ -159,15 +159,15 @@ function UploadPageInner() {
           </div>
 
           <div className="card space-y-4">
-            {error && tab === 'url' && /unsupported url|fan\.hudl\.com/i.test(error + ' ' + videoUrl) && (
+            {error && tab === 'url' && /hudl|capture/i.test(error + ' ' + videoUrl) && (
               <div className="text-sm bg-yellow-400/10 border border-yellow-400/30 rounded-lg p-3 space-y-1">
-                <p className="text-yellow-300 font-medium">This type of link can't be imported directly.</p>
-                <p className="text-gray-300">Hudl <span className="text-yellow-200">Fan</span> links (fan.hudl.com) are protected streaming pages, not downloadable video — so no import tool can pull them. This isn't an expired link.</p>
-                <p className="text-gray-400">Instead: in your Hudl <span className="text-gray-200">coaching account</span>, download the game film, then use the <span className="text-gray-200">Upload File</span> tab here. That always works.</p>
+                <p className="text-yellow-300 font-medium">We couldn't pull that Hudl film automatically.</p>
+                <p className="text-gray-300">Public/shared Hudl links import directly, but this one may be <span className="text-yellow-200">private team film</span> that requires a login.</p>
+                <p className="text-gray-400">Easiest fix: in your Hudl <span className="text-gray-200">coach account</span>, open the video → <span className="text-gray-200">Download</span>, then use the <span className="text-gray-200">Upload File</span> tab here. That always works.</p>
                 <p className="text-xs text-gray-500 mt-1">Details: {error}</p>
               </div>
             )}
-            {error && tab === 'url' && !/unsupported url|fan\.hudl\.com/i.test(error + ' ' + videoUrl) && (
+            {error && tab === 'url' && !/hudl|capture/i.test(error + ' ' + videoUrl) && (
               <div className="text-sm bg-yellow-400/10 border border-yellow-400/30 rounded-lg p-3 space-y-1">
                 <p className="text-yellow-300 font-medium">We couldn't import from that link.</p>
                 <p className="text-gray-300">This is almost always the link itself — not CoachLenz. The most common cause is an <span className="text-yellow-200">expired or broken link</span>.</p>
@@ -243,8 +243,8 @@ function UploadPageInner() {
                     <p className="text-xs text-brand-400 mt-1">Detected: {SOURCE_LABELS[detectedSource] || detectedSource}</p>
                   )}
                   {/hudl\.com/i.test(videoUrl) && (
-                    <div className="mt-2 text-xs bg-yellow-400/10 border border-yellow-400/30 rounded-lg p-2.5 text-gray-300">
-                      <span className="text-yellow-300 font-medium">Hudl links can't be imported.</span> Hudl serves film as protected streaming, so no link (Fan or coaching) can be pulled in. Instead: in your Hudl <span className="text-gray-200">coaching account</span>, open the video → <span className="text-gray-200">Download → Get Download Link</span>, then switch to the <span className="text-gray-200">Upload File</span> tab and upload the file. (Only coach/admin accounts can download from Hudl.)
+                    <div className="mt-2 text-xs bg-green-500/10 border border-green-500/30 rounded-lg p-2.5 text-gray-300">
+                      <span className="text-green-400 font-medium">Hudl link detected.</span> We'll open it, capture the film, and import it automatically. Public/shared Hudl links work directly. For private team film, download it from your Hudl coach account and use the <span className="text-gray-200">Upload File</span> tab.
                     </div>
                   )}
                   <div className="mt-2 flex flex-wrap gap-2">
@@ -255,8 +255,8 @@ function UploadPageInner() {
 
                   {/* Source guidance */}
                   <div className="mt-3 text-xs text-gray-400 bg-gray-800/60 border border-gray-700 rounded-lg p-3 space-y-1.5">
-                    <p><span className="text-gray-300 font-medium">Hudl:</span> Hudl links can't be imported here. In Hudl (coach account), open the video → <span className="text-gray-200">Download → Get Download Link</span>, then use the <span className="text-gray-200">Upload File</span> tab.</p>
-                    <p><span className="text-gray-300 font-medium">YouTube, Vimeo, Google Drive, Dropbox, direct video links:</span> paste the link and we'll import it.</p>
+                    <p><span className="text-gray-300 font-medium">Hudl:</span> Paste a Hudl share/watch link and we'll capture and import it automatically. Private team film: download from your Hudl coach account and use Upload File.</p>
+                    <p><span className="text-gray-300 font-medium">Vimeo, Google Drive, Dropbox, direct video links:</span> paste the link and we'll import it.</p>
                     <p><span className="text-gray-300 font-medium">Tip:</span> Once imported, the film is copied into your CoachLenz library permanently — it stays yours even if the original link later changes.</p>
                   </div>
                 </div>
