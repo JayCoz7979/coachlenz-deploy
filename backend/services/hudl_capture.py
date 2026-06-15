@@ -124,9 +124,12 @@ async def capture_hudl_stream(page_url: str, timeout_s: int = 75) -> dict:
                 nonlocal total_requests
                 total_requests += 1
                 low = url.lower()
-                if re.search(r'\.(m3u8|mpd)', low) or "/manifest" in low or "/playlist" in low:
-                    found.add(url)
-                # Track Hudl's own video/API calls (ignore the ad-network noise).
+                # Hudl serves highlights as direct MP4 on vg.hudl.com, and full
+                # film sometimes as HLS/DASH. Capture all of these.
+                if (re.search(r'\.(m3u8|mpd|mp4)(\?|$)', low)
+                        or "vg.hudl.com" in low or "/manifest" in low or "/playlist" in low):
+                    if "hudl" in low or ".m3u8" in low or ".mpd" in low:
+                        found.add(url)
                 if "hudl.com" in low and any(k in low for k in ("api", "video", "playback", "stream", "vcloud", "graphql", "manifest")):
                     hudl_api_seen.add(url[:180])
 
@@ -192,8 +195,31 @@ async def capture_hudl_stream(page_url: str, timeout_s: int = 75) -> dict:
             except Exception:
                 pass
 
-            # Poll for a manifest for up to the remaining budget.
+            # Poll: the most reliable source is the <video> element's own src,
+            # which Hudl sets to a direct vg.hudl.com MP4 (or HLS/DASH) once the
+            # player initializes. Read it directly each round.
+            async def harvest_video_srcs():
+                try:
+                    urls = await page.evaluate(
+                        """() => {
+                            const out = [];
+                            document.querySelectorAll('video').forEach(v => {
+                                if (v.currentSrc) out.push(v.currentSrc);
+                                if (v.src) out.push(v.src);
+                                v.querySelectorAll('source').forEach(s => { if (s.src) out.push(s.src); });
+                            });
+                            return out;
+                        }"""
+                    )
+                    for u in urls or []:
+                        lu = u.lower()
+                        if lu.startswith("http") and ("vg.hudl.com" in lu or re.search(r'\.(mp4|m3u8|mpd)(\?|$)', lu)):
+                            found.add(u)
+                except Exception:
+                    pass
+
             for _ in range(24):
+                await harvest_video_srcs()
                 if found:
                     break
                 await page.wait_for_timeout(1500)
