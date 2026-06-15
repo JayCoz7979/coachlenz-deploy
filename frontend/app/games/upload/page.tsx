@@ -161,15 +161,15 @@ function UploadPageInner() {
           </div>
 
           <div className="card space-y-4">
-            {error && tab === 'url' && /hudl|capture/i.test(error + ' ' + videoUrl) && (
+            {error && tab === 'url' && /hudl|nfhs|capture/i.test(error + ' ' + videoUrl) && (
               <div className="text-sm bg-yellow-400/10 border border-yellow-400/30 rounded-lg p-3 space-y-1">
-                <p className="text-yellow-300 font-medium">We couldn't pull that Hudl film automatically.</p>
-                <p className="text-gray-300">Public/shared Hudl links import directly, but this one may be <span className="text-yellow-200">private team film</span> that requires a login.</p>
-                <p className="text-gray-400">Easiest fix: in your Hudl <span className="text-gray-200">coach account</span>, open the video → <span className="text-gray-200">Download</span>, then use the <span className="text-gray-200">Upload File</span> tab here. That always works.</p>
+                <p className="text-yellow-300 font-medium">We couldn't pull that film automatically.</p>
+                <p className="text-gray-300">Public/shared links import directly, but this one looks like <span className="text-yellow-200">private or subscription film</span> that requires a login. Your login on your own device doesn't carry over to our server.</p>
+                <p className="text-gray-400">Fixes: connect your {/nfhsnetwork/i.test(videoUrl) ? 'NFHS Network' : 'Hudl'} login (contact your CoachLenz admin), or download the film from the source and use the <span className="text-gray-200">Upload File</span> tab — that always works.</p>
                 <p className="text-xs text-gray-500 mt-1">Details: {error}</p>
               </div>
             )}
-            {error && tab === 'url' && !/hudl|capture/i.test(error + ' ' + videoUrl) && (
+            {error && tab === 'url' && !/hudl|nfhs|capture/i.test(error + ' ' + videoUrl) && (
               <div className="text-sm bg-yellow-400/10 border border-yellow-400/30 rounded-lg p-3 space-y-1">
                 <p className="text-yellow-300 font-medium">We couldn't import from that link.</p>
                 <p className="text-gray-300">This is almost always the link itself — not CoachLenz. The most common cause is an <span className="text-yellow-200">expired or broken link</span>.</p>
