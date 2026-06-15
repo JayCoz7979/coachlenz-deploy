@@ -76,7 +76,18 @@ class IngestWorker(BaseWorker):
         with tempfile.TemporaryDirectory() as tmpdir:
             out_template = os.path.join(tmpdir, "video.%(ext)s")
 
-            yt_dlp_cmd = [
+            # Optional cookies file (Netscape format) supplied via env to defeat
+            # YouTube datacenter-IP gating. Written once per download to tmp.
+            cookies_path = None
+            cookies_content = os.environ.get("YOUTUBE_COOKIES", "").strip()
+            if cookies_content:
+                cookies_path = os.path.join(tmpdir, "cookies.txt")
+                with open(cookies_path, "w", encoding="utf-8") as cf:
+                    cf.write(cookies_content)
+
+            proxy = os.environ.get("YTDLP_PROXY", "").strip()
+
+            base_cmd = [
                 "yt-dlp",
                 "--no-playlist",
                 # Permissive selector: prefer mp4 but fall back to any best video+audio,
@@ -86,17 +97,43 @@ class IngestWorker(BaseWorker):
                 "--output", out_template,
                 "--no-warnings",
                 "--quiet",
-                source_url,
+                "--retries", "5",
+                "--fragment-retries", "10",
             ]
+            if cookies_path:
+                base_cmd += ["--cookies", cookies_path]
+            if proxy:
+                base_cmd += ["--proxy", proxy]
 
-            try:
-                proc = subprocess.run(yt_dlp_cmd, capture_output=True, text=True, timeout=1800)
-            except subprocess.TimeoutExpired:
-                raise ValueError("Download timed out after 30 minutes")
+            # For YouTube, datacenter IPs frequently get "Requested format is not
+            # available" because the default web client requires a PO token. We try
+            # several player clients that often bypass this. Each attempt is a full
+            # download try; we stop at the first success.
+            if source_type == "youtube":
+                client_attempts = [
+                    ["--extractor-args", "youtube:player_client=tv,ios,web_safari"],
+                    ["--extractor-args", "youtube:player_client=android,ios"],
+                    ["--extractor-args", "youtube:player_client=web_safari"],
+                    [],  # plain (works if cookies/proxy are set)
+                ]
+            else:
+                client_attempts = [[]]
 
-            if proc.returncode != 0:
-                error_detail = (proc.stderr or proc.stdout or "unknown error").strip()
-                raise ValueError(f"Download failed: {error_detail[:400]}")
+            proc = None
+            last_error = "unknown error"
+            for extra in client_attempts:
+                cmd = base_cmd + extra + [source_url]
+                try:
+                    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+                except subprocess.TimeoutExpired:
+                    raise ValueError("Download timed out after 30 minutes")
+                if proc.returncode == 0:
+                    break
+                last_error = (proc.stderr or proc.stdout or "unknown error").strip()
+                logger.warning(f"[ingest] yt-dlp attempt failed ({extra}): {last_error[:200]}")
+
+            if proc is None or proc.returncode != 0:
+                raise ValueError(f"Download failed: {last_error[:400]}")
 
             video_file = None
             for fname in os.listdir(tmpdir):
