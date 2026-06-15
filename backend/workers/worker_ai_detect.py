@@ -19,7 +19,7 @@ from backend.models.base import AsyncSessionLocal
 from backend.models.event import Event
 from backend.models.game import Game
 from backend.models.job import Job
-from backend.services.r2 import generate_presigned_download_url, _use_local, LOCAL_STORE
+from backend.services.r2 import generate_presigned_download_url, _use_local, LOCAL_STORAGE_DIR
 from backend.workers.base import BaseWorker
 
 logger = logging.getLogger(__name__)
@@ -79,10 +79,10 @@ class AiDetectWorker(BaseWorker):
 
         # ── Resolve video path / URL ───────────────────────────────────────
         if _use_local():
-            video_path = LOCAL_STORE / game.r2_key
-            if not video_path.exists():
+            video_path = os.path.join(LOCAL_STORAGE_DIR, game.r2_key.replace("/", os.sep))
+            if not os.path.exists(video_path):
                 raise ValueError(f"Local video file not found: {video_path}")
-            video_source = str(video_path)
+            video_source = video_path
         else:
             video_source = generate_presigned_download_url(game.r2_key, expires_in=7200)
 
