@@ -159,7 +159,15 @@ function UploadPageInner() {
           </div>
 
           <div className="card space-y-4">
-            {error && tab === 'url' && (
+            {error && tab === 'url' && /unsupported url|fan\.hudl\.com/i.test(error + ' ' + videoUrl) && (
+              <div className="text-sm bg-yellow-400/10 border border-yellow-400/30 rounded-lg p-3 space-y-1">
+                <p className="text-yellow-300 font-medium">This type of link can't be imported directly.</p>
+                <p className="text-gray-300">Hudl <span className="text-yellow-200">Fan</span> links (fan.hudl.com) are protected streaming pages, not downloadable video — so no import tool can pull them. This isn't an expired link.</p>
+                <p className="text-gray-400">Instead: in your Hudl <span className="text-gray-200">coaching account</span>, download the game film, then use the <span className="text-gray-200">Upload File</span> tab here. That always works.</p>
+                <p className="text-xs text-gray-500 mt-1">Details: {error}</p>
+              </div>
+            )}
+            {error && tab === 'url' && !/unsupported url|fan\.hudl\.com/i.test(error + ' ' + videoUrl) && (
               <div className="text-sm bg-yellow-400/10 border border-yellow-400/30 rounded-lg p-3 space-y-1">
                 <p className="text-yellow-300 font-medium">We couldn't import from that link.</p>
                 <p className="text-gray-300">This is almost always the link itself — not CoachLenz. The most common cause is an <span className="text-yellow-200">expired or broken link</span>.</p>
@@ -233,6 +241,11 @@ function UploadPageInner() {
                   />
                   {detectedSource && (
                     <p className="text-xs text-brand-400 mt-1">Detected: {SOURCE_LABELS[detectedSource] || detectedSource}</p>
+                  )}
+                  {/^https?:\/\/fan\.hudl\.com/i.test(videoUrl) && (
+                    <div className="mt-2 text-xs bg-yellow-400/10 border border-yellow-400/30 rounded-lg p-2.5 text-gray-300">
+                      <span className="text-yellow-300 font-medium">Heads up:</span> this is a Hudl <span className="text-yellow-200">Fan</span> link (fan.hudl.com), which is a protected streaming page and can't be imported. To bring in this film: open it in your Hudl <span className="text-gray-200">coaching account</span>, download the video, and use the <span className="text-gray-200">Upload File</span> tab.
+                    </div>
                   )}
                   <div className="mt-2 flex flex-wrap gap-2">
                     {['YouTube', 'Hudl', 'Vimeo', 'Google Drive', 'Dropbox', 'Facebook'].map(s => (
