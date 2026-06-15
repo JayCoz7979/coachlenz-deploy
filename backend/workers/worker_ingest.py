@@ -99,24 +99,28 @@ class IngestWorker(BaseWorker):
                 "--quiet",
                 "--retries", "5",
                 "--fragment-retries", "10",
+                "--socket-timeout", "30",
             ]
             if proxy:
                 base_cmd += ["--proxy", proxy]
 
-            # ── Hudl: capture the HLS manifest with a headless browser ──────
-            # Hudl serves token-gated (non-DRM) HLS that yt-dlp can't reach
-            # directly. We drive Chromium to load the page, capture the .m3u8
-            # manifest + session cookies, then download that stream.
+            # ── Hudl / NFHS: capture the stream with a headless browser ──────
+            # These serve token-gated (non-DRM) HLS/MP4 that yt-dlp can't reach
+            # directly. We drive Chromium to load the page, capture the stream
+            # URL + session cookies, then download it.
             download_target = source_url
-            if source_type == "hudl":
-                logger.info(f"[ingest] capturing Hudl stream for game {game_id}")
+            if source_type in ("hudl", "nfhs"):
+                cookies_env = "NFHS_COOKIES" if source_type == "nfhs" else "HUDL_COOKIES"
+                logger.info(f"[ingest] capturing {source_type} stream for game {game_id}")
                 from backend.services.hudl_capture import capture_hudl_stream, HudlCaptureError
                 try:
-                    cap = await capture_hudl_stream(source_url, timeout_s=75)
+                    cap = await capture_hudl_stream(source_url, timeout_s=75, cookies_env=cookies_env)
                 except HudlCaptureError as e:
+                    site = "NFHS Network" if source_type == "nfhs" else "Hudl"
                     raise ValueError(
-                        f"Could not capture this Hudl film: {e}. If it's private, "
-                        f"download it from Hudl and use Upload File instead."
+                        f"Could not capture this {site} film: {e}. It likely requires "
+                        f"a paid/login account — add your {site} login, or download the "
+                        f"film and use Upload File instead."
                     )
                 download_target = cap["manifest_url"]
                 # Use the session cookies captured from the browser.

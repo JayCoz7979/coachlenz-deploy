@@ -84,8 +84,19 @@ def _rank(url: str) -> int:
     return score
 
 
-async def capture_hudl_stream(page_url: str, timeout_s: int = 75) -> dict:
+async def capture_hudl_stream(page_url: str, timeout_s: int = 75, cookies_env: str = "HUDL_COOKIES") -> dict:
+    """
+    Generic streaming-page capture (works for Hudl, NFHS Network, and similar
+    THEOplayer/HLS sites). `cookies_env` names the env var holding a Netscape
+    cookie file used to authenticate login-gated content.
+    """
     from playwright.async_api import async_playwright
+    from urllib.parse import urlparse
+
+    parsed = urlparse(page_url)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    # Base domain for diagnostics (e.g. "hudl.com", "nfhsnetwork.com").
+    site_domain = ".".join(parsed.netloc.lower().split(".")[-2:])
 
     found: set[str] = set()
     seen_media: set[str] = set()   # diagnostics
@@ -109,17 +120,17 @@ async def capture_hudl_stream(page_url: str, timeout_s: int = 75) -> dict:
             )
             await context.add_init_script(STEALTH_JS)
 
-            hudl_cookies = os.environ.get("HUDL_COOKIES", "").strip()
-            if hudl_cookies:
+            login_cookies = os.environ.get(cookies_env, "").strip()
+            if login_cookies:
                 pw_cookies = [
                     {"name": n, "value": v, "domain": d.lstrip("."), "path": "/"}
-                    for d, n, v in _cookie_pairs_from_netscape(hudl_cookies)
+                    for d, n, v in _cookie_pairs_from_netscape(login_cookies)
                 ]
                 if pw_cookies:
                     try:
                         await context.add_cookies(pw_cookies)
                     except Exception as e:
-                        logger.warning(f"[hudl] could not apply HUDL_COOKIES: {e}")
+                        logger.warning(f"[capture] could not apply {cookies_env}: {e}")
 
             page = await context.new_page()
 
@@ -134,7 +145,7 @@ async def capture_hudl_stream(page_url: str, timeout_s: int = 75) -> dict:
                 # NOT thumbnails (.jpg) or other assets on the same host.
                 if re.search(r'\.(m3u8|mpd|mp4)(\?|$)', low) or "/manifest" in low or "/playlist" in low:
                     found.add(url)
-                if "hudl.com" in low and any(k in low for k in ("api", "video", "playback", "stream", "vcloud", "graphql", "manifest")):
+                if site_domain in low and any(k in low for k in ("api", "video", "playback", "stream", "vcloud", "graphql", "manifest", "vg.")):
                     hudl_api_seen.add(url[:180])
 
             page.on("request", lambda req: note_url(req.url))
@@ -261,7 +272,7 @@ async def capture_hudl_stream(page_url: str, timeout_s: int = 75) -> dict:
             return {
                 "manifest_url": manifest_url,
                 "cookies": "\n".join(lines),
-                "headers": {"User-Agent": USER_AGENT, "Referer": page_url, "Origin": "https://fan.hudl.com"},
+                "headers": {"User-Agent": USER_AGENT, "Referer": page_url, "Origin": origin},
             }
         finally:
             await browser.close()

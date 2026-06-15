@@ -44,6 +44,8 @@ def detect_source_type(url: str) -> str:
         return "dropbox"
     if "facebook.com" in url_lower or "fb.watch" in url_lower:
         return "facebook"
+    if "nfhsnetwork.com" in url_lower:
+        return "nfhs"
     return "generic"
 
 
