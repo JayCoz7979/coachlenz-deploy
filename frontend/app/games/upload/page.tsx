@@ -159,7 +159,15 @@ function UploadPageInner() {
           </div>
 
           <div className="card space-y-4">
-            {error && <div className="text-red-400 text-sm bg-red-400/10 rounded p-3">{error}</div>}
+            {error && tab === 'url' && (
+              <div className="text-sm bg-yellow-400/10 border border-yellow-400/30 rounded-lg p-3 space-y-1">
+                <p className="text-yellow-300 font-medium">We couldn't import from that link.</p>
+                <p className="text-gray-300">This is almost always the link itself — not CoachLenz. The most common cause is an <span className="text-yellow-200">expired or broken link</span>.</p>
+                <p className="text-gray-400">Please go back to the source (e.g. Hudl → Share), copy a <span className="text-gray-200">fresh link</span>, and paste it again.</p>
+                <p className="text-xs text-gray-500 mt-1">Details: {error}</p>
+              </div>
+            )}
+            {error && tab !== 'url' && <div className="text-red-400 text-sm bg-red-400/10 rounded p-3">{error}</div>}
 
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
@@ -230,6 +238,12 @@ function UploadPageInner() {
                     {['YouTube', 'Hudl', 'Vimeo', 'Google Drive', 'Dropbox', 'Facebook'].map(s => (
                       <span key={s} className="text-xs bg-gray-700 text-gray-400 px-2 py-0.5 rounded">{s}</span>
                     ))}
+                  </div>
+
+                  {/* Source guidance */}
+                  <div className="mt-3 text-xs text-gray-400 bg-gray-800/60 border border-gray-700 rounded-lg p-3 space-y-1.5">
+                    <p><span className="text-gray-300 font-medium">Hudl:</span> In Hudl, open the video, click <span className="text-gray-200">Share</span>, copy the share link, and paste it here. Use a freshly created share link — older links can expire.</p>
+                    <p><span className="text-gray-300 font-medium">Tip:</span> Paste the link right after copying it. We copy the video into your CoachLenz library at import, so once it's in, it's yours permanently — even if the original link later expires.</p>
                   </div>
                 </div>
 
