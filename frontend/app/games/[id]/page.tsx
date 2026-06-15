@@ -434,6 +434,7 @@ export default function GamePage() {
   }
 
   const handleGenerateReport = async () => {
+    if (!game) return
     setReportPending(true)
     try {
       const res = await api.post('/reports', {
