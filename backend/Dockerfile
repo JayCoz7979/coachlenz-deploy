@@ -1,14 +1,15 @@
-FROM python:3.12-slim
+# Playwright's official image ships Chromium + all OS deps preinstalled (Python 3.12 on Ubuntu Noble).
+# This avoids the fragile `playwright install --with-deps` step that breaks on Debian trixie.
+FROM mcr.microsoft.com/playwright/python:v1.49.1-noble
 
-RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install headless Chromium + OS deps for Hudl stream capture (Playwright)
-RUN python -m playwright install --with-deps chromium
+# Browsers are already installed in the base image at $PLAYWRIGHT_BROWSERS_PATH.
 
 # Copy into backend/ subdirectory so "from backend.X import Y" works
 COPY . backend/
