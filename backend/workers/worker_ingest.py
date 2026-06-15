@@ -100,10 +100,34 @@ class IngestWorker(BaseWorker):
                 "--retries", "5",
                 "--fragment-retries", "10",
             ]
-            if cookies_path:
-                base_cmd += ["--cookies", cookies_path]
             if proxy:
                 base_cmd += ["--proxy", proxy]
+
+            # ── Hudl: capture the HLS manifest with a headless browser ──────
+            # Hudl serves token-gated (non-DRM) HLS that yt-dlp can't reach
+            # directly. We drive Chromium to load the page, capture the .m3u8
+            # manifest + session cookies, then download that stream.
+            download_target = source_url
+            if source_type == "hudl":
+                logger.info(f"[ingest] capturing Hudl stream for game {game_id}")
+                from backend.services.hudl_capture import capture_hudl_stream, HudlCaptureError
+                try:
+                    cap = await capture_hudl_stream(source_url, timeout_s=75)
+                except HudlCaptureError as e:
+                    raise ValueError(
+                        f"Could not capture this Hudl film: {e}. If it's private, "
+                        f"download it from Hudl and use Upload File instead."
+                    )
+                download_target = cap["manifest_url"]
+                # Use the session cookies captured from the browser.
+                cookies_path = os.path.join(tmpdir, "hudl_cookies.txt")
+                with open(cookies_path, "w", encoding="utf-8") as cf:
+                    cf.write(cap["cookies"])
+                for hk, hv in cap["headers"].items():
+                    base_cmd += ["--add-header", f"{hk}:{hv}"]
+
+            if cookies_path:
+                base_cmd += ["--cookies", cookies_path]
 
             # For YouTube, datacenter IPs frequently get "Requested format is not
             # available" because the default web client requires a PO token. We try
@@ -122,7 +146,7 @@ class IngestWorker(BaseWorker):
             proc = None
             last_error = "unknown error"
             for extra in client_attempts:
-                cmd = base_cmd + extra + [source_url]
+                cmd = base_cmd + extra + [download_target]
                 try:
                     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
                 except subprocess.TimeoutExpired:

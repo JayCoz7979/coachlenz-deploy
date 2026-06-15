@@ -7,6 +7,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Install headless Chromium + OS deps for Hudl stream capture (Playwright)
+RUN python -m playwright install --with-deps chromium
+
 # Copy into backend/ subdirectory so "from backend.X import Y" works
 COPY . backend/
 
