@@ -12,6 +12,7 @@ const SPORTS = ['football','flag_football','basketball','baseball','softball','v
 const SOURCE_LABELS: Record<string, string> = {
   youtube: 'YouTube',
   hudl: 'Hudl',
+  nfhs: 'NFHS Network',
   vimeo: 'Vimeo',
   google_drive: 'Google Drive',
   dropbox: 'Dropbox',
@@ -22,6 +23,7 @@ const SOURCE_LABELS: Record<string, string> = {
 function detectSource(url: string): string {
   if (/youtube\.com|youtu\.be/i.test(url)) return 'youtube'
   if (/hudl\.com/i.test(url)) return 'hudl'
+  if (/nfhsnetwork\.com/i.test(url)) return 'nfhs'
   if (/vimeo\.com/i.test(url)) return 'vimeo'
   if (/drive\.google\.com/i.test(url)) return 'google_drive'
   if (/dropbox\.com/i.test(url)) return 'dropbox'
@@ -245,6 +247,11 @@ function UploadPageInner() {
                   {/hudl\.com/i.test(videoUrl) && (
                     <div className="mt-2 text-xs bg-green-500/10 border border-green-500/30 rounded-lg p-2.5 text-gray-300">
                       <span className="text-green-400 font-medium">Hudl link detected.</span> We'll open it, capture the film, and import it automatically. Public/shared Hudl links work directly. For private team film, download it from your Hudl coach account and use the <span className="text-gray-200">Upload File</span> tab.
+                    </div>
+                  )}
+                  {/nfhsnetwork\.com/i.test(videoUrl) && (
+                    <div className="mt-2 text-xs bg-green-500/10 border border-green-500/30 rounded-lg p-2.5 text-gray-300">
+                      <span className="text-green-400 font-medium">NFHS Network link detected.</span> We'll capture and import it. NFHS film usually requires a paid subscription/login — free events import directly; for subscription games, your NFHS login must be connected (or download from NFHS and use Upload File).
                     </div>
                   )}
                   <div className="mt-2 flex flex-wrap gap-2">
