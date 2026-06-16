@@ -4,7 +4,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Sidebar from '@/components/layout/Sidebar'
 import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
-import { ChevronLeft, Tag, Play, Trash2, Clock, FileText, Loader2, CheckCircle, AlertCircle, Zap } from 'lucide-react'
+import { ChevronLeft, Tag, Play, Trash2, Clock, FileText, Loader2, CheckCircle, AlertCircle, Zap, Pencil, Check, X } from 'lucide-react'
 import Link from 'next/link'
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -267,11 +267,35 @@ function PlayLog({
   events,
   onDelete,
   onSeek,
+  onUpdate,
 }: {
   events: TaggedEvent[]
   onDelete: (id: string) => void
   onSeek: (t: number) => void
+  onUpdate: (id: string, data: Partial<TaggedEvent>) => Promise<void>
 }) {
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [draft, setDraft] = useState<Partial<TaggedEvent>>({})
+  const [filter, setFilter] = useState<'all' | 'offense' | 'defense' | 'special_teams'>('all')
+  const [savingId, setSavingId] = useState<string | null>(null)
+
+  const startEdit = (ev: TaggedEvent) => { setEditingId(ev.id); setDraft({ ...ev }) }
+  const cancel = () => { setEditingId(null); setDraft({}) }
+  const save = async (id: string) => {
+    setSavingId(id)
+    try { await onUpdate(id, draft); setEditingId(null); setDraft({}) }
+    finally { setSavingId(null) }
+  }
+  const set = (k: keyof TaggedEvent, v: any) => setDraft(d => ({ ...d, [k]: v }))
+
+  const esel = (k: keyof TaggedEvent, options: string[]) => (
+    <select value={(draft[k] as string) || ''} onChange={e => set(k, e.target.value || null)}
+      className="input" style={{ fontSize: 11, padding: '4px 6px', height: 30, minWidth: 0 }}>
+      <option value="">—</option>
+      {options.map(o => <option key={o} value={o}>{o}</option>)}
+    </select>
+  )
+
   if (events.length === 0) {
     return (
       <div style={{ textAlign: 'center', color: '#7a7a6e', padding: '32px 0', fontSize: 13 }}>
@@ -280,27 +304,67 @@ function PlayLog({
     )
   }
 
+  const shown = filter === 'all' ? events : events.filter(e => (e.side || 'offense') === filter)
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      {events.map((ev, i) => (
-        <div
-          key={ev.id}
-          style={{
-            display: 'flex', alignItems: 'center', gap: 10,
-            background: 'rgba(255,255,255,0.03)', borderRadius: 4,
-            padding: '8px 12px', border: '1px solid rgba(255,255,255,0.05)',
-          }}
-        >
-          <span style={{ fontSize: 11, color: '#7a7a6e', width: 24, textAlign: 'right', flexShrink: 0 }}>
-            {i + 1}
-          </span>
-          <button
-            onClick={() => ev.time_seconds != null && onSeek(ev.time_seconds)}
-            style={{
-              background: 'none', border: 'none', cursor: 'pointer', color: '#C9A84C',
-              padding: 0, fontFamily: 'var(--font-dm-mono)', fontSize: 12, flexShrink: 0,
-            }}
-          >
+      {/* Phase filter */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
+        {([['all', 'All'], ['offense', 'Off'], ['defense', 'Def'], ['special_teams', 'ST']] as const).map(([k, label]) => (
+          <button key={k} onClick={() => setFilter(k)}
+            style={{ flex: 1, padding: '4px 0', fontSize: 10, fontWeight: 600, cursor: 'pointer', borderRadius: 3,
+              background: filter === k ? 'rgba(201,168,76,0.2)' : 'rgba(255,255,255,0.04)',
+              color: filter === k ? '#C9A84C' : '#7a7a6e', border: 'none', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {shown.map((ev, i) => editingId === ev.id ? (
+        // ── Inline editor ──
+        <div key={ev.id} style={{ background: 'rgba(201,168,76,0.06)', border: '1px solid rgba(201,168,76,0.25)', borderRadius: 4, padding: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ fontSize: 10, color: '#C9A84C', fontWeight: 700, letterSpacing: '0.06em' }}>EDITING {fmtTime(ev.time_seconds)} · {(ev.side || 'offense').replace('_', ' ').toUpperCase()}</div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <select value={(draft.side as string) || 'offense'} onChange={e => set('side', e.target.value)} className="input" style={{ fontSize: 11, padding: '4px 6px', height: 30 }}>
+              <option value="offense">Offense</option>
+              <option value="defense">Defense</option>
+              <option value="special_teams">Special Teams</option>
+            </select>
+            <input type="number" placeholder="down" value={(draft.down as number) ?? ''} onChange={e => set('down', e.target.value === '' ? null : Number(e.target.value))} className="input" style={{ fontSize: 11, padding: '4px 6px', height: 30, width: 56 }} />
+            <input type="number" placeholder="dist" value={(draft.distance as number) ?? ''} onChange={e => set('distance', e.target.value === '' ? null : Number(e.target.value))} className="input" style={{ fontSize: 11, padding: '4px 6px', height: 30, width: 56 }} />
+          </div>
+          {draft.side === 'defense' ? (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
+              {esel('defensive_front', FRONTS)}{esel('coverage', COVERAGES)}{esel('blitz', BLITZES)}
+            </div>
+          ) : draft.side === 'special_teams' ? (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+              {esel('play_type', ST_UNITS)}{esel('formation', FORMATIONS)}
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
+              {esel('formation', FORMATIONS)}{esel('play_type', PLAY_TYPES)}{esel('personnel', PERSONNEL)}
+            </div>
+          )}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 70px', gap: 6 }}>
+            {esel('result', draft.side === 'special_teams' ? ST_RESULTS : RESULTS)}
+            <input type="number" placeholder="yds" value={(draft.yards_gained as number) ?? ''} onChange={e => set('yards_gained', e.target.value === '' ? null : Number(e.target.value))} className="input" style={{ fontSize: 11, padding: '4px 6px', height: 30 }} />
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button onClick={() => save(ev.id)} disabled={savingId === ev.id} className="btn-primary" style={{ flex: 1, height: 32, fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
+              {savingId === ev.id ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Check size={12} />} Save
+            </button>
+            <button onClick={cancel} className="btn-secondary" style={{ flex: 1, height: 32, fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
+              <X size={12} /> Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        // ── Read-only row ──
+        <div key={ev.id} style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'rgba(255,255,255,0.03)', borderRadius: 4, padding: '8px 12px', border: '1px solid rgba(255,255,255,0.05)' }}>
+          <span style={{ fontSize: 11, color: '#7a7a6e', width: 24, textAlign: 'right', flexShrink: 0 }}>{i + 1}</span>
+          <button onClick={() => ev.time_seconds != null && onSeek(ev.time_seconds)}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#C9A84C', padding: 0, fontFamily: 'var(--font-dm-mono)', fontSize: 12, flexShrink: 0 }}>
             {fmtTime(ev.time_seconds)}
           </button>
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -338,11 +402,10 @@ function PlayLog({
               )}
             </div>
           </div>
-          <button
-            onClick={() => onDelete(ev.id)}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#7a7a6e', padding: 4, flexShrink: 0 }}
-            title="Delete"
-          >
+          <button onClick={() => startEdit(ev)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#7a7a6e', padding: 4, flexShrink: 0 }} title="Edit">
+            <Pencil size={12} />
+          </button>
+          <button onClick={() => onDelete(ev.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#7a7a6e', padding: 4, flexShrink: 0 }} title="Delete">
             <Trash2 size={13} />
           </button>
         </div>
@@ -450,6 +513,13 @@ export default function GamePage() {
   const handleDelete = async (eventId: string) => {
     await api.delete(`/events/${eventId}`)
     setEvents(prev => prev.filter(e => e.id !== eventId))
+  }
+
+  const handleUpdate = async (eventId: string, data: Partial<TaggedEvent>) => {
+    const res = await api.patch(`/events/${eventId}`, data)
+    setEvents(prev => prev.map(e => e.id === eventId ? { ...e, ...res.data } : e)
+      .sort((a, b) => (a.time_seconds ?? 0) - (b.time_seconds ?? 0)))
+    showToast('Play updated')
   }
 
   const handleSeek = (t: number) => {
@@ -678,7 +748,7 @@ export default function GamePage() {
             <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
               {tab === 'tag'
                 ? <TagForm currentTime={currentTime} onSave={handleSaveTag} saving={saving} side={side} setSide={setSide} opponent={game.opponent} />
-                : <PlayLog events={events} onDelete={handleDelete} onSeek={handleSeek} />
+                : <PlayLog events={events} onDelete={handleDelete} onSeek={handleSeek} onUpdate={handleUpdate} />
               }
             </div>
 
