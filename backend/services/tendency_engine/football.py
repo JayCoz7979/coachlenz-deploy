@@ -180,6 +180,48 @@ def analyze_football_defense(events) -> Dict[str, Any]:
     }
 
 
+def analyze_football_special(events) -> Dict[str, Any]:
+    """Special teams tendencies (punt, kickoff, FG/PAT, returns)."""
+    plays = [e for e in events if _is_play(e)]
+    total = len(plays)
+    if total == 0:
+        return {"total_plays": 0}
+
+    units = Counter(e.play_type for e in plays if e.play_type)
+    results = Counter(e.result for e in plays if e.result)
+    formations = Counter(e.formation for e in plays if e.formation)
+
+    def _unit(name_set):
+        us = [e for e in plays if (e.play_type or "").lower() in name_set]
+        return us
+
+    fg = _unit({"field goal", "fg"})
+    fg_made = [e for e in fg if (e.result or "").lower() in ("made", "good")]
+    pat = _unit({"pat", "extra point"})
+    punts = _unit({"punt"})
+    kickoffs = _unit({"kickoff", "ko"})
+    returns = _unit({"punt return", "kick return", "kickoff return", "return"})
+    trick = [e for e in plays if (e.result or "").lower() in ("fake", "blocked", "onside", "muffed", "recovered")]
+
+    yards = [e.yards_gained for e in plays if e.yards_gained is not None]
+    avg_return = round(sum(yards) / len(yards), 1) if yards else 0
+
+    return {
+        "total_plays": total,
+        "units": dict(units.most_common(12)),
+        "formations": dict(formations.most_common(8)),
+        "field_goals": {"attempts": len(fg), "made": len(fg_made),
+                        "fg_pct": round(len(fg_made) / len(fg) * 100, 1) if fg else 0},
+        "pat": {"attempts": len(pat)},
+        "punts": len(punts),
+        "kickoffs": len(kickoffs),
+        "returns": len(returns),
+        "trick_or_special": len(trick),
+        "avg_return_yards": avg_return,
+        "play_results": dict(results.most_common(10)),
+    }
+
+
 def _is_red_zone(field_position: str) -> bool:
     try:
         parts = field_position.split()

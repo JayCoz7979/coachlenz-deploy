@@ -41,21 +41,30 @@ For EACH distinct play you can identify, return a JSON object in the array. A "p
 
 Skip: timeouts, huddles, sideline shots, commercials, halftime, instant replays, pre-game, post-game.
 
+FIRST classify each play's PHASE (side):
+- "offense": the team being scouted has the ball (running/passing plays)
+- "defense": the team being scouted is defending (read the defensive front/coverage)
+- "special_teams": punt, kickoff, field goal, PAT, or any return
+
 For each play, extract what you can read from scoreboard overlays OR infer from the field view:
+- side: "offense", "defense", or "special_teams"
 - time_seconds: approximate timestamp in the video (integer, estimate from frame position)
 - down: 1, 2, 3, or 4 (null if not visible or not applicable)
 - distance: yards to go (null if not visible)
 - field_position: e.g. "OWN 32", "OPP 14" (null if not visible)
-- formation: offensive formation — "Shotgun", "I-Form", "Pistol", "Singleback", "Wildcat", "Empty", "Trips", "Bunch", "Pro Set", or "Other"
-- play_type: "Run", "Pass", "Screen", "Draw", "Option", "RPO", "QB Sneak", "Punt", "Kickoff", "Field Goal", "PAT", or "Other"
-- result: "Gain", "Loss", "Incomplete", "Touchdown", "Interception", "Fumble", "Sack", "Penalty", "First Down", "Turnover on Downs", "Made", "Missed", or "Punt"
-- yards_gained: integer (positive or negative), null if not determinable
+- formation: offensive formation (if side=offense) — "Shotgun", "I-Form", "Pistol", "Singleback", "Wildcat", "Empty", "Trips", "Bunch", "Pro Set", or "Other"
+- play_type: if side=offense — "Run", "Pass", "Screen", "Draw", "Option", "RPO", "QB Sneak", "Other"; if side=special_teams — "Punt", "Kickoff", "Field Goal", "PAT", "Punt Return", "Kick Return", "Onside Kick", "Fake"
 - personnel: offensive personnel grouping if visible — "11", "12", "21", "22", "10", "20", "13", or null
-- motion: true if pre-snap motion is visible, false otherwise
+- motion: true if pre-snap offensive motion is visible, false otherwise
+- defensive_front: if side=defense — "4-3", "3-4", "4-2-5", "3-3-5", "4-4", "5-2", "Nickel", "Dime", "Goal Line", or null
+- coverage: if side=defense — "Cover 0", "Cover 1", "Cover 2", "Cover 3", "Cover 4", "Man", "Zone", or null
+- blitz: if side=defense — "None", "Edge", "A-Gap", "Corner", "Safety", "Zone Blitz", or null
+- result: "Gain", "Loss", "Incomplete", "Touchdown", "Interception", "Fumble", "Sack", "Penalty", "First Down", "Made", "Missed", "Returned", "Touchback", or "Punt"
+- yards_gained: integer (positive or negative), null if not determinable
 - confidence: 0.0–1.0 — how confident you are this is a real play (not a replay, broadcast segment, etc.)
 
 Return ONLY valid JSON in this exact format, nothing else:
-{"plays": [{"time_seconds": 0, "down": null, "distance": null, "field_position": null, "formation": null, "play_type": null, "result": null, "yards_gained": null, "personnel": null, "motion": false, "confidence": 0.8}]}
+{"plays": [{"side": "offense", "time_seconds": 0, "down": null, "distance": null, "field_position": null, "formation": null, "play_type": null, "personnel": null, "motion": false, "defensive_front": null, "coverage": null, "blitz": null, "result": null, "yards_gained": null, "confidence": 0.8}]}
 
 If you see zero plays in these frames, return: {"plays": []}"""
 
@@ -133,17 +142,25 @@ class AiDetectWorker(BaseWorker):
                         g = result.scalar_one()
                         org_id = g.organization_id
 
+                        def _side(p):
+                            s = (p.get("side") or "offense").lower().replace(" ", "_")
+                            return s if s in ("offense", "defense", "special_teams") else "offense"
+
                         events = [
                             Event(
                                 game_id=game_id,
                                 organization_id=org_id,
                                 event_type="play",
+                                side=_side(p),
                                 time_seconds=p.get("time_seconds"),
                                 down=p.get("down"),
                                 distance=p.get("distance"),
                                 field_position=p.get("field_position"),
                                 formation=p.get("formation"),
                                 play_type=p.get("play_type"),
+                                defensive_front=p.get("defensive_front"),
+                                coverage=p.get("coverage"),
+                                blitz=p.get("blitz"),
                                 result=p.get("result"),
                                 yards_gained=p.get("yards_gained"),
                                 personnel=p.get("personnel"),

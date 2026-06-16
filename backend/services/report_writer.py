@@ -42,12 +42,13 @@ async def generate_prose_sections(
 
     off_plays = int(tendency_summary.get("offense_plays", 0) or 0)
     def_plays = int(tendency_summary.get("defense_plays", 0) or 0)
+    st_plays = int(tendency_summary.get("special_teams_plays", 0) or 0)
 
-    # Build the section outline based on which sides have data.
-    outline = ['1. "Executive Summary" (insight_type: "tendency") — scouting overview of the opponent']
+    # Build the section outline based on which phases have data.
+    outline = ['1. "Executive Summary" (insight_type: "tendency") — scouting overview of the opponent across all three phases']
     n = 2
     if off_plays >= 5:
-        outline.append(f'{n}. "Opponent Offense — Tendencies" (insight_type: "run") — run/pass split, down & distance, formations, what to expect; how OUR DEFENSE should prepare')
+        outline.append(f'{n}. "Opponent Offense — Tendencies" (insight_type: "run") — run/pass split, down & distance, formations, personnel; how OUR DEFENSE should prepare')
         n += 1
         outline.append(f'{n}. "Opponent Offense — Situational" (insight_type: "red_zone") — 3rd down, red zone, short yardage tendencies')
         n += 1
@@ -56,7 +57,10 @@ async def generate_prose_sections(
         n += 1
         outline.append(f'{n}. "Opponent Defense — Situational" (insight_type: "defense") — coverage by down, blitz on passing downs')
         n += 1
-    outline.append(f'{n}. "Recommended Game Plan" (insight_type: "red_zone") — concrete, actionable adjustments for both sides of the ball')
+    if st_plays >= 3:
+        outline.append(f'{n}. "Opponent Special Teams" (insight_type: "tendency") — FG range/accuracy, punt/kickoff tendencies, return threats, fakes/trick risk; how OUR special teams should prepare')
+        n += 1
+    outline.append(f'{n}. "Recommended Game Plan" (insight_type: "red_zone") — concrete, actionable adjustments across offense, defense, and special teams')
 
     system = (
         "You are an expert football analyst for CoachLenz writing an OPPONENT SCOUTING report. "
@@ -67,7 +71,7 @@ async def generate_prose_sections(
     )
     prompt = f"""Sport: {sport}
 Report Type: {report_type}
-Total plays: {plays} (opponent offense: {off_plays}, opponent defense: {def_plays})
+Total plays: {plays} (opponent offense: {off_plays}, opponent defense: {def_plays}, special teams: {st_plays})
 
 Tendency Data (JSON):
 {json.dumps(tendency_summary, indent=2)}

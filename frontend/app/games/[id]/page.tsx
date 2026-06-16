@@ -54,6 +54,9 @@ const PERSONNEL = ['11', '12', '21', '22', '10', '20', '13', '00']
 const FRONTS = ['4-3', '3-4', '4-2-5', '3-3-5', '4-4', '5-2', 'Bear', 'Nickel', 'Dime', 'Goal Line', 'Other']
 const COVERAGES = ['Cover 0', 'Cover 1', 'Cover 2', 'Cover 3', 'Cover 4', 'Cover 6', 'Man', 'Zone', 'Tampa 2', 'Other']
 const BLITZES = ['None', 'Edge', 'A-Gap', 'B-Gap', 'Corner', 'Safety', 'Zone Blitz', 'Double A', 'Other']
+// Special teams options
+const ST_UNITS = ['Punt', 'Punt Return', 'Kickoff', 'Kick Return', 'Field Goal', 'PAT', 'Onside Kick', 'Fake', 'Block Attempt']
+const ST_RESULTS = ['Made', 'Missed', 'Good', 'Blocked', 'Returned', 'Touchback', 'Fair Catch', 'Downed', 'Out of Bounds', 'Muffed', 'Fumble', 'Touchdown', 'Fake Success', 'Fake Stopped']
 
 // ── Status Banner ─────────────────────────────────────────────────────────
 function StatusBanner({ status }: { status: string }) {
@@ -87,8 +90,8 @@ function TagForm({
   currentTime: number
   onSave: (data: Partial<TaggedEvent>) => Promise<void>
   saving: boolean
-  side: 'offense' | 'defense'
-  setSide: (s: 'offense' | 'defense') => void
+  side: 'offense' | 'defense' | 'special_teams'
+  setSide: (s: 'offense' | 'defense' | 'special_teams') => void
   opponent: string | null
 }) {
   const [down, setDown] = useState<number | ''>('')
@@ -100,12 +103,13 @@ function TagForm({
   const [front, setFront] = useState('')
   const [coverage, setCoverage] = useState('')
   const [blitz, setBlitz] = useState('')
+  const [stUnit, setStUnit] = useState('')
   const [result, setResult] = useState('')
   const [yards, setYards] = useState<number | ''>('')
 
   const reset = () => {
     setDown(''); setDistance(''); setFormation(''); setPlayType(''); setPersonnel(''); setMotion(false)
-    setFront(''); setCoverage(''); setBlitz(''); setResult(''); setYards('')
+    setFront(''); setCoverage(''); setBlitz(''); setStUnit(''); setResult(''); setYards('')
   }
 
   const handleSave = async () => {
@@ -120,8 +124,11 @@ function TagForm({
     }
     if (side === 'offense') {
       await onSave({ ...common, formation: formation || undefined, play_type: playType || undefined, personnel: personnel || undefined, motion })
-    } else {
+    } else if (side === 'defense') {
       await onSave({ ...common, defensive_front: front || undefined, coverage: coverage || undefined, blitz: blitz || undefined })
+    } else {
+      // special teams: store the unit in play_type, optional formation
+      await onSave({ ...common, play_type: stUnit || undefined, formation: formation || undefined })
     }
     reset()
   }
@@ -143,21 +150,25 @@ function TagForm({
         </div>
       )}
 
-      {/* Offense / Defense toggle */}
-      <div style={{ display: 'flex', background: 'rgba(255,255,255,0.05)', borderRadius: 6, padding: 3 }}>
-        {(['offense', 'defense'] as const).map(s => (
+      {/* Offense / Defense / Special Teams toggle */}
+      <div style={{ display: 'flex', background: 'rgba(255,255,255,0.05)', borderRadius: 6, padding: 3, gap: 2 }}>
+        {([
+          { k: 'offense', label: 'Offense', bg: '#C9A84C', fg: '#1c1c1c' },
+          { k: 'defense', label: 'Defense', bg: '#1a5c2a', fg: '#f8f6f0' },
+          { k: 'special_teams', label: 'Spec. Teams', bg: '#3d5a80', fg: '#f8f6f0' },
+        ] as const).map(s => (
           <button
-            key={s}
-            onClick={() => setSide(s)}
+            key={s.k}
+            onClick={() => setSide(s.k)}
             style={{
-              flex: 1, padding: '8px 0', fontSize: 12, fontWeight: 700, cursor: 'pointer',
-              borderRadius: 4, border: 'none', textTransform: 'uppercase', letterSpacing: '0.06em',
-              background: side === s ? (s === 'offense' ? '#C9A84C' : '#1a5c2a') : 'transparent',
-              color: side === s ? (s === 'offense' ? '#1c1c1c' : '#f8f6f0') : '#7a7a6e',
+              flex: 1, padding: '8px 0', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+              borderRadius: 4, border: 'none', textTransform: 'uppercase', letterSpacing: '0.03em',
+              background: side === s.k ? s.bg : 'transparent',
+              color: side === s.k ? s.fg : '#7a7a6e',
               transition: 'all 0.12s',
             }}
           >
-            {s === 'offense' ? 'Their Offense' : 'Their Defense'}
+            {s.label}
           </button>
         ))}
       </div>
@@ -216,17 +227,22 @@ function TagForm({
             <span style={{ color: motion ? '#f8f6f0' : '#7a7a6e' }}>Motion</span>
           </label>
         </>
-      ) : (
+      ) : side === 'defense' ? (
         <>
           <div>{lbl('FRONT')}{sel(front, setFront, FRONTS)}</div>
           <div>{lbl('COVERAGE')}{sel(coverage, setCoverage, COVERAGES)}</div>
           <div>{lbl('BLITZ')}{sel(blitz, setBlitz, BLITZES)}</div>
         </>
+      ) : (
+        <>
+          <div>{lbl('UNIT / PLAY')}{sel(stUnit, setStUnit, ST_UNITS)}</div>
+          <div>{lbl('FORMATION (optional)')}{sel(formation, setFormation, FORMATIONS)}</div>
+        </>
       )}
 
-      {/* Result & Yards (both sides) */}
+      {/* Result & Yards (all phases) */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px', gap: 8 }}>
-        <div>{lbl('RESULT')}{sel(result, setResult, RESULTS)}</div>
+        <div>{lbl('RESULT')}{sel(result, setResult, side === 'special_teams' ? ST_RESULTS : RESULTS)}</div>
         <div>
           {lbl('YDS')}
           <input type="number" placeholder="0" value={yards}
@@ -237,9 +253,10 @@ function TagForm({
 
       <button onClick={handleSave} disabled={saving} className="btn-primary"
         style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 4,
-          background: side === 'defense' ? '#1a5c2a' : undefined, color: side === 'defense' ? '#f8f6f0' : undefined }}>
+          background: side === 'defense' ? '#1a5c2a' : side === 'special_teams' ? '#3d5a80' : undefined,
+          color: side === 'offense' ? undefined : '#f8f6f0' }}>
         {saving ? <><Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> Saving...</>
-          : <><Tag size={14} /> TAG {side === 'offense' ? 'OFFENSE' : 'DEFENSE'} PLAY</>}
+          : <><Tag size={14} /> TAG {side === 'offense' ? 'OFFENSE' : side === 'defense' ? 'DEFENSE' : 'SPECIAL TEAMS'} PLAY</>}
       </button>
     </div>
   )
@@ -288,17 +305,24 @@ function PlayLog({
           </button>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 12, color: '#f8f6f0', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-              <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.08em', padding: '1px 5px', borderRadius: 3,
-                background: ev.side === 'defense' ? 'rgba(26,92,42,0.4)' : 'rgba(201,168,76,0.2)',
-                color: ev.side === 'defense' ? '#2d8c40' : '#C9A84C' }}>
-                {ev.side === 'defense' ? 'DEF' : 'OFF'}
-              </span>
+              {(() => {
+                const isDef = ev.side === 'defense', isSt = ev.side === 'special_teams'
+                const bg = isDef ? 'rgba(26,92,42,0.4)' : isSt ? 'rgba(61,90,128,0.4)' : 'rgba(201,168,76,0.2)'
+                const fg = isDef ? '#2d8c40' : isSt ? '#7ea0d0' : '#C9A84C'
+                const txt = isDef ? 'DEF' : isSt ? 'ST' : 'OFF'
+                return <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.08em', padding: '1px 5px', borderRadius: 3, background: bg, color: fg }}>{txt}</span>
+              })()}
               {ev.down && <span style={{ color: '#C9A84C', fontWeight: 600 }}>{ev.down}&amp;{ev.distance}</span>}
               {ev.side === 'defense' ? (
                 <>
                   {ev.defensive_front && <span>{ev.defensive_front}</span>}
                   {ev.coverage && <span style={{ color: '#ede9df' }}>{ev.coverage}</span>}
                   {ev.blitz && ev.blitz !== 'None' && <span style={{ color: '#e07070' }}>{ev.blitz} blitz</span>}
+                </>
+              ) : ev.side === 'special_teams' ? (
+                <>
+                  {ev.play_type && <span style={{ color: '#7ea0d0' }}>{ev.play_type}</span>}
+                  {ev.formation && <span style={{ color: '#7a7a6e' }}>{ev.formation}</span>}
                 </>
               ) : (
                 <>
@@ -338,7 +362,7 @@ export default function GamePage() {
   const [currentTime, setCurrentTime] = useState(0)
   const [saving, setSaving] = useState(false)
   const [tab, setTab] = useState<'tag' | 'log'>('tag')
-  const [side, setSide] = useState<'offense' | 'defense'>('offense')
+  const [side, setSide] = useState<'offense' | 'defense' | 'special_teams'>('offense')
   const [reportPending, setReportPending] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [detectStatus, setDetectStatus] = useState<null | {
