@@ -25,22 +25,25 @@ from backend.workers.base import BaseWorker
 
 logger = logging.getLogger(__name__)
 
-# How many seconds between scene-change frame samples (fallback if scene detection yields too few)
-FALLBACK_INTERVAL = 8
+# How many seconds between fixed-interval frame samples (tighter = catch more plays)
+FALLBACK_INTERVAL = 5
 # Max frames to send Claude per batch (controls token cost)
 FRAMES_PER_BATCH = 5
-# Minimum scene-change threshold (0–1). Lower = more sensitive.
-SCENE_THRESHOLD = 0.35
+# Minimum scene-change threshold (0–1). Lower = more sensitive (catches more snaps).
+SCENE_THRESHOLD = 0.27
+# Cap on total frames analyzed per game (recall vs cost). ~MAX_FRAMES/5 Claude calls.
+MAX_FRAMES = 900
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 
 
-DETECTION_PROMPT = """You are an expert football film analyst. I am showing you frames extracted from game film.
-Your job is to identify each individual play and extract structured data from it.
+DETECTION_PROMPT = """You are an expert football film analyst. The frames below are consecutive moments from a short window of game film (a few seconds apart), shown in time order.
 
-For EACH distinct play you can identify, return a JSON object in the array. A "play" is any offensive snap — run, pass, screen, draw, QB sneak, punt, field goal, PAT, kickoff, or extra-point attempt.
+Your job: identify every DISTINCT football play in this window and extract structured data. The consecutive frames often show ONE play developing (pre-snap → snap → result) — in that case return ONE play, using the pre-snap frame to read formation and the later frames to read the result. If the frames clearly span MORE than one snap, return one object per distinct snap.
 
-Skip: timeouts, huddles, sideline shots, commercials, halftime, instant replays, pre-game, post-game.
+Be thorough — catch every snap. A "play" is any snap: run, pass, screen, draw, QB sneak, punt, field goal, PAT, kickoff, or return.
+
+Skip: timeouts, huddles, sideline/crowd shots, commercials, halftime, instant replays (same action shown again), pre-game, post-game, and frames with no live football action.
 
 FIRST classify each play's PHASE (side):
 - "offense": the team being scouted has the ball (running/passing plays)
@@ -244,10 +247,10 @@ class AiDetectWorker(BaseWorker):
 
         frames.sort(key=lambda x: x[1])
 
-        # Cap at 400 frames to control cost; sample evenly across the game.
-        if len(frames) > 400:
-            step = len(frames) // 400
-            frames = frames[::step][:400]
+        # Cap total frames to control cost; sample evenly across the game.
+        if len(frames) > MAX_FRAMES:
+            step = len(frames) // MAX_FRAMES
+            frames = frames[::step][:MAX_FRAMES]
 
         return frames
 
@@ -303,7 +306,7 @@ class AiDetectWorker(BaseWorker):
         return out
 
     def _deduplicate_plays(self, plays: list[dict]) -> list[dict]:
-        """Merge plays that are within 5 seconds of each other (likely the same play detected twice)."""
+        """Merge plays within 8s of each other (likely the same play seen across adjacent frames)."""
         if not plays:
             return []
 
@@ -313,7 +316,7 @@ class AiDetectWorker(BaseWorker):
         for play in sorted_plays[1:]:
             last_time = deduped[-1].get("time_seconds") or 0
             this_time = play.get("time_seconds") or 0
-            if (this_time - last_time) < 5:
+            if (this_time - last_time) < 8:
                 # Keep the one with higher confidence
                 if play.get("confidence", 0) > deduped[-1].get("confidence", 0):
                     deduped[-1] = play
