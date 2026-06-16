@@ -162,17 +162,41 @@ export default function ReportPage() {
               border: '1px solid rgba(45,140,64,0.25)',
               borderRadius: 8, padding: '20px 24px', marginBottom: 28,
             }}>
-              <div style={{ fontSize: 11, letterSpacing: '0.15em', color: '#2d8c40', marginBottom: 8, fontWeight: 700 }}>
-                EXECUTIVE SUMMARY
+              <div style={{ fontSize: 11, letterSpacing: '0.15em', color: '#2d8c40', marginBottom: 10, fontWeight: 700 }}>
+                PLAYS ANALYZED
               </div>
               {typeof report.summary === 'string'
                 ? <p style={{ fontSize: 14, color: '#ede9df', lineHeight: 1.7 }}>{report.summary}</p>
-                : Object.entries(report.summary).map(([k, v]) => (
-                  <div key={k} style={{ marginBottom: 8 }}>
-                    <span style={{ fontSize: 11, color: '#7a7a6e', textTransform: 'capitalize' }}>{k.replace(/_/g, ' ')}: </span>
-                    <span style={{ fontSize: 13, color: '#ede9df' }}>{String(v)}</span>
-                  </div>
-                ))
+                : (() => {
+                    // Only show scalar count fields; skip nested objects (detailed in sections below).
+                    const counts: { label: string; value: any }[] = []
+                    const s: any = report.summary
+                    const order = [
+                      ['total_plays', 'Total Plays'],
+                      ['offense_plays', 'Offense'],
+                      ['defense_plays', 'Defense'],
+                      ['special_teams_plays', 'Special Teams'],
+                    ]
+                    order.forEach(([k, label]) => {
+                      if (typeof s[k] === 'number') counts.push({ label, value: s[k] })
+                    })
+                    // Fallback: any other scalar fields
+                    Object.entries(s).forEach(([k, v]) => {
+                      if (typeof v !== 'object' && !order.find(o => o[0] === k)) {
+                        counts.push({ label: k.replace(/_/g, ' '), value: v })
+                      }
+                    })
+                    return (
+                      <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap' }}>
+                        {counts.map(c => (
+                          <div key={c.label}>
+                            <div style={{ fontSize: 24, fontWeight: 700, color: '#f8f6f0', fontFamily: 'var(--font-bebas)' }}>{String(c.value)}</div>
+                            <div style={{ fontSize: 11, color: '#7a7a6e', textTransform: 'capitalize' }}>{c.label}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  })()
               }
             </div>
           )}

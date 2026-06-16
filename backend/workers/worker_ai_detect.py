@@ -8,6 +8,7 @@ import base64
 import json
 import logging
 import os
+import re
 import subprocess
 import tempfile
 from typing import Optional
@@ -46,9 +47,11 @@ FIRST classify each play's PHASE (side):
 - "defense": the team being scouted is defending (read the defensive front/coverage)
 - "special_teams": punt, kickoff, field goal, PAT, or any return
 
+Each frame above is labeled "Frame N (timestamp Ts)". For each play, identify the single frame where the play is best seen and report its Frame number.
+
 For each play, extract what you can read from scoreboard overlays OR infer from the field view:
 - side: "offense", "defense", or "special_teams"
-- time_seconds: approximate timestamp in the video (integer, estimate from frame position)
+- frame: the Frame NUMBER (1, 2, 3, ...) shown above where this play occurs — REQUIRED, must be one of the frames shown
 - down: 1, 2, 3, or 4 (null if not visible or not applicable)
 - distance: yards to go (null if not visible)
 - field_position: e.g. "OWN 32", "OPP 14" (null if not visible)
@@ -64,7 +67,7 @@ For each play, extract what you can read from scoreboard overlays OR infer from 
 - confidence: 0.0–1.0 — how confident you are this is a real play (not a replay, broadcast segment, etc.)
 
 Return ONLY valid JSON in this exact format, nothing else:
-{"plays": [{"side": "offense", "time_seconds": 0, "down": null, "distance": null, "field_position": null, "formation": null, "play_type": null, "personnel": null, "motion": false, "defensive_front": null, "coverage": null, "blitz": null, "result": null, "yards_gained": null, "confidence": 0.8}]}
+{"plays": [{"side": "offense", "frame": 1, "down": null, "distance": null, "field_position": null, "formation": null, "play_type": null, "personnel": null, "motion": false, "defensive_front": null, "coverage": null, "blitz": null, "result": null, "yards_gained": null, "confidence": 0.8}]}
 
 If you see zero plays in these frames, return: {"plays": []}"""
 
@@ -142,6 +145,16 @@ class AiDetectWorker(BaseWorker):
                         g = result.scalar_one()
                         org_id = g.organization_id
 
+                        # Replace prior auto-detected plays so a re-run doesn't duplicate
+                        # (manually-tagged plays are preserved).
+                        from sqlalchemy import delete as sa_delete
+                        await db.execute(
+                            sa_delete(Event).where(
+                                Event.game_id == game_id,
+                                Event.extra_data["auto_detected"].as_boolean() == True,
+                            )
+                        )
+
                         def _side(p):
                             s = (p.get("side") or "offense").lower().replace(" ", "_")
                             return s if s in ("offense", "defense", "special_teams") else "offense"
@@ -182,64 +195,68 @@ class AiDetectWorker(BaseWorker):
         logger.info(f"[ai_detect] game {game_id}: {total_plays} plays auto-detected")
         return {"game_id": game_id, "plays_detected": total_plays}
 
-    def _extract_frames(self, video_source: str, output_dir: str, duration_seconds: Optional[int]) -> list[str]:
+    def _extract_frames(self, video_source: str, output_dir: str, duration_seconds: Optional[int]):
         """
-        Extract frames at scene changes using ffmpeg's scene filter.
-        Falls back to fixed interval if too few scenes are detected.
+        Extract frames at scene changes, capturing each frame's REAL timestamp
+        (parsed from ffmpeg showinfo). Returns a list of (path, time_seconds)
+        sorted by time. Falls back to fixed-interval frames if scenes are sparse.
         """
         scene_frames_dir = os.path.join(output_dir, "scene")
         os.makedirs(scene_frames_dir, exist_ok=True)
 
-        # Scene-change based extraction
         cmd = [
             "ffmpeg", "-y",
             "-ss", str(SKIP_START_SECONDS),
             "-i", video_source,
             "-vf", f"select='gt(scene,{SCENE_THRESHOLD})',showinfo",
             "-vsync", "vfr",
-            "-frame_pts", "1",
             "-q:v", "3",
             "-f", "image2",
             os.path.join(scene_frames_dir, "frame_%06d.jpg"),
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-
-        scene_frames = sorted(
-            [os.path.join(scene_frames_dir, f) for f in os.listdir(scene_frames_dir) if f.endswith(".jpg")]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+        # showinfo logs one "pts_time:N" per emitted frame, in output order.
+        pts_times = [float(x) for x in re.findall(r"pts_time:([0-9.]+)", result.stderr or "")]
+        scene_files = sorted(
+            os.path.join(scene_frames_dir, f) for f in os.listdir(scene_frames_dir) if f.endswith(".jpg")
         )
+        frames = []
+        for i, f in enumerate(scene_files):
+            # -ss before -i resets PTS to ~0, so add the skip offset back.
+            t = (pts_times[i] if i < len(pts_times) else i * FALLBACK_INTERVAL) + SKIP_START_SECONDS
+            frames.append((f, t))
 
-        # If we got too few scene frames, supplement with fixed-interval frames
         min_expected = max(10, (duration_seconds or 0) // 30)
-        if len(scene_frames) < min_expected:
-            logger.info(f"[ai_detect] Only {len(scene_frames)} scene frames — adding interval frames")
+        if len(frames) < min_expected:
+            logger.info(f"[ai_detect] Only {len(frames)} scene frames — adding interval frames")
             interval_dir = os.path.join(output_dir, "interval")
             os.makedirs(interval_dir, exist_ok=True)
-            cmd2 = [
-                "ffmpeg", "-y",
-                "-ss", str(SKIP_START_SECONDS),
-                "-i", video_source,
-                "-vf", f"fps=1/{FALLBACK_INTERVAL}",
-                "-q:v", "3",
+            subprocess.run([
+                "ffmpeg", "-y", "-ss", str(SKIP_START_SECONDS), "-i", video_source,
+                "-vf", f"fps=1/{FALLBACK_INTERVAL}", "-q:v", "3",
                 os.path.join(interval_dir, "frame_%06d.jpg"),
-            ]
-            subprocess.run(cmd2, capture_output=True, text=True, timeout=300)
-            interval_frames = sorted(
-                [os.path.join(interval_dir, f) for f in os.listdir(interval_dir) if f.endswith(".jpg")]
+            ], capture_output=True, text=True, timeout=900)
+            ifiles = sorted(
+                os.path.join(interval_dir, f) for f in os.listdir(interval_dir) if f.endswith(".jpg")
             )
-            # Merge and deduplicate (use all interval frames since scene detection was sparse)
-            all_frames = sorted(set(scene_frames + interval_frames))
-        else:
-            all_frames = scene_frames
+            for i, f in enumerate(ifiles):
+                frames.append((f, SKIP_START_SECONDS + i * FALLBACK_INTERVAL))
 
-        # Cap at 400 frames to keep cost reasonable (~80 API calls)
-        if len(all_frames) > 400:
-            step = len(all_frames) // 400
-            all_frames = all_frames[::step][:400]
+        frames.sort(key=lambda x: x[1])
 
-        return all_frames
+        # Cap at 400 frames to control cost; sample evenly across the game.
+        if len(frames) > 400:
+            step = len(frames) // 400
+            frames = frames[::step][:400]
 
-    async def _analyze_batch(self, frame_paths: list[str], batch_idx: int, total_batches: int) -> list[dict]:
-        """Send a batch of frames to Claude Vision and parse structured play data."""
+        return frames
+
+    async def _analyze_batch(self, batch, batch_idx: int, total_batches: int) -> list[dict]:
+        """Send a batch of (path, time_seconds) frames to Claude Vision.
+
+        The AI returns which FRAME each play is in; WE assign the real timestamp
+        from that frame — never trusting an AI-estimated time.
+        """
         import anthropic
 
         if not settings.ANTHROPIC_API_KEY:
@@ -247,22 +264,12 @@ class AiDetectWorker(BaseWorker):
 
         client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
 
-        # Build image content blocks
         content = []
-        for i, path in enumerate(frame_paths):
+        for i, (path, t) in enumerate(batch):
             with open(path, "rb") as f:
                 data = base64.standard_b64encode(f.read()).decode()
-            # Approximate timestamp from filename index and batch position
-            frame_num = int(os.path.splitext(os.path.basename(path))[0].split("_")[-1])
-            approx_time = SKIP_START_SECONDS + frame_num * FALLBACK_INTERVAL
-            content.append({
-                "type": "text",
-                "text": f"Frame {i+1} (approx {approx_time}s into video):"
-            })
-            content.append({
-                "type": "image",
-                "source": {"type": "base64", "media_type": "image/jpeg", "data": data}
-            })
+            content.append({"type": "text", "text": f"Frame {i + 1} (timestamp {int(t)}s):"})
+            content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": data}})
 
         content.append({"type": "text", "text": DETECTION_PROMPT})
 
@@ -271,10 +278,7 @@ class AiDetectWorker(BaseWorker):
             max_tokens=2048,
             messages=[{"role": "user", "content": content}],
         )
-
         raw = response.content[0].text.strip()
-
-        # Extract JSON even if Claude wraps it in markdown
         if "```" in raw:
             raw = raw.split("```")[1]
             if raw.startswith("json"):
@@ -283,8 +287,20 @@ class AiDetectWorker(BaseWorker):
         parsed = json.loads(raw)
         plays = parsed.get("plays", [])
 
-        # Filter by confidence
-        return [p for p in plays if p.get("confidence", 0) >= 0.5]
+        out = []
+        tmin, tmax = batch[0][1], batch[-1][1]
+        for p in plays:
+            if p.get("confidence", 0) < 0.5:
+                continue
+            # Assign the REAL timestamp from the frame the AI picked.
+            fr = p.get("frame")
+            if isinstance(fr, (int, float)) and 1 <= int(fr) <= len(batch):
+                p["time_seconds"] = round(batch[int(fr) - 1][1])
+            else:
+                # No valid frame ref — center it in this batch's real window.
+                p["time_seconds"] = round(batch[len(batch) // 2][1])
+            out.append(p)
+        return out
 
     def _deduplicate_plays(self, plays: list[dict]) -> list[dict]:
         """Merge plays that are within 5 seconds of each other (likely the same play detected twice)."""
