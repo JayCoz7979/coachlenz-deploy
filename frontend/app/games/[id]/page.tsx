@@ -4,7 +4,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Sidebar from '@/components/layout/Sidebar'
 import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
-import { ChevronLeft, Tag, Play, Trash2, Clock, FileText, Loader2, CheckCircle, AlertCircle, Zap, Pencil, Check, X } from 'lucide-react'
+import { ChevronLeft, Tag, Play, Trash2, Clock, FileText, Loader2, CheckCircle, AlertCircle, Zap, Pencil, Check, X, Activity } from 'lucide-react'
 import Link from 'next/link'
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -414,6 +414,77 @@ function PlayLog({
   )
 }
 
+// ── Accuracy Panel ─────────────────────────────────────────────────────────
+function AccuracyPanel({ gameId }: { gameId: string }) {
+  const [data, setData] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+
+  const load = () => {
+    setLoading(true)
+    api.get(`/games/${gameId}/accuracy`).then(r => setData(r.data)).catch(() => setData(null)).finally(() => setLoading(false))
+  }
+  useEffect(() => { load() }, [gameId])
+
+  if (loading) return <div style={{ textAlign: 'center', padding: 24 }}><Loader2 size={20} style={{ color: '#C9A84C', animation: 'spin 1s linear infinite' }} /></div>
+
+  if (!data || !data.ready) {
+    return (
+      <div style={{ fontSize: 12, color: '#ede9df', lineHeight: 1.6 }}>
+        <div style={{ fontWeight: 700, color: '#C9A84C', marginBottom: 8 }}>Accuracy Benchmark</div>
+        <p style={{ color: '#7a7a6e', marginBottom: 10 }}>{data?.reason || 'Could not load.'}</p>
+        <div style={{ background: 'rgba(255,255,255,0.04)', borderRadius: 6, padding: 10, marginBottom: 10 }}>
+          <div>Coach-verified plays: <b style={{ color: '#f8f6f0' }}>{data?.truth_plays ?? 0}</b></div>
+          <div>AI-detected plays: <b style={{ color: '#f8f6f0' }}>{data?.ai_plays ?? 0}</b></div>
+        </div>
+        <p style={{ color: '#7a7a6e', fontSize: 11 }}>
+          <b>How it works:</b> Manually tag this game (your tags = ground truth), then run AI auto-detect.
+          We compare the two and score how accurate the AI is.
+        </p>
+        <button onClick={load} className="btn-secondary" style={{ marginTop: 10, fontSize: 11, height: 30, width: '100%' }}>Refresh</button>
+      </div>
+    )
+  }
+
+  const big = (label: string, pct: number, hint: string, color: string) => (
+    <div style={{ flex: 1, background: 'rgba(255,255,255,0.04)', borderRadius: 6, padding: '10px 8px', textAlign: 'center' }}>
+      <div style={{ fontSize: 26, fontWeight: 700, color, fontFamily: 'var(--font-bebas)' }}>{pct}%</div>
+      <div style={{ fontSize: 10, color: '#f8f6f0', fontWeight: 600 }}>{label}</div>
+      <div style={{ fontSize: 9, color: '#7a7a6e', marginTop: 2 }}>{hint}</div>
+    </div>
+  )
+  const attrLabel: Record<string, string> = {
+    side: 'Phase (O/D/ST)', play_type: 'Play type', down: 'Down', distance: 'Distance',
+    formation: 'Formation', defensive_front: 'Front', coverage: 'Coverage', result: 'Result',
+  }
+
+  return (
+    <div style={{ fontSize: 12, color: '#ede9df', display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ fontWeight: 700, color: '#C9A84C' }}>AI Accuracy vs Your Tags</div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        {big('Recall', data.recall_pct, 'plays caught', '#2d8c40')}
+        {big('Precision', data.precision_pct, 'tags real', '#C9A84C')}
+      </div>
+      <div style={{ fontSize: 11, color: '#7a7a6e' }}>
+        Matched {data.matched} of {data.truth_plays} your plays · AI tagged {data.ai_plays} (±{data.match_window_s}s window)
+      </div>
+      <div>
+        <div style={{ fontSize: 10, color: '#7a7a6e', letterSpacing: '0.08em', marginBottom: 6 }}>ATTRIBUTE ACCURACY (on matched plays)</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {Object.entries(data.attribute_accuracy).map(([k, v]: any) => v.total > 0 && (
+            <div key={k} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+              <span style={{ color: '#ede9df' }}>{attrLabel[k] || k}</span>
+              <span style={{ color: v.pct >= 80 ? '#2d8c40' : v.pct >= 50 ? '#C9A84C' : '#e07070', fontWeight: 600 }}>
+                {v.pct}% <span style={{ color: '#7a7a6e', fontWeight: 400 }}>({v.agree}/{v.total})</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <button onClick={load} className="btn-secondary" style={{ fontSize: 11, height: 30 }}>Refresh</button>
+    </div>
+  )
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────
 export default function GamePage() {
   const { id } = useParams<{ id: string }>()
@@ -424,7 +495,7 @@ export default function GamePage() {
   const [events, setEvents] = useState<TaggedEvent[]>([])
   const [currentTime, setCurrentTime] = useState(0)
   const [saving, setSaving] = useState(false)
-  const [tab, setTab] = useState<'tag' | 'log'>('tag')
+  const [tab, setTab] = useState<'tag' | 'log' | 'accuracy'>('tag')
   const [side, setSide] = useState<'offense' | 'defense' | 'special_teams'>('offense')
   const [reportPending, setReportPending] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
@@ -726,20 +797,22 @@ export default function GamePage() {
           }}>
             {/* Tabs */}
             <div style={{ display: 'flex', borderBottom: '1px solid rgba(255,255,255,0.06)', flexShrink: 0 }}>
-              {(['tag', 'log'] as const).map(t => (
+              {(['tag', 'log', 'accuracy'] as const).map(t => (
                 <button
                   key={t}
                   onClick={() => setTab(t)}
                   style={{
-                    flex: 1, padding: '11px 0', fontSize: 12, fontWeight: 600,
-                    letterSpacing: '0.08em', textTransform: 'uppercase',
+                    flex: 1, padding: '11px 0', fontSize: 11, fontWeight: 600,
+                    letterSpacing: '0.04em', textTransform: 'uppercase',
                     background: 'none', border: 'none', cursor: 'pointer',
                     color: tab === t ? '#C9A84C' : '#7a7a6e',
                     borderBottom: tab === t ? '2px solid #C9A84C' : '2px solid transparent',
                     marginBottom: -1,
                   }}
                 >
-                  {t === 'tag' ? <><Tag size={12} style={{ display: 'inline', marginRight: 5 }} />Tag Play</> : <><FileText size={12} style={{ display: 'inline', marginRight: 5 }} />Play Log ({events.length})</>}
+                  {t === 'tag' ? <><Tag size={11} style={{ display: 'inline', marginRight: 4 }} />Tag</>
+                    : t === 'log' ? <><FileText size={11} style={{ display: 'inline', marginRight: 4 }} />Log ({events.length})</>
+                    : <><Activity size={11} style={{ display: 'inline', marginRight: 4 }} />Accuracy</>}
                 </button>
               ))}
             </div>
@@ -748,7 +821,9 @@ export default function GamePage() {
             <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
               {tab === 'tag'
                 ? <TagForm currentTime={currentTime} onSave={handleSaveTag} saving={saving} side={side} setSide={setSide} opponent={game.opponent} />
-                : <PlayLog events={events} onDelete={handleDelete} onSeek={handleSeek} onUpdate={handleUpdate} />
+                : tab === 'log'
+                ? <PlayLog events={events} onDelete={handleDelete} onSeek={handleSeek} onUpdate={handleUpdate} />
+                : <AccuracyPanel gameId={id} />
               }
             </div>
 

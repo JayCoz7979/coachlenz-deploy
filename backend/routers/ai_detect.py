@@ -10,6 +10,91 @@ from backend.services.auth import get_current_user
 
 router = APIRouter(prefix="/games", tags=["ai-detect"])
 
+ACCURACY_MATCH_WINDOW_S = 15  # a predicted play within this many seconds of a truth play is a "match"
+
+
+def _is_ai(e) -> bool:
+    return bool((e.extra_data or {}).get("auto_detected"))
+
+
+def _norm(v) -> str:
+    return ("" if v is None else str(v)).strip().lower()
+
+
+@router.get("/{game_id}/accuracy")
+async def accuracy_benchmark(
+    game_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Measure AI detection accuracy against coach-verified (manual) plays.
+
+    Ground truth = manually tagged plays. Prediction = AI auto-detected plays.
+    Returns recall, precision, and per-attribute agreement on matched plays.
+    """
+    res = await db.execute(
+        select(Event).where(Event.game_id == game_id, Event.organization_id == user.organization_id)
+    )
+    events = res.scalars().all()
+    truth = sorted([e for e in events if not _is_ai(e)], key=lambda e: e.time_seconds or 0)
+    pred = sorted([e for e in events if _is_ai(e)], key=lambda e: e.time_seconds or 0)
+
+    if not truth:
+        return {
+            "ready": False,
+            "reason": "No coach-verified plays yet. Manually tag this game (ground truth), then run AI auto-detect, then check accuracy.",
+            "truth_plays": 0, "ai_plays": len(pred),
+        }
+    if not pred:
+        return {
+            "ready": False,
+            "reason": "No AI-detected plays yet. Run AI auto-detect on this game, then check accuracy.",
+            "truth_plays": len(truth), "ai_plays": 0,
+        }
+
+    # Greedy nearest-in-time matching, one prediction per truth play.
+    used = set()
+    matches = []
+    for t in truth:
+        best_i, best_d = None, ACCURACY_MATCH_WINDOW_S + 1
+        for i, p in enumerate(pred):
+            if i in used:
+                continue
+            d = abs((p.time_seconds or 0) - (t.time_seconds or 0))
+            if d <= ACCURACY_MATCH_WINDOW_S and d < best_d:
+                best_i, best_d = i, d
+        if best_i is not None:
+            used.add(best_i)
+            matches.append((t, pred[best_i]))
+
+    recall = len(matches) / len(truth) if truth else 0
+    precision = len(matches) / len(pred) if pred else 0
+
+    # Per-attribute agreement on matched pairs (only where the truth has a value).
+    fields = ["side", "play_type", "down", "distance", "formation", "defensive_front", "coverage", "result"]
+    attr = {}
+    for f in fields:
+        agree = total = 0
+        for t, p in matches:
+            tv = getattr(t, f, None)
+            if tv is None or tv == "":
+                continue
+            total += 1
+            if _norm(tv) == _norm(getattr(p, f, None)):
+                agree += 1
+        attr[f] = {"agree": agree, "total": total, "pct": round(agree / total * 100, 1) if total else None}
+
+    return {
+        "ready": True,
+        "truth_plays": len(truth),
+        "ai_plays": len(pred),
+        "matched": len(matches),
+        "recall_pct": round(recall * 100, 1),       # of real plays, how many AI caught
+        "precision_pct": round(precision * 100, 1),  # of AI plays, how many were real
+        "match_window_s": ACCURACY_MATCH_WINDOW_S,
+        "attribute_accuracy": attr,
+    }
+
 
 @router.post("/{game_id}/auto-detect")
 async def trigger_auto_detect(
