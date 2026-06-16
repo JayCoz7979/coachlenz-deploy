@@ -14,6 +14,7 @@ router = APIRouter(prefix="/events", tags=["events"])
 class EventCreate(BaseModel):
     game_id: str
     event_type: str
+    side: Optional[str] = "offense"
     clip_id: Optional[str] = None
     time_seconds: Optional[float] = None
     down: Optional[int] = None
@@ -22,6 +23,9 @@ class EventCreate(BaseModel):
     hash_position: Optional[str] = None
     formation: Optional[str] = None
     play_type: Optional[str] = None
+    defensive_front: Optional[str] = None
+    coverage: Optional[str] = None
+    blitz: Optional[str] = None
     result: Optional[str] = None
     yards_gained: Optional[int] = None
     personnel: Optional[str] = None
@@ -32,7 +36,13 @@ class EventCreate(BaseModel):
 async def list_events(game_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Event).where(Event.game_id == game_id, Event.organization_id == user.organization_id))
     events = result.scalars().all()
-    return [{"id": str(e.id), "event_type": e.event_type, "down": e.down, "distance": e.distance, "formation": e.formation, "play_type": e.play_type, "result": e.result, "yards_gained": e.yards_gained} for e in events]
+    return [{
+        "id": str(e.id), "event_type": e.event_type, "side": e.side or "offense",
+        "down": e.down, "distance": e.distance, "formation": e.formation, "play_type": e.play_type,
+        "defensive_front": e.defensive_front, "coverage": e.coverage, "blitz": e.blitz,
+        "result": e.result, "yards_gained": e.yards_gained, "personnel": e.personnel,
+        "motion": e.motion, "time_seconds": e.time_seconds, "extra_data": e.extra_data,
+    } for e in events]
 
 @router.post("")
 async def create_event(body: EventCreate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):

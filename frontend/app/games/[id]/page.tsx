@@ -22,11 +22,15 @@ interface GameDetail {
 interface TaggedEvent {
   id: string
   event_type: string
+  side?: string
   time_seconds: number | null
   down: number | null
   distance: number | null
   formation: string | null
   play_type: string | null
+  defensive_front?: string | null
+  coverage?: string | null
+  blitz?: string | null
   result: string | null
   yards_gained: number | null
   personnel: string | null
@@ -46,6 +50,10 @@ const FORMATIONS = ['I-Form', 'Shotgun', 'Pistol', 'Singleback', 'Wildcat', 'Emp
 const PLAY_TYPES = ['Run', 'Pass', 'Screen', 'Draw', 'Option', 'RPO', 'QB Sneak', 'Punt', 'Kickoff', 'Field Goal', 'PAT', 'Other']
 const RESULTS = ['Gain', 'Loss', 'Incomplete', 'Touchdown', 'Interception', 'Fumble', 'Sack', 'Penalty', 'First Down', 'Turnover on Downs', 'Punt', 'Made', 'Missed']
 const PERSONNEL = ['11', '12', '21', '22', '10', '20', '13', '00']
+// Defensive options
+const FRONTS = ['4-3', '3-4', '4-2-5', '3-3-5', '4-4', '5-2', 'Bear', 'Nickel', 'Dime', 'Goal Line', 'Other']
+const COVERAGES = ['Cover 0', 'Cover 1', 'Cover 2', 'Cover 3', 'Cover 4', 'Cover 6', 'Man', 'Zone', 'Tampa 2', 'Other']
+const BLITZES = ['None', 'Edge', 'A-Gap', 'B-Gap', 'Corner', 'Safety', 'Zone Blitz', 'Double A', 'Other']
 
 // ── Status Banner ─────────────────────────────────────────────────────────
 function StatusBanner({ status }: { status: string }) {
@@ -72,187 +80,166 @@ function TagForm({
   currentTime,
   onSave,
   saving,
+  side,
+  setSide,
+  opponent,
 }: {
   currentTime: number
   onSave: (data: Partial<TaggedEvent>) => Promise<void>
   saving: boolean
+  side: 'offense' | 'defense'
+  setSide: (s: 'offense' | 'defense') => void
+  opponent: string | null
 }) {
   const [down, setDown] = useState<number | ''>('')
   const [distance, setDistance] = useState<number | ''>('')
   const [formation, setFormation] = useState('')
   const [playType, setPlayType] = useState('')
-  const [result, setResult] = useState('')
-  const [yards, setYards] = useState<number | ''>('')
   const [personnel, setPersonnel] = useState('')
   const [motion, setMotion] = useState(false)
+  const [front, setFront] = useState('')
+  const [coverage, setCoverage] = useState('')
+  const [blitz, setBlitz] = useState('')
+  const [result, setResult] = useState('')
+  const [yards, setYards] = useState<number | ''>('')
+
+  const reset = () => {
+    setDown(''); setDistance(''); setFormation(''); setPlayType(''); setPersonnel(''); setMotion(false)
+    setFront(''); setCoverage(''); setBlitz(''); setResult(''); setYards('')
+  }
 
   const handleSave = async () => {
-    await onSave({
+    const common = {
       event_type: 'play',
+      side,
       time_seconds: currentTime,
       down: down === '' ? undefined : Number(down),
       distance: distance === '' ? undefined : Number(distance),
-      formation: formation || undefined,
-      play_type: playType || undefined,
       result: result || undefined,
       yards_gained: yards === '' ? undefined : Number(yards),
-      personnel: personnel || undefined,
-      motion,
-    })
-    // reset
-    setDown('')
-    setDistance('')
-    setFormation('')
-    setPlayType('')
-    setResult('')
-    setYards('')
-    setPersonnel('')
-    setMotion(false)
+    }
+    if (side === 'offense') {
+      await onSave({ ...common, formation: formation || undefined, play_type: playType || undefined, personnel: personnel || undefined, motion })
+    } else {
+      await onSave({ ...common, defensive_front: front || undefined, coverage: coverage || undefined, blitz: blitz || undefined })
+    }
+    reset()
   }
 
   const sel = (val: string, set: (v: string) => void, options: string[]) => (
-    <select
-      value={val}
-      onChange={e => set(e.target.value)}
-      className="input"
-      style={{ fontSize: 12, padding: '6px 10px', height: 36 }}
-    >
+    <select value={val} onChange={e => set(e.target.value)} className="input" style={{ fontSize: 12, padding: '6px 10px', height: 36 }}>
       <option value="">—</option>
       {options.map(o => <option key={o} value={o}>{o}</option>)}
     </select>
   )
+  const lbl = (t: string) => <div style={{ fontSize: 10, color: '#7a7a6e', marginBottom: 4, letterSpacing: '0.08em' }}>{t}</div>
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      {/* Time stamp */}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 8,
-        background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.2)',
-        borderRadius: 4, padding: '6px 12px',
-      }}>
+      {/* Scouting context */}
+      {opponent && (
+        <div style={{ fontSize: 11, color: '#7a7a6e' }}>
+          Scouting <span style={{ color: '#f8f6f0', fontWeight: 600 }}>{opponent}</span> — tag what they do on each side of the ball.
+        </div>
+      )}
+
+      {/* Offense / Defense toggle */}
+      <div style={{ display: 'flex', background: 'rgba(255,255,255,0.05)', borderRadius: 6, padding: 3 }}>
+        {(['offense', 'defense'] as const).map(s => (
+          <button
+            key={s}
+            onClick={() => setSide(s)}
+            style={{
+              flex: 1, padding: '8px 0', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+              borderRadius: 4, border: 'none', textTransform: 'uppercase', letterSpacing: '0.06em',
+              background: side === s ? (s === 'offense' ? '#C9A84C' : '#1a5c2a') : 'transparent',
+              color: side === s ? (s === 'offense' ? '#1c1c1c' : '#f8f6f0') : '#7a7a6e',
+              transition: 'all 0.12s',
+            }}
+          >
+            {s === 'offense' ? 'Their Offense' : 'Their Defense'}
+          </button>
+        ))}
+      </div>
+
+      {/* Timestamp */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.2)', borderRadius: 4, padding: '6px 12px' }}>
         <Clock size={13} style={{ color: '#C9A84C' }} />
-        <span style={{ fontFamily: 'var(--font-dm-mono)', fontSize: 13, color: '#C9A84C' }}>
-          {fmtTime(currentTime)}
-        </span>
+        <span style={{ fontFamily: 'var(--font-dm-mono)', fontSize: 13, color: '#C9A84C' }}>{fmtTime(currentTime)}</span>
         <span style={{ fontSize: 11, color: '#7a7a6e', marginLeft: 4 }}>current timestamp</span>
       </div>
 
-      {/* Down & Distance */}
+      {/* Down & Distance (both sides) */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
         <div>
-          <div style={{ fontSize: 10, color: '#7a7a6e', marginBottom: 4, letterSpacing: '0.08em' }}>DOWN</div>
+          {lbl('DOWN')}
           <div style={{ display: 'flex', gap: 4 }}>
             {[1, 2, 3, 4].map(d => (
-              <button
-                key={d}
-                onClick={() => setDown(down === d ? '' : d)}
-                style={{
-                  flex: 1, height: 32, borderRadius: 3, fontSize: 13, fontWeight: 600, cursor: 'pointer',
-                  background: down === d ? '#C9A84C' : 'rgba(255,255,255,0.05)',
-                  color: down === d ? '#1c1c1c' : '#f8f6f0',
-                  border: down === d ? 'none' : '1px solid rgba(255,255,255,0.1)',
-                  transition: 'all 0.12s',
-                }}
-              >{d}</button>
+              <button key={d} onClick={() => setDown(down === d ? '' : d)}
+                style={{ flex: 1, height: 32, borderRadius: 3, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                  background: down === d ? '#C9A84C' : 'rgba(255,255,255,0.05)', color: down === d ? '#1c1c1c' : '#f8f6f0',
+                  border: down === d ? 'none' : '1px solid rgba(255,255,255,0.1)' }}>{d}</button>
             ))}
           </div>
         </div>
         <div>
-          <div style={{ fontSize: 10, color: '#7a7a6e', marginBottom: 4, letterSpacing: '0.08em' }}>DISTANCE</div>
-          <input
-            type="number"
-            min={0} max={99}
-            placeholder="yds"
-            value={distance}
+          {lbl('DISTANCE')}
+          <input type="number" min={0} max={99} placeholder="yds" value={distance}
             onChange={e => setDistance(e.target.value === '' ? '' : Number(e.target.value))}
-            className="input"
-            style={{ fontSize: 13, padding: '6px 10px', height: 36, width: '100%' }}
-          />
+            className="input" style={{ fontSize: 13, padding: '6px 10px', height: 36, width: '100%' }} />
         </div>
       </div>
 
-      {/* Formation */}
-      <div>
-        <div style={{ fontSize: 10, color: '#7a7a6e', marginBottom: 4, letterSpacing: '0.08em' }}>FORMATION</div>
-        {sel(formation, setFormation, FORMATIONS)}
-      </div>
+      {side === 'offense' ? (
+        <>
+          <div>{lbl('FORMATION')}{sel(formation, setFormation, FORMATIONS)}</div>
+          <div>{lbl('PLAY TYPE')}{sel(playType, setPlayType, PLAY_TYPES)}</div>
+          <div>
+            {lbl('PERSONNEL')}
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+              {PERSONNEL.map(p => (
+                <button key={p} onClick={() => setPersonnel(personnel === p ? '' : p)}
+                  style={{ padding: '4px 10px', borderRadius: 3, fontSize: 12, cursor: 'pointer',
+                    background: personnel === p ? 'rgba(26,92,42,0.5)' : 'rgba(255,255,255,0.05)',
+                    color: personnel === p ? '#2d8c40' : '#ede9df',
+                    border: personnel === p ? '1px solid #2d8c40' : '1px solid rgba(255,255,255,0.08)',
+                    fontFamily: 'var(--font-dm-mono)' }}>{p}</button>
+              ))}
+            </div>
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
+            <div onClick={() => setMotion(!motion)} style={{ width: 36, height: 20, borderRadius: 10, position: 'relative', cursor: 'pointer',
+              background: motion ? '#1a5c2a' : 'rgba(255,255,255,0.1)', border: motion ? '1px solid #2d8c40' : '1px solid rgba(255,255,255,0.15)' }}>
+              <div style={{ position: 'absolute', top: 2, left: motion ? 16 : 2, width: 14, height: 14, borderRadius: '50%',
+                background: motion ? '#C9A84C' : '#7a7a6e', transition: 'left 0.15s' }} />
+            </div>
+            <span style={{ color: motion ? '#f8f6f0' : '#7a7a6e' }}>Motion</span>
+          </label>
+        </>
+      ) : (
+        <>
+          <div>{lbl('FRONT')}{sel(front, setFront, FRONTS)}</div>
+          <div>{lbl('COVERAGE')}{sel(coverage, setCoverage, COVERAGES)}</div>
+          <div>{lbl('BLITZ')}{sel(blitz, setBlitz, BLITZES)}</div>
+        </>
+      )}
 
-      {/* Play type */}
-      <div>
-        <div style={{ fontSize: 10, color: '#7a7a6e', marginBottom: 4, letterSpacing: '0.08em' }}>PLAY TYPE</div>
-        {sel(playType, setPlayType, PLAY_TYPES)}
-      </div>
-
-      {/* Result & Yards */}
+      {/* Result & Yards (both sides) */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px', gap: 8 }}>
+        <div>{lbl('RESULT')}{sel(result, setResult, RESULTS)}</div>
         <div>
-          <div style={{ fontSize: 10, color: '#7a7a6e', marginBottom: 4, letterSpacing: '0.08em' }}>RESULT</div>
-          {sel(result, setResult, RESULTS)}
-        </div>
-        <div>
-          <div style={{ fontSize: 10, color: '#7a7a6e', marginBottom: 4, letterSpacing: '0.08em' }}>YDS</div>
-          <input
-            type="number"
-            placeholder="0"
-            value={yards}
+          {lbl('YDS')}
+          <input type="number" placeholder="0" value={yards}
             onChange={e => setYards(e.target.value === '' ? '' : Number(e.target.value))}
-            className="input"
-            style={{ fontSize: 13, padding: '6px 10px', height: 36, width: '100%' }}
-          />
+            className="input" style={{ fontSize: 13, padding: '6px 10px', height: 36, width: '100%' }} />
         </div>
       </div>
 
-      {/* Personnel */}
-      <div>
-        <div style={{ fontSize: 10, color: '#7a7a6e', marginBottom: 4, letterSpacing: '0.08em' }}>PERSONNEL</div>
-        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-          {PERSONNEL.map(p => (
-            <button
-              key={p}
-              onClick={() => setPersonnel(personnel === p ? '' : p)}
-              style={{
-                padding: '4px 10px', borderRadius: 3, fontSize: 12, cursor: 'pointer',
-                background: personnel === p ? 'rgba(26,92,42,0.5)' : 'rgba(255,255,255,0.05)',
-                color: personnel === p ? '#2d8c40' : '#ede9df',
-                border: personnel === p ? '1px solid #2d8c40' : '1px solid rgba(255,255,255,0.08)',
-                fontFamily: 'var(--font-dm-mono)',
-              }}
-            >{p}</button>
-          ))}
-        </div>
-      </div>
-
-      {/* Motion toggle */}
-      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
-        <div
-          onClick={() => setMotion(!motion)}
-          style={{
-            width: 36, height: 20, borderRadius: 10, position: 'relative', cursor: 'pointer',
-            background: motion ? '#1a5c2a' : 'rgba(255,255,255,0.1)',
-            transition: 'background 0.2s',
-            border: motion ? '1px solid #2d8c40' : '1px solid rgba(255,255,255,0.15)',
-          }}
-        >
-          <div style={{
-            position: 'absolute', top: 2, left: motion ? 16 : 2, width: 14, height: 14,
-            borderRadius: '50%', background: motion ? '#C9A84C' : '#7a7a6e',
-            transition: 'left 0.15s, background 0.15s',
-          }} />
-        </div>
-        <span style={{ color: motion ? '#f8f6f0' : '#7a7a6e' }}>Motion</span>
-      </label>
-
-      {/* Tag button */}
-      <button
-        onClick={handleSave}
-        disabled={saving}
-        className="btn-primary"
-        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 4 }}
-      >
-        {saving
-          ? <><Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> Saving...</>
-          : <><Tag size={14} /> TAG PLAY</>
-        }
+      <button onClick={handleSave} disabled={saving} className="btn-primary"
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 4,
+          background: side === 'defense' ? '#1a5c2a' : undefined, color: side === 'defense' ? '#f8f6f0' : undefined }}>
+        {saving ? <><Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> Saving...</>
+          : <><Tag size={14} /> TAG {side === 'offense' ? 'OFFENSE' : 'DEFENSE'} PLAY</>}
       </button>
     </div>
   )
@@ -300,13 +287,28 @@ function PlayLog({
             {fmtTime(ev.time_seconds)}
           </button>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 12, color: '#f8f6f0', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 12, color: '#f8f6f0', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+              <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.08em', padding: '1px 5px', borderRadius: 3,
+                background: ev.side === 'defense' ? 'rgba(26,92,42,0.4)' : 'rgba(201,168,76,0.2)',
+                color: ev.side === 'defense' ? '#2d8c40' : '#C9A84C' }}>
+                {ev.side === 'defense' ? 'DEF' : 'OFF'}
+              </span>
               {ev.down && <span style={{ color: '#C9A84C', fontWeight: 600 }}>{ev.down}&amp;{ev.distance}</span>}
-              {ev.formation && <span>{ev.formation}</span>}
-              {ev.play_type && <span style={{ color: '#ede9df' }}>{ev.play_type}</span>}
+              {ev.side === 'defense' ? (
+                <>
+                  {ev.defensive_front && <span>{ev.defensive_front}</span>}
+                  {ev.coverage && <span style={{ color: '#ede9df' }}>{ev.coverage}</span>}
+                  {ev.blitz && ev.blitz !== 'None' && <span style={{ color: '#e07070' }}>{ev.blitz} blitz</span>}
+                </>
+              ) : (
+                <>
+                  {ev.formation && <span>{ev.formation}</span>}
+                  {ev.play_type && <span style={{ color: '#ede9df' }}>{ev.play_type}</span>}
+                  {ev.motion && <span style={{ fontSize: 10, color: '#7a7a6e', fontStyle: 'italic' }}>motion</span>}
+                </>
+              )}
               {ev.result && <span style={{ color: ev.result === 'Touchdown' ? '#2d8c40' : ev.result === 'Interception' || ev.result === 'Fumble' ? '#e07070' : '#7a7a6e' }}>{ev.result}</span>}
               {ev.yards_gained != null && <span style={{ color: '#7a7a6e' }}>{ev.yards_gained > 0 ? '+' : ''}{ev.yards_gained} yds</span>}
-              {ev.motion && <span style={{ fontSize: 10, color: '#7a7a6e', fontStyle: 'italic' }}>motion</span>}
               {ev.extra_data?.auto_detected && (
                 <span style={{ fontSize: 9, color: '#C9A84C', letterSpacing: '0.1em', opacity: 0.7 }}>AI</span>
               )}
@@ -336,6 +338,7 @@ export default function GamePage() {
   const [currentTime, setCurrentTime] = useState(0)
   const [saving, setSaving] = useState(false)
   const [tab, setTab] = useState<'tag' | 'log'>('tag')
+  const [side, setSide] = useState<'offense' | 'defense'>('offense')
   const [reportPending, setReportPending] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [detectStatus, setDetectStatus] = useState<null | {
@@ -650,7 +653,7 @@ export default function GamePage() {
             {/* Tab content */}
             <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
               {tab === 'tag'
-                ? <TagForm currentTime={currentTime} onSave={handleSaveTag} saving={saving} />
+                ? <TagForm currentTime={currentTime} onSave={handleSaveTag} saving={saving} side={side} setSide={setSide} opponent={game.opponent} />
                 : <PlayLog events={events} onDelete={handleDelete} onSeek={handleSeek} />
               }
             </div>

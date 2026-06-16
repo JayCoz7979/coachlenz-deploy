@@ -138,6 +138,48 @@ def _down_summary(plays) -> dict:
     }
 
 
+def analyze_football_defense(events) -> Dict[str, Any]:
+    """Defensive tendencies for the scouted team's defense (front, coverage, blitz)."""
+    plays = [e for e in events if _is_play(e)]
+    total = len(plays)
+    if total == 0:
+        return {"total_plays": 0}
+
+    fronts = Counter(e.defensive_front for e in plays if e.defensive_front)
+    coverages = Counter(e.coverage for e in plays if e.coverage)
+    blitzes = [e for e in plays if e.blitz and e.blitz.lower() not in ("", "none", "no")]
+    blitz_pct = round(len(blitzes) / total * 100, 1) if total else 0
+    blitz_types = Counter(e.blitz for e in blitzes if e.blitz)
+
+    # Coverage by down
+    by_down = defaultdict(list)
+    for e in plays:
+        if e.down:
+            by_down[e.down].append(e)
+    coverage_by_down = {}
+    for down, dp in by_down.items():
+        cov = Counter(p.coverage for p in dp if p.coverage)
+        coverage_by_down[f"down_{down}"] = {"total": len(dp), "coverages": dict(cov.most_common(4))}
+
+    # Blitz on passing downs (3rd & 6+)
+    passing_downs = [e for e in plays if e.down == 3 and e.distance and e.distance >= 6]
+    pd_blitz = [e for e in passing_downs if e in blitzes]
+    pd_blitz_pct = round(len(pd_blitz) / len(passing_downs) * 100, 1) if passing_downs else 0
+
+    results = Counter(e.result for e in plays if e.result)
+
+    return {
+        "total_plays": total,
+        "top_fronts": dict(fronts.most_common(8)),
+        "top_coverages": dict(coverages.most_common(8)),
+        "blitz_pct": blitz_pct,
+        "blitz_types": dict(blitz_types.most_common(8)),
+        "coverage_by_down": coverage_by_down,
+        "third_long_blitz_pct": pd_blitz_pct,
+        "play_results": dict(results.most_common(10)),
+    }
+
+
 def _is_red_zone(field_position: str) -> bool:
     try:
         parts = field_position.split()

@@ -40,27 +40,44 @@ async def generate_prose_sections(
             ),
         }]
 
+    off_plays = int(tendency_summary.get("offense_plays", 0) or 0)
+    def_plays = int(tendency_summary.get("defense_plays", 0) or 0)
+
+    # Build the section outline based on which sides have data.
+    outline = ['1. "Executive Summary" (insight_type: "tendency") — scouting overview of the opponent']
+    n = 2
+    if off_plays >= 5:
+        outline.append(f'{n}. "Opponent Offense — Tendencies" (insight_type: "run") — run/pass split, down & distance, formations, what to expect; how OUR DEFENSE should prepare')
+        n += 1
+        outline.append(f'{n}. "Opponent Offense — Situational" (insight_type: "red_zone") — 3rd down, red zone, short yardage tendencies')
+        n += 1
+    if def_plays >= 5:
+        outline.append(f'{n}. "Opponent Defense — Coverages & Fronts" (insight_type: "defense") — fronts, coverages, blitz rate; how OUR OFFENSE should attack it')
+        n += 1
+        outline.append(f'{n}. "Opponent Defense — Situational" (insight_type: "defense") — coverage by down, blitz on passing downs')
+        n += 1
+    outline.append(f'{n}. "Recommended Game Plan" (insight_type: "red_zone") — concrete, actionable adjustments for both sides of the ball')
+
     system = (
-        "You are an expert football and sports analyst for CoachLenz. "
-        "Write clear, actionable tendency analysis for coaches in direct, professional language. "
-        "Focus on specific, exploitable patterns backed by the data provided."
+        "You are an expert football analyst for CoachLenz writing an OPPONENT SCOUTING report. "
+        "Write clear, actionable analysis for coaches in direct, professional language. "
+        "Offensive data = the opponent on offense (advise how to defend them). "
+        "Defensive data = the opponent on defense (advise how to attack them). "
+        "Focus on specific, exploitable patterns backed only by the data provided."
     )
     prompt = f"""Sport: {sport}
 Report Type: {report_type}
-Total plays analyzed: {plays}
+Total plays: {plays} (opponent offense: {off_plays}, opponent defense: {def_plays})
 
 Tendency Data (JSON):
 {json.dumps(tendency_summary, indent=2)}
 
-Write a tendency analysis report as a JSON array of sections. Use EXACTLY these four sections in order:
-1. "Executive Summary" (insight_type: "tendency")
-2. "Key Tendencies & Patterns" (insight_type: "run")
-3. "Situational Analysis" (insight_type: "defense")
-4. "Recommended Adjustments" (insight_type: "red_zone")
+Write an opponent scouting report as a JSON array of sections, using EXACTLY these sections in order:
+{chr(10).join(outline)}
 
 Each section is an object: {{"heading": "...", "insight_type": "...", "body": "..."}}.
-The "body" is multi-paragraph plain text (use \\n\\n between paragraphs). Be specific to the data —
-cite real numbers/percentages from the tendency data. Do not invent data not present.
+The "body" is multi-paragraph plain text (use \\n\\n between paragraphs). Cite real numbers/percentages
+from the data. Do NOT invent data not present. If a side has little data, say so briefly.
 
 Return ONLY the JSON array, nothing else."""
 
