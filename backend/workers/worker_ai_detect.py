@@ -37,40 +37,56 @@ MAX_FRAMES = 900
 SKIP_START_SECONDS = 5
 
 
-DETECTION_PROMPT = """You are an expert football film analyst. The frames below are consecutive moments from a short window of game film (a few seconds apart), shown in time order.
+DETECTION_PROMPT = """You are the most thorough football film analyst in the world. The frames below are consecutive moments from a short window of game film, shown in time order.
 
-Your job: identify every DISTINCT football play in this window and extract structured data. The consecutive frames often show ONE play developing (pre-snap → snap → result) — in that case return ONE play, using the pre-snap frame to read formation and the later frames to read the result. If the frames clearly span MORE than one snap, return one object per distinct snap.
+Your job: identify every DISTINCT football play and extract the deepest possible structured data from what you can see. The consecutive frames often show ONE play developing (pre-snap → snap → result) — in that case return ONE play, using the pre-snap frame to read alignment and the later frames to confirm the result. If frames clearly span more than one snap, return one object per distinct snap.
 
 Be thorough — catch every snap. A "play" is any snap: run, pass, screen, draw, QB sneak, punt, field goal, PAT, kickoff, or return.
 
 Skip: timeouts, huddles, sideline/crowd shots, commercials, halftime, instant replays (same action shown again), pre-game, post-game, and frames with no live football action.
 
-FIRST classify each play's PHASE (side):
-- "offense": the team being scouted has the ball (running/passing plays)
-- "defense": the team being scouted is defending (read the defensive front/coverage)
+PHASE (side) — classify first:
+- "offense": the team being scouted has the ball
+- "defense": the team being scouted is on defense
 - "special_teams": punt, kickoff, field goal, PAT, or any return
 
-Each frame above is labeled "Frame N (timestamp Ts)". For each play, identify the single frame where the play is best seen and report its Frame number.
+Each frame is labeled "Frame N (timestamp Ts)". For each play, pick the single best frame and report its number.
 
-For each play, extract what you can read from scoreboard overlays OR infer from the field view:
+EXTRACT THE FOLLOWING — use null only if genuinely not determinable from the film:
+
+CORE (every play):
 - side: "offense", "defense", or "special_teams"
-- frame: the Frame NUMBER (1, 2, 3, ...) shown above where this play occurs — REQUIRED, must be one of the frames shown
-- down: 1, 2, 3, or 4 (null if not visible or not applicable)
-- distance: yards to go (null if not visible)
-- field_position: e.g. "OWN 32", "OPP 14" (null if not visible)
-- formation: offensive formation (if side=offense) — "Shotgun", "I-Form", "Pistol", "Singleback", "Wildcat", "Empty", "Trips", "Bunch", "Pro Set", or "Other"
-- play_type: if side=offense — "Run", "Pass", "Screen", "Draw", "Option", "RPO", "QB Sneak", "Other"; if side=special_teams — "Punt", "Kickoff", "Field Goal", "PAT", "Punt Return", "Kick Return", "Onside Kick", "Fake"
-- personnel: offensive personnel grouping if visible — "11", "12", "21", "22", "10", "20", "13", or null
-- motion: true if pre-snap offensive motion is visible, false otherwise
-- defensive_front: if side=defense — "4-3", "3-4", "4-2-5", "3-3-5", "4-4", "5-2", "Nickel", "Dime", "Goal Line", or null
-- coverage: if side=defense — "Cover 0", "Cover 1", "Cover 2", "Cover 3", "Cover 4", "Man", "Zone", or null
-- blitz: if side=defense — "None", "Edge", "A-Gap", "Corner", "Safety", "Zone Blitz", or null
+- frame: the Frame NUMBER shown above — REQUIRED
+- down: 1–4 (null if not applicable)
+- distance: yards to go as integer (null if not visible)
+- field_position: "OWN 32" or "OPP 14" format (null if not visible)
+- hash_position: "Left", "Right", or "Middle" — which hash the ball is on (read the ball position relative to field stripes)
 - result: "Gain", "Loss", "Incomplete", "Touchdown", "Interception", "Fumble", "Sack", "Penalty", "First Down", "Made", "Missed", "Returned", "Touchback", or "Punt"
-- yards_gained: integer (positive or negative), null if not determinable
-- confidence: 0.0–1.0 — how confident you are this is a real play (not a replay, broadcast segment, etc.)
+- yards_gained: integer (positive = gain, negative = loss), null if not determinable
+- confidence: 0.0–1.0 — your confidence this is a real, unique play
+
+OFFENSE (when side=offense):
+- formation: "Shotgun", "I-Form", "Pistol", "Singleback", "Wildcat", "Empty", "Trips", "Bunch", "Spread", "Pro Set", or "Other"
+- play_type: "Run", "Pass", "Screen", "Draw", "Option", "RPO", "Play Action", "QB Sneak", "Boot/Rollout", "Other"
+- personnel: "10", "11", "12", "13", "20", "21", "22" (count RBs+TEs, e.g. 11=1RB 1TE 3WR) or null
+- motion: true if any pre-snap offensive player is in motion, false otherwise
+- run_direction: on run plays — "Inside Left", "Inside Right", "Outside Left", "Outside Right", "Up Middle"; null if not a run or can't tell
+- run_concept: on run plays — "Zone", "Power/Gap", "Counter", "Trap", "Sweep/Toss", "Iso", "Draw", "Speed Option", "Other"; null if not a run
+- pass_concept: on pass plays — "Quick Game", "Intermediate Routes", "Deep Shot", "Screen", "Play Action", "RPO", "Boot/Rollout", "Four Verts", "Mesh/Crossing", "Other"; null if not a pass
+- pass_depth: on pass plays — "Behind LOS", "Short (1-5 yds)", "Intermediate (6-15 yds)", "Deep (16+ yds)"; null if incomplete/sack/can't tell
+
+DEFENSE (when side=defense):
+- defensive_front: "4-3", "3-4", "4-2-5", "3-3-5", "4-4", "5-2", "Nickel", "Dime", "Goal Line", or null
+- coverage_shell: pre-snap safety alignment — "Two-High", "One-High", "Zero" (no deep safety); null if can't determine
+- coverage: "Cover 0", "Cover 1", "Cover 2", "Cover 2 Man", "Cover 3", "Cover 4", "Cover 6", "Man", "Zone", or null
+- blitz: "None", "Edge", "A-Gap", "Corner", "Safety", "Zone Blitz", "Interior", or null
+- pressure_type: "4-Man Rush", "5-Man", "6-Man+", "Interior Pressure", "None"; null if can't tell
+
+ALL PLAYS:
+- play_description: ONE concise sentence describing what you see happening on the field — e.g. "QB takes shotgun snap, runs outside zone to the left for approximately 7 yards on first down" or "Defense shows two-high shell, drops to Cover 4 at snap, corner blitz off the edge forces an incomplete on a back-shoulder throw". This must be specific enough that a coach reviewing it could reconstruct the play without watching the film.
 
 Return ONLY valid JSON in this exact format, nothing else:
-{"plays": [{"side": "offense", "frame": 1, "down": null, "distance": null, "field_position": null, "formation": null, "play_type": null, "personnel": null, "motion": false, "defensive_front": null, "coverage": null, "blitz": null, "result": null, "yards_gained": null, "confidence": 0.8}]}
+{"plays": [{"side": "offense", "frame": 1, "down": null, "distance": null, "field_position": null, "hash_position": null, "result": null, "yards_gained": null, "confidence": 0.85, "formation": null, "play_type": null, "personnel": null, "motion": false, "run_direction": null, "run_concept": null, "pass_concept": null, "pass_depth": null, "defensive_front": null, "coverage_shell": null, "coverage": null, "blitz": null, "pressure_type": null, "play_description": null}]}
 
 If you see zero plays in these frames, return: {"plays": []}"""
 
@@ -162,6 +178,11 @@ class AiDetectWorker(BaseWorker):
                             s = (p.get("side") or "offense").lower().replace(" ", "_")
                             return s if s in ("offense", "defense", "special_teams") else "offense"
 
+                        DEEP_FIELDS = (
+                            "run_direction", "run_concept", "pass_concept", "pass_depth",
+                            "coverage_shell", "pressure_type", "play_description",
+                        )
+
                         events = [
                             Event(
                                 game_id=game_id,
@@ -172,6 +193,7 @@ class AiDetectWorker(BaseWorker):
                                 down=p.get("down"),
                                 distance=p.get("distance"),
                                 field_position=p.get("field_position"),
+                                hash_position=p.get("hash_position"),
                                 formation=p.get("formation"),
                                 play_type=p.get("play_type"),
                                 defensive_front=p.get("defensive_front"),
@@ -181,7 +203,11 @@ class AiDetectWorker(BaseWorker):
                                 yards_gained=p.get("yards_gained"),
                                 personnel=p.get("personnel"),
                                 motion=p.get("motion", False),
-                                extra_data={"auto_detected": True, "confidence": p.get("confidence", 0.8)},
+                                extra_data={
+                                    "auto_detected": True,
+                                    "confidence": p.get("confidence", 0.8),
+                                    **{k: p[k] for k in DEEP_FIELDS if p.get(k) is not None},
+                                },
                             )
                             for p in deduped
                         ]
@@ -278,7 +304,7 @@ class AiDetectWorker(BaseWorker):
 
         response = await client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=2048,
+            max_tokens=4096,
             messages=[{"role": "user", "content": content}],
         )
         raw = response.content[0].text.strip()

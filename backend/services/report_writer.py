@@ -79,25 +79,27 @@ async def generate_prose_sections(
             "heading": "Opponent Offense — Run Game",
             "insight_type": "run",
             "instructions": (
-                "Analyze their rushing attack in depth. "
-                "Cover: primary run plays and their avg yards (cite counts), "
-                "which formations they run from most, hash tendencies for runs, "
-                "short yardage and goal line approach, "
-                "what makes their run game go (or why it fails — neg play rate, success rate). "
-                "End with 2-3 specific defensive adjustments to stop it."
+                "Analyze their rushing attack with maximum depth. "
+                "Use run_direction_analysis: inside vs outside split, left vs right directional preference, by-direction avg yards and success rate (cite counts for each). "
+                "Use run_concept breakdown: what blocking schemes do they rely on (Zone, Power, Counter, etc.) and which work best. "
+                "Which formations generate their best run plays? Hash tendencies. "
+                "Short yardage and goal line approach — what direction and concept do they trust in critical short-yardage? "
+                "Success rate and negative play rate on the ground. "
+                "End with 2-3 specific, detailed defensive adjustments that attack their run tendencies directly."
             ),
         })
         sections_spec.append({
             "heading": "Opponent Offense — Pass Game",
             "insight_type": "pass",
             "instructions": (
-                "Analyze their passing attack in depth. "
-                "Cover: primary pass concepts and their effectiveness (avg yards, success rate, cite counts), "
-                "which formations they throw from, "
-                "motion usage and what it signals, "
-                "3rd down passing tendencies (long vs medium vs short), "
-                "explosive pass play rate and what creates them. "
-                "End with 2-3 specific coverage or pressure adjustments to disrupt their pass game."
+                "Analyze their passing attack with maximum depth. "
+                "Use pass_concept_analysis.by_concept: which concepts do they rely on, success rate per concept, explosive count per concept (cite all counts). "
+                "Use pass_concept_analysis.by_depth: how do they distribute targets by depth (Behind LOS vs Short vs Intermediate vs Deep) — what works, what doesn't? "
+                "Motion analysis: do they use motion to signal pass concepts? Avg yards with vs without motion. "
+                "3rd down pass tendencies by distance bucket. "
+                "Which formations feed the pass game? "
+                "Explosive pass play rate and the specific concepts that create them. "
+                "End with 2-3 specific coverage/pressure adjustments that attack their pass tendencies."
             ),
         })
         sections_spec.append({
@@ -132,25 +134,25 @@ async def generate_prose_sections(
             "heading": "Opponent Defense — Fronts & Pressure",
             "insight_type": "defense",
             "instructions": (
-                "Analyze their defensive front and pressure package. "
-                "Cover: primary fronts used (cite counts), front/coverage pairings they favor, "
-                "blitz rate overall and by situation (cite counts), "
-                "blitz types and what coverage they play behind it, "
-                "pressure results (does their blitz get sacks or give up big plays?). "
-                "Advise: how should OUR offense attack their pressure package?"
+                "Analyze their defensive front and pressure package with maximum depth. "
+                "Use defensive_shell_analysis.pressure_types: 4-man vs 5-man vs 6-man+ rates, avg yards allowed and explosives given up per pressure type (cite counts). "
+                "Primary fronts and front/coverage pairings — what do they show most? "
+                "Blitz rate by situation (use blitz_by_situation buckets — cite each). "
+                "Use pressure_results: does their blitz actually work? Sacks, big plays given up, avg yards. "
+                "Advise: how does OUR offense attack their pressure package? Hot routes, protection adjustments, run attacks."
             ),
         })
         sections_spec.append({
             "heading": "Opponent Defense — Coverage & Secondary",
             "insight_type": "defense",
             "instructions": (
-                "Analyze their coverage schemes. "
-                "Cover: primary coverages (cite counts and %), "
-                "coverage by down (what do they run on 1st? 3rd & long?), "
-                "coverage vs formations (if data shows they adjust — e.g., go to man vs 2-TE sets), "
-                "red zone coverage tendencies, "
-                "any coverage the data shows is exploitable (low success rate allowed, or over-used). "
-                "Advise: what formations, personnel groups, and concepts attack their coverage best?"
+                "Analyze their coverage with maximum depth. "
+                "Use defensive_shell_analysis.coverage_shells: pre-snap shell (two-high vs one-high vs zero) and what coverage they actually run out of each shell — this reveals whether they disguise or tip their hand. "
+                "Use shell_to_coverage_map: for each shell, what's the post-snap reality? If they show two-high and roll to Cover 3, say so. "
+                "Coverage by down: what do they run on 1st, 2nd, 3rd & long, 3rd & short? "
+                "Coverage vs formations faced — do they make scheme adjustments to spread looks? "
+                "Red zone coverage. "
+                "Advise: what formations, personnel groups, pass concepts, and depths attack their coverage scheme most effectively?"
             ),
         })
         sections_spec.append({

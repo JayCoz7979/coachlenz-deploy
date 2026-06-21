@@ -2,6 +2,14 @@ from typing import List, Dict, Any
 from collections import Counter, defaultdict
 
 RUN_TYPES = {"run", "draw", "option", "qb sneak", "rush", "counter", "sweep", "power", "iso", "trap"}
+
+# New deep-extraction fields live in extra_data until post-beta column migration
+def _x(e, key, default=None):
+    """Read a deep-extraction field from extra_data."""
+    ed = getattr(e, "extra_data", None)
+    if not ed:
+        return default
+    return ed.get(key, default)
 PASS_TYPES = {"pass", "screen", "rpo", "play action", "play-action", "dropback", "rollout", "bootleg", "quick game"}
 SPECIAL_TYPES = {"punt", "kickoff", "field goal", "pat", "kick", "onside"}
 
@@ -269,6 +277,143 @@ def _personnel_detail(plays) -> Dict[str, Any]:
     return result
 
 
+def _run_direction_analysis(plays) -> Dict[str, Any]:
+    """Run direction breakdown: inside vs outside, left vs right, concept breakdown."""
+    runs = [e for e in plays if _is_run(e)]
+    if not runs:
+        return {"total": 0}
+
+    by_direction = defaultdict(list)
+    for e in runs:
+        d = _x(e, "run_direction")
+        if d:
+            by_direction[d].append(e)
+
+    direction_detail = {}
+    for direction, dp in sorted(by_direction.items(), key=lambda x: -len(x[1])):
+        yards = [e.yards_gained for e in dp if e.yards_gained is not None]
+        successes = [e for e in dp if _is_success(e)]
+        explosives = [e for e in dp if _is_explosive(e)]
+        direction_detail[direction] = {
+            "count": len(dp),
+            "pct_of_runs": round(len(dp) / len(runs) * 100, 1) if runs else 0,
+            "avg_yards": round(sum(yards) / len(yards), 1) if yards else 0,
+            "success_rate": round(len(successes) / len(dp) * 100, 1) if dp else 0,
+            "explosive_count": len(explosives),
+        }
+
+    by_concept = Counter(_x(e, "run_concept") for e in runs if _x(e, "run_concept"))
+    concept_detail = {}
+    for concept, count in by_concept.most_common(8):
+        cp = [e for e in runs if _x(e, "run_concept") == concept]
+        yards = [e.yards_gained for e in cp if e.yards_gained is not None]
+        successes = [e for e in cp if _is_success(e)]
+        concept_detail[concept] = {
+            "count": count,
+            "avg_yards": round(sum(yards) / len(yards), 1) if yards else 0,
+            "success_rate": round(len(successes) / len(cp) * 100, 1) if cp else 0,
+        }
+
+    inside = [e for e in runs if "Inside" in (_x(e, "run_direction") or "")]
+    outside = [e for e in runs if "Outside" in (_x(e, "run_direction") or "")]
+    left = [e for e in runs if "Left" in (_x(e, "run_direction") or "")]
+    right = [e for e in runs if "Right" in (_x(e, "run_direction") or "")]
+
+    return {
+        "total_runs": len(runs),
+        "inside_pct": round(len(inside) / len(runs) * 100, 1) if runs else 0,
+        "outside_pct": round(len(outside) / len(runs) * 100, 1) if runs else 0,
+        "left_pct": round(len(left) / (len(left) + len(right)) * 100, 1) if (left or right) else 0,
+        "right_pct": round(len(right) / (len(left) + len(right)) * 100, 1) if (left or right) else 0,
+        "by_direction": direction_detail,
+        "by_concept": concept_detail,
+    }
+
+
+def _pass_concept_analysis(plays) -> Dict[str, Any]:
+    """Pass concept breakdown: concept type, depth, effectiveness."""
+    passes = [e for e in plays if _is_pass(e)]
+    if not passes:
+        return {"total": 0}
+
+    by_concept = Counter(_x(e, "pass_concept") for e in passes if _x(e, "pass_concept"))
+    concept_detail = {}
+    for concept, count in by_concept.most_common(10):
+        cp = [e for e in passes if _x(e, "pass_concept") == concept]
+        yards = [e.yards_gained for e in cp if e.yards_gained is not None]
+        completions = [e for e in cp if (e.result or "").lower() in ("gain", "first down", "touchdown")]
+        successes = [e for e in cp if _is_success(e)]
+        explosives = [e for e in cp if _is_explosive(e)]
+        concept_detail[concept] = {
+            "count": count,
+            "pct_of_passes": round(count / len(passes) * 100, 1) if passes else 0,
+            "avg_yards": round(sum(yards) / len(yards), 1) if yards else 0,
+            "success_rate": round(len(successes) / len(cp) * 100, 1) if cp else 0,
+            "explosive_count": len(explosives),
+        }
+
+    by_depth = Counter(_x(e, "pass_depth") for e in passes if _x(e, "pass_depth"))
+    depth_detail = {}
+    for depth, count in by_depth.most_common(6):
+        dp = [e for e in passes if _x(e, "pass_depth") == depth]
+        yards = [e.yards_gained for e in dp if e.yards_gained is not None]
+        successes = [e for e in dp if _is_success(e)]
+        depth_detail[depth] = {
+            "count": count,
+            "pct_of_passes": round(count / len(passes) * 100, 1) if passes else 0,
+            "avg_yards": round(sum(yards) / len(yards), 1) if yards else 0,
+            "success_rate": round(len(successes) / len(dp) * 100, 1) if dp else 0,
+        }
+
+    return {
+        "total_passes": len(passes),
+        "by_concept": concept_detail,
+        "by_depth": depth_detail,
+    }
+
+
+def _defensive_shell_analysis(plays) -> Dict[str, Any]:
+    """Pre-snap shell + post-snap coverage + pressure type breakdown."""
+    if not plays:
+        return {"total": 0}
+
+    shells = Counter(_x(e, "coverage_shell") for e in plays if _x(e, "coverage_shell"))
+    pressure_types = Counter(_x(e, "pressure_type") for e in plays if _x(e, "pressure_type"))
+
+    # Shell to coverage mapping: what do they actually run out of each shell?
+    shell_to_coverage = defaultdict(list)
+    for e in plays:
+        shell = _x(e, "coverage_shell")
+        if shell and e.coverage:
+            shell_to_coverage[shell].append(e.coverage)
+
+    shell_coverage_map = {
+        shell: dict(Counter(covs).most_common(4))
+        for shell, covs in shell_to_coverage.items()
+    }
+
+    # Pressure type breakdown: 4-man vs 5-man vs 6-man+
+    pressure_results = {}
+    for pt, count in pressure_types.most_common(6):
+        pp = [e for e in plays if _x(e, "pressure_type") == pt]
+        blitzes = [e for e in pp if e.blitz and e.blitz.lower() not in ("", "none", "no")]
+        yards = [e.yards_gained for e in pp if e.yards_gained is not None]
+        explosives = [e for e in pp if _is_explosive(e)]
+        pressure_results[pt] = {
+            "count": count,
+            "avg_yards_allowed": round(sum(yards) / len(yards), 1) if yards else 0,
+            "explosive_allowed": len(explosives),
+        }
+
+    return {
+        "total_plays": len(plays),
+        "coverage_shells": dict(shells.most_common(4)),
+        "shell_to_coverage_map": shell_coverage_map,
+        "pressure_types": dict(pressure_types.most_common(6)),
+        "pressure_detail": pressure_results,
+    }
+
+
 def _opening_plays(plays) -> Dict[str, Any]:
     """Drive-opening tendencies: 1st & 10 from own territory."""
     openers = [
@@ -400,6 +545,10 @@ def analyze_football(events) -> Dict[str, Any]:
         # Explosive / negative
         "explosive_negative": _explosive_negative_analysis(plays),
 
+        # Deep extraction — run direction, concept, pass concept, depth
+        "run_direction_analysis": _run_direction_analysis(plays),
+        "pass_concept_analysis": _pass_concept_analysis(plays),
+
         # Play results
         "play_results": dict(results.most_common(10)),
     }
@@ -511,6 +660,9 @@ def analyze_football_defense(events) -> Dict[str, Any]:
         "red_zone_defense": rz_detail,
         "pressure_results": pressure_results,
         "play_results": dict(results.most_common(10)),
+
+        # Deep extraction — coverage shell, pressure type
+        "defensive_shell_analysis": _defensive_shell_analysis(plays),
     }
 
 
