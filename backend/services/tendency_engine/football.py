@@ -277,6 +277,260 @@ def _personnel_detail(plays) -> Dict[str, Any]:
     return result
 
 
+def _pass_distribution(plays) -> Dict[str, Any]:
+    """Pass distribution by target area — the field zone map every DB coach needs."""
+    passes = [e for e in plays if _is_pass(e)]
+    if not passes:
+        return {"total": 0}
+
+    by_area = defaultdict(list)
+    for e in passes:
+        area = _x(e, "target_area")
+        if area:
+            by_area[area].append(e)
+
+    area_detail = {}
+    for area, ap in sorted(by_area.items(), key=lambda x: -len(x[1])):
+        yards = [e.yards_gained for e in ap if e.yards_gained is not None]
+        successes = [e for e in ap if _is_success(e)]
+        completions = [e for e in ap if (e.result or "").lower() in ("gain", "first down", "touchdown")]
+        explosives = [e for e in ap if _is_explosive(e)]
+        area_detail[area] = {
+            "count": len(ap),
+            "pct_of_passes": round(len(ap) / len(passes) * 100, 1) if passes else 0,
+            "avg_yards": round(sum(yards) / len(yards), 1) if yards else 0,
+            "success_rate": round(len(successes) / len(ap) * 100, 1) if ap else 0,
+            "explosive_count": len(explosives),
+        }
+
+    # Group into field zones
+    left_side = sum(len(by_area[k]) for k in by_area if "Left" in k)
+    right_side = sum(len(by_area[k]) for k in by_area if "Right" in k)
+    middle = sum(len(by_area[k]) for k in by_area if "Middle" in k or k in ("Post", "Go/Fly"))
+    total_mapped = left_side + right_side + middle
+
+    return {
+        "total_passes": len(passes),
+        "by_area": area_detail,
+        "field_side_distribution": {
+            "left_pct": round(left_side / total_mapped * 100, 1) if total_mapped else 0,
+            "middle_pct": round(middle / total_mapped * 100, 1) if total_mapped else 0,
+            "right_pct": round(right_side / total_mapped * 100, 1) if total_mapped else 0,
+        },
+        "hottest_area": max(area_detail, key=lambda k: area_detail[k]["count"]) if area_detail else None,
+        "most_effective_area": max(area_detail, key=lambda k: area_detail[k]["avg_yards"]) if area_detail else None,
+    }
+
+
+def _run_gap_analysis(plays) -> Dict[str, Any]:
+    """Specific gap targeting — what DL coaches need for alignment calls."""
+    runs = [e for e in plays if _is_run(e)]
+    if not runs:
+        return {"total": 0}
+
+    by_gap = defaultdict(list)
+    for e in runs:
+        gap = _x(e, "run_gap")
+        if gap:
+            by_gap[gap].append(e)
+
+    gap_detail = {}
+    for gap, gp in sorted(by_gap.items(), key=lambda x: -len(x[1])):
+        yards = [e.yards_gained for e in gp if e.yards_gained is not None]
+        successes = [e for e in gp if _is_success(e)]
+        explosives = [e for e in gp if _is_explosive(e)]
+        gap_detail[gap] = {
+            "count": len(gp),
+            "pct_of_runs": round(len(gp) / len(runs) * 100, 1) if runs else 0,
+            "avg_yards": round(sum(yards) / len(yards), 1) if yards else 0,
+            "success_rate": round(len(successes) / len(gp) * 100, 1) if gp else 0,
+            "explosive_count": len(explosives),
+        }
+
+    return {
+        "total_runs": len(runs),
+        "by_gap": gap_detail,
+        "most_targeted_gap": max(gap_detail, key=lambda k: gap_detail[k]["count"]) if gap_detail else None,
+        "most_effective_gap": max(gap_detail, key=lambda k: gap_detail[k]["avg_yards"]) if gap_detail else None,
+    }
+
+
+def _motion_type_analysis(plays) -> Dict[str, Any]:
+    """Motion type → play concept correlation — what each motion type signals."""
+    motion_plays = [e for e in plays if e.motion]
+    if not motion_plays:
+        return {"total": 0}
+
+    by_type = defaultdict(list)
+    for e in motion_plays:
+        mt = _x(e, "motion_type")
+        if mt:
+            by_type[mt].append(e)
+
+    type_detail = {}
+    for mt, mp in sorted(by_type.items(), key=lambda x: -len(x[1])):
+        runs = [e for e in mp if _is_run(e)]
+        passes = [e for e in mp if _is_pass(e)]
+        rp = len(runs) + len(passes)
+        yards = [e.yards_gained for e in mp if e.yards_gained is not None]
+        top_concepts = Counter(
+            _x(e, "run_concept") or _x(e, "pass_concept") for e in mp
+            if _x(e, "run_concept") or _x(e, "pass_concept")
+        )
+        type_detail[mt] = {
+            "count": len(mp),
+            "run_pct": round(len(runs) / rp * 100, 1) if rp else 0,
+            "pass_pct": round(len(passes) / rp * 100, 1) if rp else 0,
+            "avg_yards": round(sum(yards) / len(yards), 1) if yards else 0,
+            "top_concepts": dict(top_concepts.most_common(3)),
+        }
+
+    return {
+        "total_motion_plays": len(motion_plays),
+        "by_type": type_detail,
+    }
+
+
+def _safety_disguise_analysis(plays) -> Dict[str, Any]:
+    """Pre-snap shell vs. post-snap rotation — does their secondary disguise or tip coverage?"""
+    if not plays:
+        return {"total": 0}
+
+    matched = 0
+    mismatched = 0
+    shell_rotation_map = defaultdict(lambda: defaultdict(int))
+
+    for e in plays:
+        shell = _x(e, "coverage_shell")
+        rotation = _x(e, "safety_rotation")
+        if shell and rotation:
+            shell_rotation_map[shell][rotation] += 1
+            if shell == "Two-High" and rotation == "Stayed Two-High":
+                matched += 1
+            elif shell == "One-High" and rotation == "Rotated Single High":
+                matched += 1
+            elif shell == "Zero" and rotation == "Pressed Up":
+                matched += 1
+            else:
+                mismatched += 1
+
+    total_with_data = matched + mismatched
+    disguise_rate = round(mismatched / total_with_data * 100, 1) if total_with_data else 0
+
+    srm = {shell: dict(Counter(rots).most_common(4)) for shell, rots in shell_rotation_map.items()}
+
+    corner_techniques = Counter(_x(e, "corner_technique") for e in plays if _x(e, "corner_technique"))
+    lb_alignments = Counter(_x(e, "linebacker_alignment") for e in plays if _x(e, "linebacker_alignment"))
+
+    return {
+        "total_plays": len(plays),
+        "disguise_rate": disguise_rate,
+        "shell_to_rotation_map": srm,
+        "corner_techniques": dict(corner_techniques.most_common(4)),
+        "linebacker_alignments": dict(lb_alignments.most_common(4)),
+    }
+
+
+def _pressure_gap_analysis(plays) -> Dict[str, Any]:
+    """WHERE the blitz/pressure comes from — OL protection slide intelligence."""
+    blitz_plays = [e for e in plays if e.blitz and e.blitz.lower() not in ("", "none", "no")]
+    if not blitz_plays:
+        return {"total": 0}
+
+    by_gap = defaultdict(list)
+    for e in blitz_plays:
+        gap = _x(e, "pressure_gap")
+        if gap:
+            by_gap[gap].append(e)
+
+    gap_detail = {}
+    for gap, gp in sorted(by_gap.items(), key=lambda x: -len(x[1])):
+        yards = [e.yards_gained for e in gp if e.yards_gained is not None]
+        sacks = [e for e in gp if (e.result or "").lower() == "sack"]
+        explosives = [e for e in gp if _is_explosive(e)]
+        gap_detail[gap] = {
+            "count": len(gp),
+            "pct_of_blitzes": round(len(gp) / len(blitz_plays) * 100, 1) if blitz_plays else 0,
+            "avg_yards_allowed": round(sum(yards) / len(yards), 1) if yards else 0,
+            "sacks": len(sacks),
+            "explosives_allowed": len(explosives),
+        }
+
+    return {
+        "total_blitzes": len(blitz_plays),
+        "by_gap": gap_detail,
+        "primary_pressure_gap": max(gap_detail, key=lambda k: gap_detail[k]["count"]) if gap_detail else None,
+    }
+
+
+def _tempo_analysis(plays) -> Dict[str, Any]:
+    """No-huddle / hurry-up tendencies — when and how effective."""
+    if not plays:
+        return {"total": 0}
+
+    by_tempo = defaultdict(list)
+    for e in plays:
+        t = _x(e, "tempo")
+        if t:
+            by_tempo[t].append(e)
+
+    tempo_detail = {}
+    for t, tp in sorted(by_tempo.items(), key=lambda x: -len(x[1])):
+        runs = [e for e in tp if _is_run(e)]
+        passes = [e for e in tp if _is_pass(e)]
+        rp = len(runs) + len(passes)
+        yards = [e.yards_gained for e in tp if e.yards_gained is not None]
+        successes = [e for e in tp if _is_success(e)]
+        tempo_detail[t] = {
+            "count": len(tp),
+            "pct": round(len(tp) / len(plays) * 100, 1) if plays else 0,
+            "run_pct": round(len(runs) / rp * 100, 1) if rp else 0,
+            "pass_pct": round(len(passes) / rp * 100, 1) if rp else 0,
+            "avg_yards": round(sum(yards) / len(yards), 1) if yards else 0,
+            "success_rate": round(len(successes) / len(tp) * 100, 1) if tp else 0,
+        }
+
+    hurry_up_count = len(by_tempo.get("Hurry-Up", [])) + len(by_tempo.get("No-Huddle", []))
+    return {
+        "total_plays": len(plays),
+        "no_huddle_hurry_count": hurry_up_count,
+        "no_huddle_hurry_pct": round(hurry_up_count / len(plays) * 100, 1) if plays else 0,
+        "by_tempo": tempo_detail,
+    }
+
+
+def _score_situation_analysis(plays) -> Dict[str, Any]:
+    """Do their tendencies shift based on game script? Critical for understanding 'real' offense."""
+    if not plays:
+        return {"total": 0}
+
+    by_situation = defaultdict(list)
+    for e in plays:
+        ss = _x(e, "score_situation")
+        if ss:
+            by_situation[ss].append(e)
+
+    situation_detail = {}
+    for ss, sp in sorted(by_situation.items(), key=lambda x: -len(x[1])):
+        runs = [e for e in sp if _is_run(e)]
+        passes = [e for e in sp if _is_pass(e)]
+        rp = len(runs) + len(passes)
+        yards = [e.yards_gained for e in sp if e.yards_gained is not None]
+        top_plays = Counter(e.play_type for e in sp if e.play_type)
+        situation_detail[ss] = {
+            "count": len(sp),
+            "run_pct": round(len(runs) / rp * 100, 1) if rp else 0,
+            "pass_pct": round(len(passes) / rp * 100, 1) if rp else 0,
+            "avg_yards": round(sum(yards) / len(yards), 1) if yards else 0,
+            "top_plays": dict(top_plays.most_common(4)),
+        }
+
+    return {
+        "total_plays_with_score_data": sum(len(v) for v in by_situation.values()),
+        "by_situation": situation_detail,
+    }
+
+
 def _run_direction_analysis(plays) -> Dict[str, Any]:
     """Run direction breakdown: inside vs outside, left vs right, concept breakdown."""
     runs = [e for e in plays if _is_run(e)]
@@ -545,9 +799,20 @@ def analyze_football(events) -> Dict[str, Any]:
         # Explosive / negative
         "explosive_negative": _explosive_negative_analysis(plays),
 
-        # Deep extraction — run direction, concept, pass concept, depth
+        # Deep extraction — run
         "run_direction_analysis": _run_direction_analysis(plays),
+        "run_gap_analysis": _run_gap_analysis(plays),
+
+        # Deep extraction — pass
         "pass_concept_analysis": _pass_concept_analysis(plays),
+        "pass_distribution": _pass_distribution(plays),
+
+        # Deep extraction — motion and tempo
+        "motion_type_analysis": _motion_type_analysis(plays),
+        "tempo_analysis": _tempo_analysis(plays),
+
+        # Game script
+        "score_situation_analysis": _score_situation_analysis(plays),
 
         # Play results
         "play_results": dict(results.most_common(10)),
@@ -661,8 +926,10 @@ def analyze_football_defense(events) -> Dict[str, Any]:
         "pressure_results": pressure_results,
         "play_results": dict(results.most_common(10)),
 
-        # Deep extraction — coverage shell, pressure type
+        # Deep extraction — coverage, disguise, pressure
         "defensive_shell_analysis": _defensive_shell_analysis(plays),
+        "safety_disguise_analysis": _safety_disguise_analysis(plays),
+        "pressure_gap_analysis": _pressure_gap_analysis(plays),
     }
 
 

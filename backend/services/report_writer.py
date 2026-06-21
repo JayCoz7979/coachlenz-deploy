@@ -103,6 +103,20 @@ async def generate_prose_sections(
             ),
         })
         sections_spec.append({
+            "heading": "Opponent Offense — Pass Distribution & Motion",
+            "insight_type": "pass",
+            "instructions": (
+                "Use pass_distribution: where do they throw the ball on the field? "
+                "Cite by_area detail (count, pct_of_passes, avg_yards, success_rate per zone). "
+                "Name the hottest area and most effective area. "
+                "Use field_side_distribution: left vs middle vs right — do they have a field preference? "
+                "Use motion_type_analysis.by_type: which motion type leads to which play concept and how often? "
+                "Does Jet Motion signal sweep? Does H-Back Motion signal power run? Cite the top_concepts per motion type. "
+                "If they use tempo (no_huddle_hurry_pct > 10%), describe when and how effectively. "
+                "Advise: which coverage leverages cut off their best target area? Which LB must spy jet motion?"
+            ),
+        })
+        sections_spec.append({
             "heading": "Opponent Offense — Situational",
             "insight_type": "red_zone",
             "instructions": (
@@ -135,24 +149,25 @@ async def generate_prose_sections(
             "insight_type": "defense",
             "instructions": (
                 "Analyze their defensive front and pressure package with maximum depth. "
-                "Use defensive_shell_analysis.pressure_types: 4-man vs 5-man vs 6-man+ rates, avg yards allowed and explosives given up per pressure type (cite counts). "
-                "Primary fronts and front/coverage pairings — what do they show most? "
-                "Blitz rate by situation (use blitz_by_situation buckets — cite each). "
-                "Use pressure_results: does their blitz actually work? Sacks, big plays given up, avg yards. "
-                "Advise: how does OUR offense attack their pressure package? Hot routes, protection adjustments, run attacks."
+                "Use pressure_gap_analysis: WHERE does their blitz come from (edge left/right, A-gap, interior)? Which gap produces sacks vs. which gives up explosives? "
+                "Use defensive_shell_analysis.pressure_types: 4-man vs 5-man vs 6-man+ distribution and effectiveness (cite counts, avg yards allowed, sacks per type). "
+                "Front/coverage pairings — what do they pair most often? "
+                "Blitz by situation (cite each bucket from blitz_by_situation). "
+                "Use pressure_results: does their blitz actually work or does it give up big plays? "
+                "Advise OL: where should protection slide? Which blitz gaps need a hot route answer?"
             ),
         })
         sections_spec.append({
             "heading": "Opponent Defense — Coverage & Secondary",
             "insight_type": "defense",
             "instructions": (
-                "Analyze their coverage with maximum depth. "
-                "Use defensive_shell_analysis.coverage_shells: pre-snap shell (two-high vs one-high vs zero) and what coverage they actually run out of each shell — this reveals whether they disguise or tip their hand. "
-                "Use shell_to_coverage_map: for each shell, what's the post-snap reality? If they show two-high and roll to Cover 3, say so. "
-                "Coverage by down: what do they run on 1st, 2nd, 3rd & long, 3rd & short? "
-                "Coverage vs formations faced — do they make scheme adjustments to spread looks? "
-                "Red zone coverage. "
-                "Advise: what formations, personnel groups, pass concepts, and depths attack their coverage scheme most effectively?"
+                "Analyze their secondary with maximum depth. "
+                "Use safety_disguise_analysis.shell_to_rotation_map: what do safeties actually do post-snap vs. their pre-snap shell? If disguise_rate > 30%, say so explicitly — this team disguises. If < 15%, they tip. "
+                "Use safety_disguise_analysis.corner_techniques: are corners in press, off/cushion, or bail? This tells which routes attack them. "
+                "Use defensive_shell_analysis.coverage_shells and shell_to_coverage_map: the full pre-snap → post-snap picture. "
+                "Coverage by down bucket. Coverage vs. formations faced. Red zone coverage. "
+                "Advise OC specifically: which pass concepts, route combinations, and personnel groups beat what they show? "
+                "If they press, attack with slants and fades. If they bail, attack with quick game and screens. Say it that specifically."
             ),
         })
         sections_spec.append({
@@ -180,6 +195,19 @@ async def generate_prose_sections(
             ),
         })
 
+    if off_plays >= 5:
+        sections_spec.append({
+            "heading": "Opponent Offense — Game Script Tendencies",
+            "insight_type": "tendency",
+            "instructions": (
+                "Use score_situation_analysis: do their tendencies shift based on score? "
+                "Compare run/pass split and avg yards when Leading vs Trailing vs Tied. "
+                "If they abandon the run when trailing, say it explicitly — that tells the defense when to go to pass-rush mode. "
+                "If they run MORE when leading, that tells us to force them into third-and-long situations. "
+                "Only include this section if score_situation_analysis has data for 2+ situations. "
+                "Keep this section tight — 1-2 paragraphs focused on the most actionable game-script intelligence."
+            ),
+        })
     sections_spec.append({
         "heading": "Game Plan Priorities",
         "insight_type": "red_zone",
