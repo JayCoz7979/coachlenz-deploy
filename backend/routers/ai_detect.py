@@ -6,6 +6,7 @@ from backend.models.user import User
 from backend.models.game import Game
 from backend.models.job import Job
 from backend.models.event import Event
+from backend.models.agent_log import AgentLog
 from backend.services.auth import get_current_user
 
 router = APIRouter(prefix="/games", tags=["ai-detect"])
@@ -99,10 +100,15 @@ async def accuracy_benchmark(
 @router.post("/{game_id}/auto-detect")
 async def trigger_auto_detect(
     game_id: str,
+    dry_run: bool = False,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Queue an AI play-detection job for a game that is already ingested (status=ready)."""
+    """Queue an AI play-detection job for a game that is already ingested (status=ready).
+
+    dry_run=true runs the UATP staging mode: the agent simulates detection and logs
+    what it WOULD save, without writing any plays.
+    """
     result = await db.execute(
         select(Game).where(Game.id == game_id, Game.organization_id == user.organization_id)
     )
@@ -129,13 +135,13 @@ async def trigger_auto_detect(
     job = Job(
         organization_id=user.organization_id,
         job_type="ai_detect",
-        payload={"game_id": game_id},
+        payload={"game_id": game_id, "dry_run": dry_run},
     )
     db.add(job)
     await db.commit()
     await db.refresh(job)
 
-    return {"status": "queued", "job_id": str(job.id), "game_id": game_id}
+    return {"status": "queued", "job_id": str(job.id), "game_id": game_id, "dry_run": dry_run}
 
 
 @router.get("/{game_id}/auto-detect/status")
@@ -170,10 +176,68 @@ async def detect_status(
     )
     auto_count = count_result.scalar() or 0
 
+    # Count plays the agent flagged for human review (UATP escalation surfaced to coach)
+    review_result = await db.execute(
+        select(func.count(Event.id)).where(
+            Event.game_id == game_id,
+            Event.extra_data["auto_detected"].as_boolean() == True,
+            Event.extra_data["needs_review"].as_boolean() == True,
+        )
+    )
+    needs_review = review_result.scalar() or 0
+
     return {
         "game_id": game_id,
         "game_status": game.status,
         "job_status": job.status if job else None,
         "plays_detected": auto_count,
+        "needs_review": needs_review,
+        "dry_run": bool((job.payload or {}).get("dry_run")) if job else False,
         "error": job.error_message if (job and job.status == "error") else None,
+    }
+
+
+@router.get("/{game_id}/agent-log")
+async def agent_log(
+    game_id: str,
+    limit: int = 100,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """UATP live action feed — what the agent did, why, and how confident it was.
+
+    Powers the live status panel and the per-game audit trail. Returns chronological.
+    """
+    game = (await db.execute(
+        select(Game).where(Game.id == game_id, Game.organization_id == user.organization_id)
+    )).scalar_one_or_none()
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    res = await db.execute(
+        select(AgentLog)
+        .where(AgentLog.game_id == game_id, AgentLog.organization_id == user.organization_id)
+        .order_by(AgentLog.created_at.desc())
+        .limit(min(limit, 500))
+    )
+    rows = list(res.scalars().all())
+    rows.reverse()  # chronological for display
+
+    return {
+        "game_id": game_id,
+        "entries": [
+            {
+                "id": str(r.id),
+                "agent_name": r.agent_name,
+                "agent_role": r.agent_role,
+                "phase": r.phase,
+                "action": r.action,
+                "reason": r.reason,
+                "confidence": r.confidence,
+                "level": r.level,
+                "detail": r.detail or {},
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
     }

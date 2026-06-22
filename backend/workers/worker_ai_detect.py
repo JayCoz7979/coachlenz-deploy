@@ -21,6 +21,10 @@ from backend.models.event import Event
 from backend.models.game import Game
 from backend.models.job import Job
 from backend.services.r2 import generate_presigned_download_url, _use_local, LOCAL_STORAGE_DIR
+from backend.services.agent_log import (
+    log_agent_action, confidence_band,
+    AGENT_NAME, AGENT_ROLE, HARD_FLOOR, ESCALATION_THRESHOLD,
+)
 from backend.workers.base import BaseWorker
 
 logger = logging.getLogger(__name__)
@@ -196,9 +200,11 @@ class AiDetectWorker(BaseWorker):
 
     async def handle(self, payload: dict) -> dict:
         game_id = payload["game_id"]
-        return await self._detect_plays(game_id)
+        dry_run = bool(payload.get("dry_run"))
+        job_id = payload.get("_job_id")
+        return await self._detect_plays(game_id, dry_run=dry_run, job_id=job_id)
 
-    async def _detect_plays(self, game_id: str) -> dict:
+    async def _detect_plays(self, game_id: str, dry_run: bool = False, job_id=None) -> dict:
         # ── Load game ──────────────────────────────────────────────────────
         async with AsyncSessionLocal() as db:
             result = await db.execute(select(Game).where(Game.id == game_id))
@@ -208,6 +214,22 @@ class AiDetectWorker(BaseWorker):
             if game.status != "ready":
                 raise ValueError(f"Game not ready for detection (status={game.status})")
             sport = (game.sport or "football").lower()
+            org_id = game.organization_id
+
+        # UATP identity disclosure — the agent says who it is and what it will do
+        # BEFORE it acts, every run.
+        await log_agent_action(
+            game_id=game_id, organization_id=str(org_id), job_id=job_id,
+            phase="init", level="info",
+            action=f"{AGENT_NAME} starting film analysis",
+            reason=(
+                f"I am {AGENT_NAME} ({AGENT_ROLE}). I will scan this {sport} film frame by "
+                f"frame, identify every play, and record each with a confidence score. "
+                + ("DRY RUN: I will simulate detection without saving any plays."
+                   if dry_run else "Confident reads are saved; low-confidence reads are flagged for your review, never presented as fact.")
+            ),
+            detail={"sport": sport, "dry_run": dry_run},
+        )
 
         # ── Resolve video path / URL ───────────────────────────────────────
         if _use_local():
@@ -233,29 +255,94 @@ class AiDetectWorker(BaseWorker):
 
                 if not frame_paths:
                     logger.warning(f"[ai_detect] No frames extracted for game {game_id}")
+                    await log_agent_action(
+                        game_id=game_id, organization_id=str(org_id), job_id=job_id,
+                        phase="frame_extraction", level="error",
+                        action="No frames could be extracted",
+                        reason="ffmpeg returned zero frames from this film. The file may be unreadable, "
+                               "empty, or in an unsupported format. Detection cannot proceed.",
+                    )
                     async with AsyncSessionLocal() as db:
                         await db.execute(update(Game).where(Game.id == game_id).values(status="ready"))
                         await db.commit()
                     return {"game_id": game_id, "plays_detected": 0}
 
                 logger.info(f"[ai_detect] Extracted {len(frame_paths)} frames for game {game_id}")
+                await log_agent_action(
+                    game_id=game_id, organization_id=str(org_id), job_id=job_id,
+                    phase="frame_extraction", level="info",
+                    action=f"Extracted {len(frame_paths)} frames to analyze",
+                    reason="Sampled the film at scene changes plus fixed intervals to catch every snap "
+                           "without over-sampling. Each frame carries its real timestamp.",
+                    detail={"frame_count": len(frame_paths)},
+                )
 
                 # ── Send batches to Claude Vision ──────────────────────────
                 all_plays = []
                 batches = [frame_paths[i:i + FRAMES_PER_BATCH] for i in range(0, len(frame_paths), FRAMES_PER_BATCH)]
 
+                # Log a heartbeat roughly every 10% of batches so the live panel
+                # shows steady progress without flooding the log.
+                log_every = max(1, len(batches) // 10)
+                failed_batches = 0
                 for batch_idx, batch in enumerate(batches):
                     try:
                         plays = await self._analyze_batch(batch, batch_idx, len(batches), sport)
                         all_plays.extend(plays)
                         logger.info(f"[ai_detect] Batch {batch_idx+1}/{len(batches)}: {len(plays)} plays")
+                        if plays and (batch_idx % log_every == 0 or batch_idx == len(batches) - 1):
+                            confs = [p.get("confidence", 0) for p in plays]
+                            avg_c = round(sum(confs) / len(confs), 2) if confs else None
+                            await log_agent_action(
+                                game_id=game_id, organization_id=str(org_id), job_id=job_id,
+                                phase="vision_analysis", level="info",
+                                action=f"Analyzed segment {batch_idx+1} of {len(batches)} — {len(plays)} play(s) read",
+                                reason=f"Reading play development across consecutive frames. "
+                                       f"Segment confidence: {confidence_band(avg_c)}.",
+                                confidence=avg_c,
+                                detail={"batch": batch_idx + 1, "total_batches": len(batches),
+                                        "plays_in_batch": len(plays)},
+                            )
                     except Exception as e:
+                        failed_batches += 1
                         logger.warning(f"[ai_detect] Batch {batch_idx+1} failed: {e}")
+                        await log_agent_action(
+                            game_id=game_id, organization_id=str(org_id), job_id=job_id,
+                            phase="vision_analysis", level="warn",
+                            action=f"Segment {batch_idx+1} could not be read",
+                            reason=f"This segment failed and was skipped so the rest of the film still gets "
+                                   f"analyzed. Cause: {str(e)[:200]}",
+                            detail={"batch": batch_idx + 1},
+                        )
                         continue
 
                 # ── Deduplicate by time (within 5s = same play) ───────────
                 deduped = self._deduplicate_plays(all_plays)
                 logger.info(f"[ai_detect] {len(all_plays)} raw → {len(deduped)} after dedup")
+
+                # ── Confidence + escalation accounting (UATP) ──────────────
+                all_confs = [p.get("confidence", 0.8) for p in deduped]
+                avg_conf = round(sum(all_confs) / len(all_confs), 2) if all_confs else None
+                # Gray-band plays (kept but below the confident threshold) are flagged
+                # for human review — the agent never presents them as fact.
+                needs_review_count = sum(
+                    1 for p in deduped if p.get("confidence", 0.8) < ESCALATION_THRESHOLD
+                )
+
+                # ── DRY RUN: simulate, never write (UATP staging mode) ─────
+                if dry_run:
+                    await log_agent_action(
+                        game_id=game_id, organization_id=str(org_id), job_id=job_id,
+                        phase="dry_run", level="success",
+                        action=f"DRY RUN complete — would have saved {len(deduped)} play(s)",
+                        reason=f"Simulation only. No plays were written. {needs_review_count} would be "
+                               f"flagged for review. Overall confidence: {confidence_band(avg_conf)}.",
+                        confidence=avg_conf,
+                        detail={"would_persist": len(deduped), "would_flag_for_review": needs_review_count,
+                                "failed_batches": failed_batches},
+                    )
+                    return {"game_id": game_id, "plays_detected": 0, "dry_run": True,
+                            "would_persist": len(deduped)}
 
                 # ── Persist events ─────────────────────────────────────────
                 if deduped:
@@ -330,6 +417,9 @@ class AiDetectWorker(BaseWorker):
                                 extra_data={
                                     "auto_detected": True,
                                     "confidence": p.get("confidence", 0.8),
+                                    # UATP human-escalation: low-confidence reads are
+                                    # surfaced for verification, not asserted as fact.
+                                    "needs_review": p.get("confidence", 0.8) < ESCALATION_THRESHOLD,
                                     **{k: p[k] for k in DEEP_FIELDS if p.get(k) is not None},
                                 },
                             )
@@ -339,6 +429,42 @@ class AiDetectWorker(BaseWorker):
                         await db.commit()
                         total_plays = len(events)
 
+                # ── Human escalation trigger (UATP) ────────────────────────
+                if needs_review_count > 0:
+                    await log_agent_action(
+                        game_id=game_id, organization_id=str(org_id), job_id=job_id,
+                        phase="escalation", level="escalation",
+                        action=f"{needs_review_count} play(s) flagged for your review",
+                        reason="These reads fell below my confidence threshold. I will not present them "
+                               "as fact. Please verify them in the Play Log before game-planning around them.",
+                        confidence=avg_conf,
+                        detail={"needs_review": needs_review_count, "total_plays": total_plays,
+                                "threshold": ESCALATION_THRESHOLD},
+                    )
+
+                # ── Completion (UATP success + confidence flag) ────────────
+                await log_agent_action(
+                    game_id=game_id, organization_id=str(org_id), job_id=job_id,
+                    phase="complete", level="success",
+                    action=f"Analysis complete — {total_plays} play(s) detected",
+                    reason=f"Overall confidence: {confidence_band(avg_conf)}. "
+                           f"{total_plays - needs_review_count} confident, {needs_review_count} flagged for review."
+                           + (f" {failed_batches} segment(s) were skipped." if failed_batches else ""),
+                    confidence=avg_conf,
+                    detail={"total_plays": total_plays, "needs_review": needs_review_count,
+                            "failed_batches": failed_batches},
+                )
+
+        except Exception as e:
+            # UATP failure transparency — say WHY, never fail silently.
+            logger.error(f"[ai_detect] game {game_id} failed: {e}")
+            await log_agent_action(
+                game_id=game_id, organization_id=str(org_id), job_id=job_id,
+                phase="error", level="error",
+                action="Detection stopped before completing",
+                reason=f"I hit an error and stopped rather than guess: {str(e)[:300]}",
+            )
+            raise
         finally:
             # Always restore game to ready
             async with AsyncSessionLocal() as db:
@@ -346,7 +472,8 @@ class AiDetectWorker(BaseWorker):
                 await db.commit()
 
         logger.info(f"[ai_detect] game {game_id}: {total_plays} plays auto-detected")
-        return {"game_id": game_id, "plays_detected": total_plays}
+        return {"game_id": game_id, "plays_detected": total_plays,
+                "needs_review": needs_review_count, "avg_confidence": avg_conf}
 
     def _extract_frames(self, video_source: str, output_dir: str, duration_seconds: Optional[int]):
         """

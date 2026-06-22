@@ -15,3 +15,4 @@ from .teams_of_month import TeamSubmission, FeaturedTeam
 from .coach import CoachProfile, CoachMove, AdminPermission, AdminAuditLog
 from .survey import SurveyPrompt, SurveyResponse
 from .source_connection import SourceConnection
+from .agent_log import AgentLog

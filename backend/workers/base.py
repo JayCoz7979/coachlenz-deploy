@@ -43,7 +43,10 @@ class BaseWorker:
             await db.commit()
 
         try:
-            result = await self.handle(job.payload)
+            # Correlate any agent logs emitted during this run with the job (UATP audit trail).
+            payload = dict(job.payload or {})
+            payload["_job_id"] = str(job.id)
+            result = await self.handle(payload)
             async with AsyncSessionLocal() as db:
                 await db.execute(update(Job).where(Job.id == job.id).values(status="done", result=result or {}, locked_at=None))
                 await db.commit()

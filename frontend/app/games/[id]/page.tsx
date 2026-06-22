@@ -8,6 +8,19 @@ import { ChevronLeft, Tag, Play, Trash2, Clock, FileText, Loader2, CheckCircle, 
 import Link from 'next/link'
 
 // ── Types ──────────────────────────────────────────────────────────────────
+interface AgentLogEntry {
+  id: string
+  agent_name: string
+  agent_role: string | null
+  phase: string | null
+  action: string
+  reason: string | null
+  confidence: number | null
+  level: string
+  detail: Record<string, any>
+  created_at: string | null
+}
+
 interface GameDetail {
   id: string
   title: string
@@ -74,6 +87,71 @@ function StatusBanner({ status }: { status: string }) {
         ? <><Loader2 size={15} style={{ animation: 'spin 1s linear infinite' }} /> Film is {status} — video will appear when ready.</>
         : <><AlertCircle size={15} /> Processing failed: {status}</>
       }
+    </div>
+  )
+}
+
+// ── Agent Activity Panel (UATP live transparency) ──────────────────────────
+function confColor(level: string): string {
+  if (level === 'error') return '#e07070'
+  if (level === 'escalation') return '#e0a050'
+  if (level === 'warn') return '#d4b94c'
+  if (level === 'success') return '#2d8c40'
+  return '#7a9cc9'
+}
+
+function confBand(c: number | null): string {
+  if (c == null) return ''
+  if (c >= 0.8) return 'high'
+  if (c >= 0.65) return 'medium'
+  return 'low'
+}
+
+function AgentActivityPanel({ entries, live }: { entries: AgentLogEntry[]; live: boolean }) {
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+  }, [entries.length])
+
+  if (!entries.length) return null
+  const identity = entries[0]
+
+  return (
+    <div style={{
+      marginBottom: 12, background: 'rgba(255,255,255,0.02)',
+      border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6, overflow: 'hidden',
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px',
+        borderBottom: '1px solid rgba(255,255,255,0.06)', fontSize: 11,
+      }}>
+        <Activity size={13} style={{ color: '#C9A84C', ...(live ? { animation: 'pulseDot 1.4s ease-in-out infinite' } : {}) }} />
+        <span style={{ color: '#f8f6f0', fontWeight: 700, letterSpacing: '0.04em' }}>
+          {identity.agent_name} ACTIVITY
+        </span>
+        {identity.agent_role && (
+          <span style={{ color: '#7a7a6e' }}>· {identity.agent_role}</span>
+        )}
+        {live && <span style={{ marginLeft: 'auto', color: '#2d8c40', fontWeight: 600 }}>● LIVE</span>}
+      </div>
+      <div ref={scrollRef} style={{ maxHeight: 190, overflowY: 'auto', padding: '6px 0' }}>
+        {entries.map(e => (
+          <div key={e.id} style={{ display: 'flex', gap: 9, padding: '5px 14px', fontSize: 12, alignItems: 'baseline' }}>
+            <span style={{ color: confColor(e.level), fontSize: 9, marginTop: 1, flexShrink: 0 }}>●</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ color: '#e8e4d8' }}>{e.action}</div>
+              {e.reason && <div style={{ color: '#7a7a6e', fontSize: 11, marginTop: 1 }}>{e.reason}</div>}
+            </div>
+            {e.confidence != null && (
+              <span style={{
+                flexShrink: 0, fontSize: 10, fontWeight: 600, color: confColor(e.confidence >= 0.65 ? 'success' : 'escalation'),
+              }}>
+                {Math.round(e.confidence * 100)}% {confBand(e.confidence)}
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -503,8 +581,11 @@ export default function GamePage() {
     game_status: string
     job_status: string | null
     plays_detected: number
+    needs_review?: number
+    dry_run?: boolean
     error: string | null
   }>(null)
+  const [agentLog, setAgentLog] = useState<AgentLogEntry[]>([])
   const detectPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => { fetchMe() }, [])
@@ -521,7 +602,15 @@ export default function GamePage() {
         startDetectPoll()
       }
     }).catch(() => {})
+    fetchAgentLog()
   }, [user, id])
+
+  const fetchAgentLog = async () => {
+    try {
+      const r = await api.get(`/games/${id}/agent-log`)
+      setAgentLog(r.data.entries || [])
+    } catch {}
+  }
 
   const startDetectPoll = () => {
     if (detectPollRef.current) return
@@ -529,6 +618,7 @@ export default function GamePage() {
       try {
         const r = await api.get(`/games/${id}/auto-detect/status`)
         setDetectStatus(r.data)
+        await fetchAgentLog()
         const done = !['queued', 'running'].includes(r.data.job_status ?? '') && r.data.game_status !== 'analyzing'
         if (done) {
           clearInterval(detectPollRef.current!)
@@ -536,8 +626,11 @@ export default function GamePage() {
           // Reload events
           const evRes = await api.get(`/events?game_id=${id}`)
           setEvents(evRes.data)
-          if (r.data.plays_detected > 0) {
-            showToast(`${r.data.plays_detected} plays auto-detected`)
+          if (r.data.dry_run) {
+            showToast('Dry run complete — no plays were saved')
+          } else if (r.data.plays_detected > 0) {
+            const rv = r.data.needs_review ? ` (${r.data.needs_review} flagged for review)` : ''
+            showToast(`${r.data.plays_detected} plays auto-detected${rv}`)
             setTab('log')
           }
         }
@@ -547,13 +640,14 @@ export default function GamePage() {
 
   useEffect(() => () => { if (detectPollRef.current) clearInterval(detectPollRef.current) }, [])
 
-  const handleAutoDetect = async () => {
+  const handleAutoDetect = async (dryRun = false) => {
     try {
-      await api.post(`/games/${id}/auto-detect`)
+      setAgentLog([])
+      await api.post(`/games/${id}/auto-detect${dryRun ? '?dry_run=true' : ''}`)
       const r = await api.get(`/games/${id}/auto-detect/status`)
       setDetectStatus(r.data)
       startDetectPoll()
-      showToast('AI play detection started…')
+      showToast(dryRun ? 'Dry run started (no plays will be saved)…' : 'AI play detection started…')
     } catch (e: any) {
       showToast(e?.response?.data?.detail ?? 'Failed to start detection')
     }
@@ -709,7 +803,7 @@ export default function GamePage() {
                     {detectStatus.plays_detected} plays auto-detected
                   </span>
                   <span style={{ color: '#7a7a6e', marginLeft: 4 }}>— review in the Play Log, edit any you need.</span>
-                  <button onClick={handleAutoDetect} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#7a7a6e', fontSize: 11, cursor: 'pointer' }}>
+                  <button onClick={() => handleAutoDetect()} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#7a7a6e', fontSize: 11, cursor: 'pointer' }}>
                     Re-run
                   </button>
                 </div>
@@ -723,7 +817,7 @@ export default function GamePage() {
                 }}>
                   <AlertCircle size={14} style={{ color: '#e07070' }} />
                   <span style={{ color: '#e07070' }}>Auto-detection failed. Tag plays manually or </span>
-                  <button onClick={handleAutoDetect} style={{ background: 'none', border: 'none', color: '#C9A84C', fontSize: 13, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
+                  <button onClick={() => handleAutoDetect()} style={{ background: 'none', border: 'none', color: '#C9A84C', fontSize: 13, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
                     try again
                   </button>
                 </div>
@@ -741,19 +835,34 @@ export default function GamePage() {
                     <div style={{ fontSize: 13, fontWeight: 600, color: '#f8f6f0' }}>Auto-detect plays with AI</div>
                     <div style={{ fontSize: 11, color: '#7a7a6e' }}>Claude Vision scans the film and tags every play automatically — usually under 5 minutes.</div>
                   </div>
-                  <button
-                    onClick={handleAutoDetect}
-                    style={{
-                      background: '#C9A84C', color: '#1c1c1c', border: 'none', borderRadius: 4,
-                      padding: '8px 16px', fontSize: 12, fontWeight: 700, cursor: 'pointer',
-                      letterSpacing: '0.06em', flexShrink: 0,
-                    }}
-                  >
-                    AUTO-DETECT
-                  </button>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
+                    <button
+                      onClick={() => handleAutoDetect()}
+                      style={{
+                        background: '#C9A84C', color: '#1c1c1c', border: 'none', borderRadius: 4,
+                        padding: '8px 16px', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                        letterSpacing: '0.06em',
+                      }}
+                    >
+                      AUTO-DETECT
+                    </button>
+                    <button
+                      onClick={() => handleAutoDetect(true)}
+                      title="Run a dry run — the AI analyzes the film and shows what it would tag, without saving anything."
+                      style={{ background: 'none', border: 'none', color: '#7a7a6e', fontSize: 10, cursor: 'pointer', padding: 0 }}
+                    >
+                      or test run (dry)
+                    </button>
+                  </div>
                 </div>
               )
             })()}
+
+            {/* UATP live activity panel — coach sees the agent work in real time */}
+            <AgentActivityPanel
+              entries={agentLog}
+              live={!!detectStatus && (['queued', 'running'].includes(detectStatus.job_status ?? '') || detectStatus.game_status === 'analyzing')}
+            />
 
             <div style={{
               flex: 1, background: '#000', borderRadius: 6, overflow: 'hidden',
