@@ -63,7 +63,8 @@ CORE (from scoreboard + field):
 - personnel: "10", "11", "12", "13", "20", "21", "22", "23", or null
 - result: "Gain", "Loss", "Incomplete", "Touchdown", "Interception", "Fumble", "Sack", "Penalty", "First Down", "Made", "Missed", "Returned", "Touchback", "Punt"
 - yards_gained: integer or null
-- confidence: 0.0-1.0
+- confidence: 0.0-1.0 — your confidence in THIS play's read overall
+- blind_spot: SINGLE-CAMERA HONESTY. If the fixed camera angle prevented a confident read of something important, name it in a short phrase. Examples: "Backside blocking off-screen", "Coverage rotation behind LOS not visible", "Ball carrier obscured by line at handoff", "Down/distance not on scoreboard this frame", "Far hash action cut off by frame edge". Use null ONLY if the entire play was clearly visible. NEVER invent data for anything off-camera — flag it here instead.
 
 OFFENSE DEEP EXTRACTION:
 - hash_position: "Left Hash", "Middle", "Right Hash" or null
@@ -95,7 +96,7 @@ DEFENSE DEEP EXTRACTION:
 - linebacker_alignment: "Under", "Over", "Tite", "Stack", "Spread", null
 
 Return ONLY valid JSON, nothing else:
-{"plays": [{"side": "offense", "frame": 1, "down": null, "distance": null, "field_position": null, "formation": null, "play_type": null, "personnel": null, "result": null, "yards_gained": null, "confidence": 0.8, "hash_position": null, "motion": false, "motion_type": null, "receiver_alignment": null, "run_direction": null, "run_gap": null, "run_concept": null, "pass_concept": null, "pass_depth": null, "target_area": null, "tempo": null, "score_situation": null, "play_description": null, "defensive_front": null, "coverage": null, "coverage_shell": null, "safety_rotation": null, "corner_technique": null, "blitz": null, "pressure_type": null, "pressure_gap": null, "linebacker_alignment": null}]}
+{"plays": [{"side": "offense", "frame": 1, "down": null, "distance": null, "field_position": null, "formation": null, "play_type": null, "personnel": null, "result": null, "yards_gained": null, "confidence": 0.8, "blind_spot": null, "hash_position": null, "motion": false, "motion_type": null, "receiver_alignment": null, "run_direction": null, "run_gap": null, "run_concept": null, "pass_concept": null, "pass_depth": null, "target_area": null, "tempo": null, "score_situation": null, "play_description": null, "is_play_action": false, "screen_subtype": null, "goal_line": false, "defensive_front": null, "coverage": null, "coverage_shell": null, "safety_rotation": null, "corner_technique": null, "blitz": null, "pressure_type": null, "pressure_gap": null, "linebacker_alignment": null}]}
 
 If zero plays: {"plays": []}"""
 
@@ -126,7 +127,8 @@ Use null ONLY if genuinely not determinable.
 - score_margin: from scoreboard if visible — "Up 10+" | "Up 1-9" | "Tied" | "Down 1-9" | "Down 10+" | null
 - quarter: 1 | 2 | 3 | 4 | 5 (OT) | null
 - shot_clock_range: "Early (>15s)" | "Mid (8-14s)" | "Late (<7s)" | "Buzzer" | null
-- confidence: 0.0–1.0
+- confidence: 0.0–1.0 — your confidence in THIS possession's read overall
+- blind_spot: SINGLE-CAMERA HONESTY. If the fixed camera angle prevented a confident read, name it in a short phrase. Examples: "Weak-side action off-screen", "Shot clock not visible this frame", "Ball handler obscured in traffic", "Defender assignment unclear from this angle", "Play developed below the baseline camera cutoff". Use null ONLY if the entire possession was clearly visible. NEVER invent off-camera data — flag it here instead.
 
 ── OFFENSE (side=offense or transition) ──
 - play_action: primary offensive action — "Pick and Roll" | "Pick and Pop" | "Isolation" | "Post Up" | "Drive and Kick" | "DHO (Dribble Handoff)" | "Off-Ball Screen" | "Catch and Shoot" | "Transition Layup" | "Putback" | "BLOB" | "SLOB" | "Horns" | "Elbow Set" | "Curl" | "Backdoor Cut" | "Lob" | "Other" | null
@@ -184,7 +186,7 @@ These fields are CRITICAL for coaching — extract as precisely as possible from
 
 ━━━ JSON FORMAT ━━━
 Return ONLY this JSON:
-{"plays": [{"side": "offense", "frame": 1, "event_type": "shot", "result": null, "score_margin": null, "quarter": null, "shot_clock_range": null, "confidence": 0.85, "play_action": null, "shot_zone": null, "shot_type": null, "shot_distance_ft": null, "screen_type": null, "ball_screen_position": null, "transition_type": null, "paint_touch": false, "kick_out": false, "assist_type": null, "motion": false, "inbound_type": null, "inbound_side": null, "inbound_set": null, "inbound_primary_action": null, "inbound_scorer_position": null, "inbound_defense_coverage": null, "inbound_situation": null, "inbound_result_zone": null, "defensive_scheme": null, "hedge_style": null, "help_defense": null, "deny_style": null, "press_trigger": null, "oob_defense_coverage": null, "play_description": null}]}
+{"plays": [{"side": "offense", "frame": 1, "event_type": "shot", "result": null, "score_margin": null, "quarter": null, "shot_clock_range": null, "confidence": 0.85, "blind_spot": null, "play_action": null, "shot_zone": null, "shot_type": null, "shot_distance_ft": null, "screen_type": null, "ball_screen_position": null, "transition_type": null, "paint_touch": false, "kick_out": false, "assist_type": null, "motion": false, "vs_zone": false, "zone_offense_action": null, "press_break_action": null, "clutch_situation": false, "foul_drawn_action": null, "inbound_type": null, "inbound_side": null, "inbound_set": null, "inbound_primary_action": null, "inbound_scorer_position": null, "inbound_defense_coverage": null, "inbound_situation": null, "inbound_result_zone": null, "defensive_scheme": null, "hedge_style": null, "help_defense": null, "deny_style": null, "press_trigger": null, "oob_defense_coverage": null, "play_description": null}]}
 
 Zero events: {"plays": []}"""
 
@@ -302,6 +304,8 @@ class AiDetectWorker(BaseWorker):
                             "clutch_situation", "foul_drawn_action",
                             # Football moat fields
                             "is_play_action", "screen_subtype", "goal_line",
+                            # Single-camera transparency (all sports)
+                            "blind_spot",
                         )
 
                         events = [

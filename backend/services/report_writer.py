@@ -243,6 +243,20 @@ async def generate_prose_sections(
         ),
     })
 
+    sections_spec.append({
+        "heading": "Scout's Note: Single-Camera Coverage & Confidence",
+        "insight_type": "tendency",
+        "instructions": (
+            "Use the data_confidence block. This is a transparency note, not a sales pitch — coaches trust honesty. "
+            "State the overall confidence_band (high / medium / low) and avg_confidence, and what it means for how to use this report. "
+            "If low_confidence_pct is meaningful, say plainly that those reads should be verified on film before game-planning around them. "
+            "List the top_blind_spots verbatim (the limitation phrases) so the coach knows exactly what the fixed single-camera angle could NOT see "
+            "(e.g. backside blocking, coverage rotation behind the line, far-hash action cut off). "
+            "If blind_spot_count is 0 and confidence is high, say so in one sentence. "
+            "Never overstate certainty. The goal is that a coach knows precisely how much to lean on each finding."
+        ),
+    })
+
     # Build the prompt
     section_outline = "\n".join(
         f"{i+1}. \"{s['heading']}\" (insight_type: \"{s['insight_type']}\")\n   Instructions: {s['instructions']}"
@@ -486,6 +500,19 @@ async def _generate_basketball_sections(
                 "Numbered priority list — the 6-8 most important game-plan items for this opponent. "
                 "Specific and actionable, not generic. Number them by priority. "
                 "Format: 1. [O/D]: [specific action tied directly to a tendency from the data]"
+            ),
+        },
+        {
+            "heading": "Scout's Note: Single-Camera Coverage & Confidence",
+            "insight_type": "tendency",
+            "instructions": (
+                "Use the data_confidence block. This is a transparency note, not a sales pitch — coaches trust honesty. "
+                "State the overall confidence_band (high / medium / low) and avg_confidence, and what it means for how to use this report. "
+                "If low_confidence_pct is meaningful, say plainly that those reads should be verified on film first. "
+                "List the top_blind_spots verbatim so the coach knows exactly what the fixed single-camera angle could NOT see "
+                "(e.g. weak-side action off-screen, shot clock not visible, defender assignment unclear). "
+                "If blind_spot_count is 0 and confidence is high, say so in one sentence. "
+                "Never overstate certainty."
             ),
         },
     ]
