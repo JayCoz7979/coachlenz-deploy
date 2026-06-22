@@ -29,14 +29,18 @@ from backend.workers.base import BaseWorker
 
 logger = logging.getLogger(__name__)
 
-# How many seconds between fixed-interval frame samples (tighter = catch more plays)
-FALLBACK_INTERVAL = 5
-# Max frames to send Claude per batch (controls token cost)
-FRAMES_PER_BATCH = 5
-# Minimum scene-change threshold (0–1). Lower = more sensitive (catches more snaps).
-SCENE_THRESHOLD = 0.27
 # Cap on total frames analyzed per game (recall vs cost). ~MAX_FRAMES/5 Claude calls.
-MAX_FRAMES = 900
+MAX_FRAMES = 2700          # was 900 — 3x increase for recall (~1 frame/1.33s over 60min)
+# Max frames to send Claude per batch (controls token cost)
+FRAMES_PER_BATCH = 5       # unchanged — keep Claude batch size
+# Minimum scene-change threshold (0–1). Lower = more sensitive (catches more snaps).
+SCENE_THRESHOLD = 0.18     # was 0.27 — more sensitive snap detection
+# Seconds between fixed-interval frame samples (tighter = catch more plays)
+FALLBACK_INTERVAL = 2.0    # was 5.0 — tighter coverage, no >2s gap
+# Confidence gate — plays below this are dropped
+MIN_CONFIDENCE = 0.5       # unchanged — keep quality gate
+# Drop frames closer together than this (dedup same-moment frames)
+CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 
@@ -52,6 +56,13 @@ Skip: timeouts, huddles, sideline shots, commercials, halftime, replays (same ac
 IMAGE SET PER FRAME: For each frame you receive the full image PLUS two zoomed crops — the "lower" and "upper" score/overlay zones (magnified 2x). The broadcast score graphic (the "score bug") almost always shows DOWN, DISTANCE, SCORE, QUARTER, and GAME CLOCK. READ THESE DIGITS CAREFULLY FROM THE ZOOMED CROPS — they are your source of truth for down/distance/score/clock. Down & distance usually appears like "2ND & 7" or "3RD & GOAL". If the graphic is genuinely absent (coaches' end-zone film with no overlay), set those fields to null and note it in blind_spot — do NOT guess.
 
 RUN vs PASS — decide from the SEQUENCE across the consecutive frames, never a single still: QB hands the ball to a back or keeps it and runs = "Run"; QB drops straight back, the ball is in the air, or a receiver is catching downfield = "Pass"; quick flip behind the line = "Screen". If you cannot tell, use null rather than guessing.
+
+FRAME PHASE — first judge what moment each frame shows, then read accordingly:
+- pre_snap: offense set in formation at the line → best for formation, personnel, down, distance, field_position
+- at_snap: the snap / handoff / drop → best for run vs pass, play_type
+- post_play: the tackle / catch / end of play → best for result and yardage cues
+- between_plays / unclear: huddle, walk-up, sideline, replay, crowd → NOT a live snap; do not emit a play for these
+Read down/distance/formation from pre_snap frames, run-vs-pass from at_snap frames, and result from post_play frames. Do not try to read formation or down off a mid-action or between-plays frame.
 
 PHASE classification (side field):
 - "offense": scouted team has the ball
@@ -266,6 +277,9 @@ class AiDetectWorker(BaseWorker):
                 frame_paths = await asyncio.get_event_loop().run_in_executor(
                     None, self._extract_frames, video_source, frames_dir, game.duration_seconds
                 )
+                # Snap-aware clustering: drop same-moment duplicates so each batch
+                # covers distinct play opportunities rather than near-identical frames.
+                frame_paths = self._cluster_frames(frame_paths, CLUSTER_GAP_SECONDS)
 
                 if not frame_paths:
                     logger.warning(f"[ai_detect] No frames extracted for game {game_id}")
@@ -336,6 +350,7 @@ class AiDetectWorker(BaseWorker):
                 # reliable than reading yardage off a still frame.
                 if sport in ("football", "flag_football"):
                     deduped = self._derive_from_sequence(deduped)
+                    deduped = self._derive_field_position(deduped)
                 logger.info(f"[ai_detect] {len(all_plays)} raw → {len(deduped)} after dedup")
 
                 # ── Confidence + escalation accounting (UATP) ──────────────
@@ -414,7 +429,7 @@ class AiDetectWorker(BaseWorker):
                             # Player-level tracking (all sports)
                             "players", "primary_player_jersey",
                             # Derivation provenance
-                            "yards_source",
+                            "yards_source", "field_position_derived",
                         )
 
                         events = [
@@ -553,6 +568,22 @@ class AiDetectWorker(BaseWorker):
 
         return frames
 
+    def _cluster_frames(self, frames: list, min_gap_seconds: float = CLUSTER_GAP_SECONDS) -> list:
+        """Drop frames closer together than min_gap_seconds (same-moment duplicates)
+        while preserving distinct play opportunities across the game.
+
+        NOTE: frames here are (path, time_seconds) tuples — the real timestamp comes
+        from ffmpeg showinfo, not the filename, so we cluster on the actual time.
+        """
+        if not frames:
+            return frames
+        ordered = sorted(frames, key=lambda ft: ft[1])
+        kept = [ordered[0]]
+        for ft in ordered[1:]:
+            if ft[1] - kept[-1][1] >= min_gap_seconds:
+                kept.append(ft)
+        return kept
+
     def _frame_blocks(self, path: str, frame_no: int) -> list:
         """Return Claude content blocks for one frame: the full image PLUS upscaled
         crops of the upper and lower regions where the broadcast score/down-distance
@@ -621,7 +652,7 @@ class AiDetectWorker(BaseWorker):
         out = []
         tmin, tmax = batch[0][1], batch[-1][1]
         for p in plays:
-            if p.get("confidence", 0) < 0.5:
+            if p.get("confidence", 0) < MIN_CONFIDENCE:
                 continue
             # Assign the REAL timestamp from the frame the AI picked.
             fr = p.get("frame")
@@ -675,6 +706,53 @@ class AiDetectWorker(BaseWorker):
                         p["result"] = "Loss" if gained < 0 else "Gain"
             elif d_j == 1 and (dist_j in (10, None)) and not p.get("result"):
                 p["result"] = "First Down"  # series reset = they converted
+        return plays
+
+    def _derive_field_position(self, plays: list[dict]) -> list[dict]:
+        """Derive field_position by chaining from any readable anchor + yards gained.
+
+        field_position is a STRING here ("OWN 32" / "OPP 14" / "MID 50"), so we map it
+        to an absolute 0-100 yardline (own goal = 0, midfield = 50, opp goal = 100),
+        advance by yards_gained down a drive, and map back. We only chain within an
+        offensive series and reset on possession change or unknown yardage, so we never
+        invent a position we can't justify. Derived spots are flagged.
+        """
+        def to_abs(fp):
+            if not fp:
+                return None
+            s = str(fp).upper().strip()
+            m = re.match(r"(OWN|OPP)\s*(\d{1,2})", s)
+            if m:
+                n = int(m.group(2))
+                return n if m.group(1) == "OWN" else 100 - n
+            if s.startswith("MID") or s == "50":
+                return 50
+            return None
+
+        def to_str(a):
+            a = max(1, min(99, int(round(a))))
+            if a == 50:
+                return "MID 50"
+            return f"OWN {a}" if a < 50 else f"OPP {100 - a}"
+
+        plays = sorted(plays, key=lambda p: p.get("time_seconds") or 0)
+        cur = None  # current absolute yardline at the start of this play
+        for p in plays:
+            if (p.get("side") or "offense") == "defense":
+                cur = None  # possession flipped — offense spot no longer chains
+                continue
+            real = to_abs(p.get("field_position"))
+            if real is not None:
+                cur = real  # anchor from a real read
+            elif cur is not None and p.get("field_position") is None:
+                p["field_position"] = to_str(cur)
+                p["field_position_derived"] = True
+            # advance to the next play's starting spot using this play's yardage
+            y = p.get("yards_gained")
+            if cur is not None and y is not None:
+                cur = max(1, min(99, cur + y))
+            elif y is None:
+                cur = None  # unknown gain → can't place the next spot
         return plays
 
     def _deduplicate_plays(self, plays: list[dict]) -> list[dict]:
