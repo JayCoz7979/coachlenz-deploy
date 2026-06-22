@@ -15,7 +15,7 @@ def _total_plays(tendency_summary: Dict[str, Any]) -> int:
         return 0
 
 
-SYSTEM_PROMPT = """You are an elite football analyst writing an OPPONENT SCOUTING report for a head coach preparing for this week's game.
+SYSTEM_PROMPT_FOOTBALL = """You are an elite football analyst writing an OPPONENT SCOUTING report for a head coach preparing for this week's game.
 
 Your job: turn raw tendency data into specific, exploitable intelligence that gives the coaching staff a clear game plan.
 
@@ -35,6 +35,26 @@ SECTION FORMATS:
 """
 
 
+SYSTEM_PROMPT_BASKETBALL = """You are an elite basketball analyst writing an OPPONENT SCOUTING report for a head coach preparing for this week's game.
+
+Your job: turn raw tendency and shot data into specific, exploitable intelligence the coaching staff can act on immediately.
+
+RULES:
+- Every stat you cite must come from the provided data — no invented numbers
+- Always include attempt counts alongside percentages: "Pick and Roll (23 possessions, 54% FG)"
+- Be direct. Coaches want intelligence, not hedging
+- Offensive data = opponent on offense — advise how OUR DEFENSE should prepare
+- Defensive data = opponent on defense — advise how OUR OFFENSE should attack them
+- Lead with the most exploitable finding in each section
+- "Exploitable" means a tendency that is both strong AND has a clear counter
+
+SECTION FORMATS:
+- 2-3 punchy paragraphs per section, not walls of text
+- Include counts: never say "often" when you can say "14 of 19 possessions"
+- Call out hot zones AND cold zones — both matter for defensive positioning
+"""
+
+
 async def generate_prose_sections(
     sport: str,
     tendency_summary: Dict[str, Any],
@@ -42,6 +62,10 @@ async def generate_prose_sections(
     is_trial: bool = False,
 ) -> List[Dict[str, Any]]:
     """Returns sections shaped as [{heading, body, insight_type}] for the report viewer."""
+
+    if sport == "basketball":
+        return await _generate_basketball_sections(tendency_summary, report_type, is_trial)
+
     plays = _total_plays(tendency_summary)
 
     if plays < 5:
@@ -248,7 +272,7 @@ Return ONLY the JSON array, nothing else."""
     message = client.messages.create(
         model=MODEL,
         max_tokens=6000,
-        system=SYSTEM_PROMPT,
+        system=SYSTEM_PROMPT_FOOTBALL,
         messages=[{"role": "user", "content": prompt}],
     )
     raw = message.content[0].text.strip()
@@ -272,6 +296,219 @@ Return ONLY the JSON array, nothing else."""
             raise ValueError("empty")
     except Exception:
         sections = [{"heading": "Tendency Analysis", "insight_type": "tendency", "body": raw}]
+
+    if is_trial:
+        sections.append({
+            "heading": "Trial Report",
+            "insight_type": "tendency",
+            "body": "This is a trial report. Upgrade at coachlenz.com to unlock full reports and exports.",
+        })
+    return sections
+
+
+async def _generate_basketball_sections(
+    tendency_summary: Dict[str, Any],
+    report_type: str,
+    is_trial: bool = False,
+) -> List[Dict[str, Any]]:
+    """Basketball-specific scouting report — full game prep intelligence."""
+    total = _total_plays(tendency_summary)
+    if total < 5:
+        return [{
+            "heading": "Not Enough Possessions to Analyze Yet",
+            "insight_type": "tendency",
+            "body": (
+                f"This report was generated from {total} tagged event"
+                f"{'s' if total != 1 else ''}. Tendency analysis needs more possessions — "
+                f"ideally a full game (60+ possessions), not highlight clips.\n\n"
+                f"Import full game film and let AI auto-detection tag the possessions, then regenerate."
+            ),
+        }]
+
+    off = tendency_summary.get("offense_plays", 0)
+    def_plays = tendency_summary.get("defense_plays", 0)
+
+    sections_spec = [
+        {
+            "heading": "Executive Summary",
+            "insight_type": "tendency",
+            "instructions": (
+                "2-3 paragraph overview of this team's identity on both ends. "
+                "Lead with their offensive system (PnR-heavy? Iso? Motion? Transition-first?), "
+                "then their defensive scheme and what makes them hard to score against. "
+                "End with the single most important thing the staff needs to know going into game week."
+            ),
+        },
+        {
+            "heading": "Shot Chart Intelligence",
+            "insight_type": "tendency",
+            "instructions": (
+                "Use shot_zone_map.zones to build a complete shooting profile. "
+                "Name every zone with data: attempts, FG%, and pct_of_all_shots. "
+                "Identify: hottest_zone (where they score most efficiently) AND most_frequent_zone (where they attack most). "
+                "Use field side distribution — do they favor left or right? Do they hunt corner 3s? "
+                "Call out COLD zones (high attempt rate, low FG%) — these are traps to force them into. "
+                "Use shooting_overview: overall split between paint, mid-range, and 3PT with FG% on each. "
+                "Advise: where should our defense funnel them? What area must we take away?"
+            ),
+        },
+        {
+            "heading": "Offensive System Breakdown",
+            "insight_type": "tendency",
+            "instructions": (
+                "Use shot_creation.by_play_action and pick_and_roll to identify their primary offensive system. "
+                "PnR: cite total possessions, roll vs pop split, preferred screen position, FG%, turnovers. "
+                "Isolation: cite frequency, zones they iso from, FG%. "
+                "Post up: if post_up has data, cite FG% and kick-out frequency. "
+                "Use screen_usage: what screens do they run most and how effective are they? "
+                "Use transition: how often do they push pace? Primary break FG%? "
+                "Use inbound_plays: do they score off BLOB/SLOB sets? "
+                "Advise: what scheme stops their primary action? How do we disrupt their sets?"
+            ),
+        },
+        {
+            "heading": "Drive, Paint, and Kick-Out Patterns",
+            "insight_type": "tendency",
+            "instructions": (
+                "Use paint_and_drive: how many paint touches per game? Kick-out rate? Drive-and-kick count? Paint FG%? "
+                "This tells you: do they use paint touches to score or to create kick-out 3s? "
+                "If high kick_out_count relative to paint_touch_count, their best offense is drive-kick — "
+                "advise closing out hard on perimeter after any drive. "
+                "If high paint FG%, they finish — advise sending help on every drive. "
+                "Use shot_clock: do they get easy early-clock paint looks or grind to late-clock situations? "
+                "Advise specifically: contest at rim or help and recover?"
+            ),
+        },
+        {
+            "heading": "Ball Screen Defense Attack Plan",
+            "insight_type": "defense",
+            "instructions": (
+                "Use ball_screen_defense to understand how THEY defend ball screens — this is how OUR offense attacks them. "
+                "Primary hedge style: Hard Hedge, Drop, Switch, ICE, or Blitz? "
+                "What does each hedge style leave open? "
+                "Hard Hedge → screener slips or roll early, ball handler pull-up off the hedge. "
+                "Drop Coverage → ball handler can pull up at foul line, mid-range. "
+                "Switch → attack mismatches, post the smaller defender. "
+                "ICE/Push → middle of the floor opens, reverse the pick. "
+                "Blitz/Double → kick out to open 3s, skip pass. "
+                "Use hedge_distribution to show if they are consistent or mixed. "
+                "Advise OC: design 3 specific plays that attack their primary hedge style."
+            ),
+        },
+        {
+            "heading": "Defensive Scheme & Tendencies",
+            "insight_type": "defense",
+            "instructions": (
+                "Use defensive_scheme: primary scheme (Man, Zone 2-3, etc.), man vs zone pct, press count. "
+                "Do they change scheme by quarter? (cite quarters_used for each scheme). "
+                "Use ball_screen_defense.help_defense and deny_style: how do they handle off-ball? "
+                "Full denial tells us to back-cut. Open/Sag tells us to spot up. Collapsing help tells us to kick out. "
+                "press_triggers: if they press, when? After made baskets? Always? "
+                "Advise: what offensive actions, formations, and concepts break their primary defensive scheme?"
+            ),
+        },
+        {
+            "heading": "Situational Intelligence",
+            "insight_type": "tendency",
+            "instructions": (
+                "Use quarter_breakdown: which quarter do they shoot best/worst? When do turnovers spike? "
+                "Use shot_clock: are they disciplined (mostly early/mid clock) or chaotic (high late-clock %)? "
+                "Late-clock FG% vs early-clock FG% — does shot clock pressure hurt them? "
+                "Use game_script: do their tendencies change when leading vs trailing? "
+                "If they jack up 3s when trailing, deny the 3-point line in late-game situations. "
+                "If they become turnover-prone when losing, apply pressure late. "
+                "Only cite game_script if data covers 2+ margin situations."
+            ),
+        },
+        {
+            "heading": "EXPLOITABLE PATTERNS — Offense",
+            "insight_type": "tendency",
+            "instructions": (
+                "Bullet-point intelligence brief for the defensive game plan. "
+                "List 5-7 specific, exploitable offensive tendencies with the defensive counter. Format:\n"
+                "• [TENDENCY]: [what they do and how often] → [COUNTER]: [specific defensive adjustment]\n"
+                "Examples:\n"
+                "• CORNER 3 HUNTING: 34% of shots come from corner 3 zones (Left: 18%, Right: 16%), 44% FG — they run baseline drift after every PnR → Shade help defender to corner, contest all corner catches\n"
+                "• LATE SHOT CLOCK: 28% of possessions end in late shot clock shots (14 of 50), only 31% FG — they don't have a bailout play → Play disciplined defense, no reach fouls, force late clock\n"
+                "Only include tendencies with 5+ instances. This is the most important section."
+            ),
+        },
+        {
+            "heading": "EXPLOITABLE PATTERNS — Defense",
+            "insight_type": "tendency",
+            "instructions": (
+                "Bullet-point intelligence brief for the offensive game plan. "
+                "List 4-6 specific vulnerabilities in their defense with the offensive attack. Format:\n"
+                "• [VULNERABILITY]: [what they do and why it's exploitable] → [ATTACK]: [specific action]\n"
+                "Examples:\n"
+                "• DROP COVERAGE: They drop on all ball screens (18/22 PnR coverages) → Ball handler pull-up at foul line, shoot over the drop\n"
+                "• ZONE WEAKNESS: Their 2-3 zone gives up elbow mid-range and high post consistently → Run Horns sets, attack the elbow before the zone sets\n"
+                "Only include vulnerabilities with enough film evidence."
+            ),
+        },
+        {
+            "heading": "Game Plan Priorities",
+            "insight_type": "tendency",
+            "instructions": (
+                "Numbered priority list — the 6-8 most important game-plan items for this opponent. "
+                "Specific and actionable, not generic. Number them by priority. "
+                "Format: 1. [O/D]: [specific action tied directly to a tendency from the data]"
+            ),
+        },
+    ]
+
+    section_outline = "\n".join(
+        f"{i+1}. \"{s['heading']}\" (insight_type: \"{s['insight_type']}\")\n   Instructions: {s['instructions']}"
+        for i, s in enumerate(sections_spec)
+    )
+
+    prompt = f"""Sport: Basketball
+Report Type: {report_type}
+Sample Size: {total} total events (offense: {off}, defense: {def_plays})
+
+TENDENCY DATA:
+{json.dumps(tendency_summary, indent=2)}
+
+Write a complete basketball opponent scouting report as a JSON array. Each element: {{"heading": "...", "insight_type": "...", "body": "..."}}.
+
+SECTIONS (write every one in order):
+{section_outline}
+
+BODY FORMAT:
+- Plain text, paragraphs separated by \\n\\n
+- Always cite attempt counts alongside percentages
+- EXPLOITABLE PATTERNS sections: bullet points starting with •
+- Lead every section with the most actionable finding
+
+Return ONLY the JSON array, nothing else."""
+
+    message = client.messages.create(
+        model=MODEL,
+        max_tokens=7000,
+        system=SYSTEM_PROMPT_BASKETBALL,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    raw = message.content[0].text.strip()
+    if "```" in raw:
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+        raw = raw.strip()
+
+    try:
+        parsed = json.loads(raw)
+        sections = [
+            {
+                "heading": s.get("heading", "Analysis"),
+                "insight_type": s.get("insight_type", "tendency"),
+                "body": s.get("body", ""),
+            }
+            for s in parsed if isinstance(s, dict)
+        ]
+        if not sections:
+            raise ValueError("empty")
+    except Exception:
+        sections = [{"heading": "Basketball Analysis", "insight_type": "tendency", "body": raw}]
 
     if is_trial:
         sections.append({

@@ -7,13 +7,12 @@ def _side(e) -> str:
 
 
 async def run_tendency_engine(sport: str, events: List[Event]) -> Dict[str, Any]:
-    from .football import analyze_football, analyze_football_defense
+    from .football import analyze_football, analyze_football_defense, analyze_football_special
     from .basketball import analyze_basketball
     from .flag_football import analyze_flag_football
     from .base_sports import analyze_base_sport
 
     if sport in ("football", "flag_football"):
-        from .football import analyze_football_special
         offense = [e for e in events if _side(e) == "offense"]
         defense = [e for e in events if _side(e) == "defense"]
         special = [e for e in events if _side(e) == "special_teams"]
@@ -29,7 +28,10 @@ async def run_tendency_engine(sport: str, events: List[Event]) -> Dict[str, Any]
             "defense": deff,
             "special_teams": st,
         }
+
     elif sport == "basketball":
-        return analyze_basketball(events)
+        result = analyze_basketball(events)
+        return result
+
     else:
         return analyze_base_sport(sport, events)

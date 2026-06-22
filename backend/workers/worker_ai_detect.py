@@ -37,70 +37,122 @@ MAX_FRAMES = 900
 SKIP_START_SECONDS = 5
 
 
-DETECTION_PROMPT = """You are the most thorough football film analyst in the world. Extract every possible piece of intelligence from each play. Coaches at every level depend on this data to win games.
+DETECTION_PROMPT = """You are the most thorough football film analyst in the world. The frames below are consecutive moments from game film (a few seconds apart), shown in time order.
 
-FRAMES: Consecutive moments from game film shown in time order. One play often spans multiple frames (pre-snap → snap → result). Return ONE object per distinct snap. Use all frames to build the complete picture of each play.
+Your job: identify every DISTINCT football play in this window and extract MAXIMUM structured intelligence. Consecutive frames often show ONE play developing (pre-snap → snap → result) — return ONE play using pre-snap frames for formation/alignment and post-snap frames for result. If frames clearly span multiple snaps, return one object per snap.
 
-SNAP EVERY PLAY. A play is any snap: run, pass, screen, draw, QB sneak, punt, field goal, PAT, kickoff, or return.
+Catch EVERY snap: run, pass, screen, draw, QB sneak, RPO, option, punt, field goal, PAT, kickoff, return.
 
-SKIP ONLY: timeouts, huddles, sideline/crowd shots, commercials, halftime, instant replays, pre/post-game, no live action.
+Skip: timeouts, huddles, sideline shots, commercials, halftime, replays (same action shown twice), pre-game, post-game, no live action.
+
+PHASE classification (side field):
+- "offense": scouted team has the ball
+- "defense": scouted team is defending
+- "special_teams": punt, kickoff, field goal, PAT, any return
+
+EXTRACT ALL FIELDS BELOW. Use null only if truly unreadable from film. Make your best coaching-level read.
+
+CORE (from scoreboard + field):
+- side: "offense", "defense", or "special_teams"
+- frame: Frame NUMBER where play best seen (REQUIRED)
+- down: 1-4 or null
+- distance: yards to go or null
+- field_position: "OWN 32", "OPP 14", etc. or null
+- formation: "Shotgun", "I-Form", "Pistol", "Singleback", "Wildcat", "Empty", "Trips", "Bunch", "Pro Set", "Ace", "Offset I", "Other"
+- play_type: offense → "Run", "Pass", "Screen", "Draw", "Option", "RPO", "QB Sneak", "Other"; special_teams → "Punt", "Kickoff", "Field Goal", "PAT", "Punt Return", "Kick Return", "Onside Kick", "Fake"
+- personnel: "10", "11", "12", "13", "20", "21", "22", "23", or null
+- result: "Gain", "Loss", "Incomplete", "Touchdown", "Interception", "Fumble", "Sack", "Penalty", "First Down", "Made", "Missed", "Returned", "Touchback", "Punt"
+- yards_gained: integer or null
+- confidence: 0.0-1.0
+
+OFFENSE DEEP EXTRACTION:
+- hash_position: "Left Hash", "Middle", "Right Hash" or null
+- motion: true/false (any pre-snap offensive motion)
+- motion_type: "Jet Sweep", "Orbit", "H-Back Shift", "WR Crack", "RB Flare", "TE Arc", "Stack Release", "Fly Motion", null — read from pre-snap movement pattern
+- receiver_alignment: "2x2", "3x1", "3x2", "2x1", "Bunch Left", "Bunch Right", "Stack", "Compressed", null
+- run_direction: "Left", "Right", "Middle", null — only if play_type=Run
+- run_gap: "A", "B", "C", "D", "Edge" — which gap the ball carrier attacked (null if not run)
+- run_concept: "Inside Zone", "Outside Zone", "Power", "Counter", "Trap", "Sweep", "Toss", "Draw", "Option Keep", "QB Sneak", null
+- pass_concept: "Levels", "Mesh", "Flood", "Y-Cross", "4-Verts", "Smash", "Sail", "Hi-Lo", "Stick", "Spacing", "Dagger", "Wheel", "Drive", "Slot Fade", "Seam", "Deep Cross", "Post/Corner", "Drive", null
+- pass_depth: "Screen/Behind LOS", "Short (1-5)", "Intermediate (6-14)", "Deep (15+)" — target depth behind LOS, null if not pass
+- target_area: "Left Flat", "Right Flat", "Left Sideline", "Right Sideline", "Left Slot", "Right Slot", "Middle Short", "Middle Deep", "Seam Left", "Seam Right", "Backfield", null
+- tempo: "Hurry Up", "No Huddle", "Normal", "Slow/Deliberate" — pace of the offense getting to the line
+- score_situation: "Leading 8+", "Leading 1-7", "Tied", "Trailing 1-7", "Trailing 8+" — infer from scoreboard if visible
+- play_description: 1-2 sentence coaching description of exactly what happened (e.g. "Power right to the B-gap, RB cuts back to A for 6 yards. Lead block sealed the WILL.")
+
+DEFENSE DEEP EXTRACTION:
+- defensive_front: "4-3", "3-4", "4-2-5", "3-3-5", "4-4", "5-2", "Nickel", "Dime", "Goal Line", "Bear", "Okie", null
+- coverage: "Cover 0", "Cover 1", "Cover 2", "Cover 2 Man", "Cover 3", "Cover 4", "Cover 6", "Man", "Zone", "Tampa 2", null
+- coverage_shell: "2-High", "1-High", "0-High" — pre-snap safety alignment
+- safety_rotation: "Rotated Left", "Rotated Right", "Stayed 2-High", "Rolled Down", "Robber", null — post-snap safety movement
+- corner_technique: "Press", "Off Coverage", "Trail", "Bail", "Squat", null
+- blitz: "None", "Edge", "A-Gap", "B-Gap", "Corner", "Safety", "Zone Blitz", "Fire Zone", "Double A-Gap"
+- pressure_type: "Base Rush", "Overload Left", "Overload Right", "Interior Push", "Twist", "Stunt", "Zero Blitz", null
+- pressure_gap: "A", "B", "C", "Edge" — where primary pressure came from
+- linebacker_alignment: "Under", "Over", "Tite", "Stack", "Spread", null
+
+Return ONLY valid JSON, nothing else:
+{"plays": [{"side": "offense", "frame": 1, "down": null, "distance": null, "field_position": null, "formation": null, "play_type": null, "personnel": null, "result": null, "yards_gained": null, "confidence": 0.8, "hash_position": null, "motion": false, "motion_type": null, "receiver_alignment": null, "run_direction": null, "run_gap": null, "run_concept": null, "pass_concept": null, "pass_depth": null, "target_area": null, "tempo": null, "score_situation": null, "play_description": null, "defensive_front": null, "coverage": null, "coverage_shell": null, "safety_rotation": null, "corner_technique": null, "blitz": null, "pressure_type": null, "pressure_gap": null, "linebacker_alignment": null}]}
+
+If zero plays: {"plays": []}"""
+
+
+DETECTION_PROMPT_BASKETBALL = """You are the most thorough basketball film analyst in the world. Extract every possible piece of intelligence from each possession or event. Coaches depend on this data to build game plans.
+
+FRAMES: Consecutive moments from basketball game film. Each frame cluster typically covers one possession or key event.
+
+CAPTURE EVERY EVENT: shots (made or missed), turnovers, fouls, rebounds (offensive/defensive), assists, steals, blocks, timeouts, and significant possessions.
+
+SKIP: dead balls between possessions already captured, halftime, non-game footage.
 
 PHASE — classify first:
 - "offense": scouted team has the ball
-- "defense": scouted team is on defense
-- "special_teams": punt, kickoff, field goal, PAT, any return
+- "defense": scouted team is defending
+- "transition": fast break (either direction)
 
-Each frame is labeled "Frame N (timestamp Ts)". Report the best frame number for each play.
+Each frame is labeled "Frame N (timestamp Ts)". Report the best frame number.
 
 ━━━ EXTRACT ALL FIELDS BELOW ━━━
-Use null ONLY if genuinely not visible or determinable. Extract every field you can.
+Use null ONLY if genuinely not determinable.
 
-── CORE (every play) ──
-- side: "offense" | "defense" | "special_teams"
+── CORE (every event) ──
+- side: "offense" | "defense" | "transition"
 - frame: Frame NUMBER — REQUIRED
-- down: 1 | 2 | 3 | 4 | null
-- distance: yards to go as integer | null
-- field_position: "OWN 32" or "OPP 14" format | null
-- hash_position: "Left" | "Right" | "Middle" — ball position on field | null
-- score_situation: read scoreboard if visible — "Leading 8+" | "Leading 1-7" | "Tied" | "Trailing 1-7" | "Trailing 8+" | null
-- tempo: pace of the offense — "No-Huddle" | "Hurry-Up" | "Normal" | "Clock Management" | null
-- result: "Gain" | "Loss" | "Incomplete" | "Touchdown" | "Interception" | "Fumble" | "Sack" | "Penalty" | "First Down" | "Made" | "Missed" | "Returned" | "Touchback" | "Punt"
-- yards_gained: integer (positive or negative) | null
+- event_type: "shot" | "turnover" | "foul" | "rebound" | "assist" | "steal" | "block" | "timeout" | "possession"
+- result: "Made" | "Missed" | "Blocked" | "And-1" | "Fouled" | "Stolen" | "Out of Bounds" | "Offensive Foul" | "Good" | null
+- score_margin: from scoreboard if visible — "Up 10+" | "Up 1-9" | "Tied" | "Down 1-9" | "Down 10+" | null
+- quarter: 1 | 2 | 3 | 4 | 5 (OT) | null
+- shot_clock_range: "Early (>15s)" | "Mid (8-14s)" | "Late (<7s)" | "Buzzer" | null
 - confidence: 0.0–1.0
 
-── OFFENSE (side=offense) ──
-- formation: "Shotgun" | "I-Form" | "Pistol" | "Singleback" | "Wildcat" | "Empty" | "Trips Left" | "Trips Right" | "Bunch" | "Spread" | "Pro Set" | "Other"
-- receiver_alignment: how receivers are spread — "2x2" | "3x1" | "3x1 Trips" | "Empty" | "Bunch" | "Stack" | "Tight 2x2" | "Unbalanced" | null
-- play_type: "Run" | "Pass" | "Screen" | "Draw" | "Option" | "RPO" | "Play Action" | "QB Sneak" | "Boot/Rollout" | "Other"
-- personnel: "10" | "11" | "12" | "13" | "20" | "21" | "22" (RBs+TEs count, e.g. 11=1RB 1TE 3WR) | null
-- motion: true if any player in pre-snap motion, false otherwise
-- motion_type: if motion=true — "Jet Sweep Motion" | "H-Back Motion" | "WR Orbit" | "RB Flare" | "Trade/Swap" | "Fly Motion" | "Shift" | null
-- run_direction: "Inside Left" | "Inside Right" | "Outside Left" | "Outside Right" | "Up Middle" | null
-- run_gap: "A-Gap" | "B-Gap" | "C-Gap" | "Off-Tackle" | "Edge" | null
-- run_concept: "Zone" | "Power/Gap" | "Counter" | "Trap" | "Sweep/Toss" | "Iso" | "Draw" | "Speed Option" | "Pin-Pull" | "Other" | null
-- pass_concept: "Quick Game" | "Intermediate Routes" | "Deep Shot" | "Screen" | "Play Action" | "RPO" | "Boot/Rollout" | "Four Verts" | "Mesh/Crossing" | "Flood" | "Spot/Levels" | "Other" | null
-- pass_depth: "Behind LOS" | "Short (1-5 yds)" | "Intermediate (6-15 yds)" | "Deep (16+ yds)" | null
-- target_area: where the ball was thrown — "Left Flat" | "Right Flat" | "Left Sideline" | "Right Sideline" | "Middle Short" | "Middle Deep" | "Left Seam" | "Right Seam" | "Left Corner" | "Right Corner" | "Post" | "Go/Fly" | "Screen Left" | "Screen Right" | null
+── OFFENSE (side=offense or transition) ──
+- play_action: primary offensive action — "Pick and Roll" | "Pick and Pop" | "Isolation" | "Post Up" | "Drive and Kick" | "DHO (Dribble Handoff)" | "Off-Ball Screen" | "Catch and Shoot" | "Transition Layup" | "Putback" | "BLOB" | "SLOB" | "Horns" | "Elbow Set" | "Curl" | "Backdoor Cut" | "Lob" | "Other" | null
+- shot_zone: where the shot came from — "Restricted Area" | "Paint Non-RA" | "Left Corner 3" | "Right Corner 3" | "Left Wing 3" | "Right Wing 3" | "Top of Key 3" | "Left Elbow Mid" | "Right Elbow Mid" | "Left Mid-Range" | "Right Mid-Range" | "Mid-Range Center" | "Half Court" | null
+- shot_type: "Layup" | "Dunk" | "Floater" | "Pull-Up Jumper" | "Catch and Shoot" | "Step-Back" | "Post Fade" | "Hook Shot" | "Tip-In" | "Bank Shot" | "3-Pointer" | null
+- shot_distance_ft: estimated feet from basket as integer | null
+- screen_type: "Ball Screen" | "Off-Ball Screen" | "Double Screen" | "Flare Screen" | "Back Screen" | "Cross Screen" | "Stagger" | null
+- ball_screen_position: "Top" | "Wing Left" | "Wing Right" | "Elbow" | "Drag" | null
+- transition_type: "Primary Break" | "Secondary Break" | "Early Offense" | null
+- paint_touch: true if ball entered paint on this possession, false otherwise
+- kick_out: true if ball was driven into paint then kicked out to perimeter, false otherwise
+- assist_type: "Drive and Kick" | "Post Kick" | "Skip Pass" | "Hand-Off" | "Corner Kick" | "Swing" | null
+- motion: true if team running motion offense (constant movement, no set play), false otherwise
 
 ── DEFENSE (side=defense) ──
-- defensive_front: "4-3" | "3-4" | "4-2-5" | "3-3-5" | "4-4" | "5-2" | "Nickel" | "Dime" | "Goal Line" | null
-- linebacker_alignment: "Walk-Up" | "Normal Stack" | "Dropped" | "Wide (Overhang)" | null
-- coverage_shell: pre-snap safety look — "Two-High" | "One-High" | "Zero" | null
-- safety_rotation: what safeties actually do post-snap — "Stayed Two-High" | "Rotated Single High" | "Rolled Left" | "Rolled Right" | "Robber/Rat" | "Pressed Up" | null
-- coverage: "Cover 0" | "Cover 1" | "Cover 2" | "Cover 2 Man" | "Cover 3" | "Cover 4" | "Cover 6" | "Man" | "Zone" | null
-- corner_technique: "Press" | "Off/Cushion" | "Bail/Zone Turn" | null
-- blitz: "None" | "Edge" | "A-Gap" | "Corner" | "Safety" | "Zone Blitz" | "Interior" | null
-- pressure_gap: WHERE the pressure/blitz actually came from — "Edge Left" | "Edge Right" | "A-Gap Left" | "A-Gap Right" | "B-Gap" | "Interior" | null
-- pressure_type: "4-Man Rush" | "5-Man" | "6-Man+" | "Interior Pressure" | "None" | null
+- defensive_scheme: "Man" | "Zone 2-3" | "Zone 3-2" | "Zone 1-3-1" | "Match-Up Zone" | "Full Court Press Man" | "Full Court Press Zone" | "Half Court Trap" | null
+- hedge_style: how they cover ball screens — "Hard Hedge" | "Drop Coverage" | "Switch" | "ICE/Push" | "Blitz/Double" | "Hedge and Recover" | null
+- help_defense: "Collapsing" | "Weak Side Help" | "No Help" | "Sagging" | null
+- deny_style: "Full Denial" | "Open/Sag" | "Body-Up" | null
+- press_trigger: if pressing — "Made Basket" | "Turnover" | "Always" | null
 
-── EVERY PLAY ──
-- play_description: ONE sharp sentence describing exactly what you see — formation, concept, result. Specific enough that a coach can reconstruct the play without the film. Examples: "Trips Right Shotgun 11 personnel, counter run to B-gap right, linebacker fills wrong arm, 8-yard gain to the field." | "Defense shows two-high shell, safety rotates single post-snap to Cover 1, corner bail outside, slant route hits soft spot in coverage for 12 yards."
+── EVERY EVENT ──
+- play_description: ONE sharp sentence describing the possession/action. Specific enough to reconstruct without film. Examples: "PG drives baseline, draws hard hedge from center on ball screen at elbow, kicks to corner shooter for open 3 (missed)." | "Defense in 2-3 zone, offense swings ball side to side, skip pass finds shooter at right wing for catch-and-shoot 3 (made)." | "Isolation for wing player at left elbow, defenders double-teams, kick-out leads to corner 3 attempt (blocked)."
 
 ━━━ JSON FORMAT ━━━
-Return ONLY this JSON, nothing else:
-{"plays": [{"side": "offense", "frame": 1, "down": null, "distance": null, "field_position": null, "hash_position": null, "score_situation": null, "tempo": null, "result": null, "yards_gained": null, "confidence": 0.85, "formation": null, "receiver_alignment": null, "play_type": null, "personnel": null, "motion": false, "motion_type": null, "run_direction": null, "run_gap": null, "run_concept": null, "pass_concept": null, "pass_depth": null, "target_area": null, "defensive_front": null, "linebacker_alignment": null, "coverage_shell": null, "safety_rotation": null, "coverage": null, "corner_technique": null, "blitz": null, "pressure_gap": null, "pressure_type": null, "play_description": null}]}
+Return ONLY this JSON:
+{"plays": [{"side": "offense", "frame": 1, "event_type": "shot", "result": null, "score_margin": null, "quarter": null, "shot_clock_range": null, "confidence": 0.85, "play_action": null, "shot_zone": null, "shot_type": null, "shot_distance_ft": null, "screen_type": null, "ball_screen_position": null, "transition_type": null, "paint_touch": false, "kick_out": false, "assist_type": null, "motion": false, "defensive_scheme": null, "hedge_style": null, "help_defense": null, "deny_style": null, "press_trigger": null, "play_description": null}]}
 
-Zero plays in these frames: {"plays": []}"""
+Zero events: {"plays": []}"""
 
 
 class AiDetectWorker(BaseWorker):
@@ -119,6 +171,7 @@ class AiDetectWorker(BaseWorker):
                 raise ValueError(f"Game {game_id} not found")
             if game.status != "ready":
                 raise ValueError(f"Game not ready for detection (status={game.status})")
+            sport = (game.sport or "football").lower()
 
         # ── Resolve video path / URL ───────────────────────────────────────
         if _use_local():
@@ -157,7 +210,7 @@ class AiDetectWorker(BaseWorker):
 
                 for batch_idx, batch in enumerate(batches):
                     try:
-                        plays = await self._analyze_batch(batch, batch_idx, len(batches))
+                        plays = await self._analyze_batch(batch, batch_idx, len(batches), sport)
                         all_plays.extend(plays)
                         logger.info(f"[ai_detect] Batch {batch_idx+1}/{len(batches)}: {len(plays)} plays")
                     except Exception as e:
@@ -188,29 +241,35 @@ class AiDetectWorker(BaseWorker):
 
                         def _side(p):
                             s = (p.get("side") or "offense").lower().replace(" ", "_")
-                            return s if s in ("offense", "defense", "special_teams") else "offense"
+                            valid = ("offense", "defense", "special_teams", "transition")
+                            return s if s in valid else "offense"
 
                         DEEP_FIELDS = (
-                            # Round 1
+                            # Football round 1
                             "run_direction", "run_concept", "pass_concept", "pass_depth",
                             "coverage_shell", "pressure_type", "play_description",
-                            # Round 2 — deeper extraction
+                            # Football round 2
                             "run_gap", "target_area", "motion_type", "receiver_alignment",
                             "corner_technique", "safety_rotation", "pressure_gap",
                             "linebacker_alignment", "tempo", "score_situation",
+                            # Basketball
+                            "play_action", "shot_zone", "shot_type", "shot_distance_ft",
+                            "screen_type", "ball_screen_position", "transition_type",
+                            "paint_touch", "kick_out", "assist_type",
+                            "defensive_scheme", "hedge_style", "help_defense", "deny_style", "press_trigger",
+                            "score_margin", "quarter", "shot_clock_range",
                         )
 
                         events = [
                             Event(
                                 game_id=game_id,
                                 organization_id=org_id,
-                                event_type="play",
+                                event_type=p.get("event_type", "shot") if sport == "basketball" else "play",
                                 side=_side(p),
                                 time_seconds=p.get("time_seconds"),
                                 down=p.get("down"),
                                 distance=p.get("distance"),
                                 field_position=p.get("field_position"),
-                                hash_position=p.get("hash_position"),
                                 formation=p.get("formation"),
                                 play_type=p.get("play_type"),
                                 defensive_front=p.get("defensive_front"),
@@ -297,7 +356,7 @@ class AiDetectWorker(BaseWorker):
 
         return frames
 
-    async def _analyze_batch(self, batch, batch_idx: int, total_batches: int) -> list[dict]:
+    async def _analyze_batch(self, batch, batch_idx: int, total_batches: int, sport: str = "football") -> list[dict]:
         """Send a batch of (path, time_seconds) frames to Claude Vision.
 
         The AI returns which FRAME each play is in; WE assign the real timestamp
@@ -310,6 +369,8 @@ class AiDetectWorker(BaseWorker):
 
         client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
 
+        prompt = DETECTION_PROMPT_BASKETBALL if sport == "basketball" else DETECTION_PROMPT
+
         content = []
         for i, (path, t) in enumerate(batch):
             with open(path, "rb") as f:
@@ -317,7 +378,7 @@ class AiDetectWorker(BaseWorker):
             content.append({"type": "text", "text": f"Frame {i + 1} (timestamp {int(t)}s):"})
             content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": data}})
 
-        content.append({"type": "text", "text": DETECTION_PROMPT})
+        content.append({"type": "text", "text": prompt})
 
         response = await client.messages.create(
             model="claude-sonnet-4-6",
