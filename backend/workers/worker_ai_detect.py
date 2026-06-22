@@ -138,19 +138,45 @@ Use null ONLY if genuinely not determinable.
 - assist_type: "Drive and Kick" | "Post Kick" | "Skip Pass" | "Hand-Off" | "Corner Kick" | "Swing" | null
 - motion: true if team running motion offense (constant movement, no set play), false otherwise
 
+── INBOUND PLAYS — extract these whenever play_action is BLOB or SLOB ──
+These fields are CRITICAL for coaching — extract as precisely as possible from the film.
+- inbound_type: "BLOB" (baseline out of bounds) | "SLOB" (sideline out of bounds) | null
+- inbound_side: where the ball is being inbounded from (read the lines/player position on court):
+  BLOB → "Left Baseline" | "Right Baseline" | "Under Basket"
+  SLOB → "Left Sideline" | "Right Sideline" | "Half Court" | "Frontcourt Left" | "Frontcourt Right"
+- inbound_set: formation/alignment the offense sets up before the inbound —
+  "Stack" (players lined up vertically near lane) | "Box" (4 players at each block/elbow) | "Line" (players spread along lane) |
+  "Diamond" (players at 4 points around key) | "Horns" (two players at elbows, one at top, one under) |
+  "Spread" (players spaced wide) | "1-4 High" (one player at block, four across foul line extended) | null
+- inbound_primary_action: the designed play off the inbound —
+  "Back Screen" | "Flare Screen" | "Cross Screen" | "Rub Cut" | "Lob Over Top" | "Post Seal" |
+  "Pin Down" | "Curl Cut" | "Straight Cut" | "Quick Hitter Direct" | "Double Screen" |
+  "Stagger Screen" | "Fake Reverse" | "Step-In" | null
+- inbound_scorer_position: where the designed scorer ends up when they catch — same values as shot_zone
+- inbound_defense_coverage: how the DEFENSE handles this inbound play —
+  "Man Switch" | "Man No Switch" | "Zone" | "Box and 1" | "Deny Inbounder" |
+  "Full Denial All" | "ICE Baseline" | "Blitz Cutter" | null
+- inbound_situation: what game situation triggered this inbound —
+  "End of Quarter" | "End of Game (<30s)" | "After Score Normal" | "After Timeout" |
+  "Foul Situation" | "Normal Halfcourt" | null
+- inbound_result_zone: where the actual shot or scoring attempt ended up — same values as shot_zone | null
+
 ── DEFENSE (side=defense) ──
 - defensive_scheme: "Man" | "Zone 2-3" | "Zone 3-2" | "Zone 1-3-1" | "Match-Up Zone" | "Full Court Press Man" | "Full Court Press Zone" | "Half Court Trap" | null
 - hedge_style: how they cover ball screens — "Hard Hedge" | "Drop Coverage" | "Switch" | "ICE/Push" | "Blitz/Double" | "Hedge and Recover" | null
 - help_defense: "Collapsing" | "Weak Side Help" | "No Help" | "Sagging" | null
 - deny_style: "Full Denial" | "Open/Sag" | "Body-Up" | null
 - press_trigger: if pressing — "Made Basket" | "Turnover" | "Always" | null
+- oob_defense_coverage: when defending opponent BLOB/SLOB, what coverage do they use —
+  "Man Switch" | "Man No Switch" | "Zone" | "Box and 1" | "Deny Inbounder" | "Full Denial All" | null
+  (use this when side=defense and the opponent is running an inbound play)
 
 ── EVERY EVENT ──
-- play_description: ONE sharp sentence describing the possession/action. Specific enough to reconstruct without film. Examples: "PG drives baseline, draws hard hedge from center on ball screen at elbow, kicks to corner shooter for open 3 (missed)." | "Defense in 2-3 zone, offense swings ball side to side, skip pass finds shooter at right wing for catch-and-shoot 3 (made)." | "Isolation for wing player at left elbow, defenders double-teams, kick-out leads to corner 3 attempt (blocked)."
+- play_description: ONE sharp sentence describing the possession/action. Specific enough to reconstruct without film. For inbounds: name the set, the action, and what happened. Examples: "BLOB right baseline: Box set, back screen frees cutter at restricted area, lob over zone for layup (made)." | "SLOB left sideline after timeout: Stack set, cross screen action, shooter pops to left wing 3 (missed, long)." | "PG drives baseline, draws hard hedge from center on ball screen at elbow, kicks to corner shooter for open 3 (missed)."
 
 ━━━ JSON FORMAT ━━━
 Return ONLY this JSON:
-{"plays": [{"side": "offense", "frame": 1, "event_type": "shot", "result": null, "score_margin": null, "quarter": null, "shot_clock_range": null, "confidence": 0.85, "play_action": null, "shot_zone": null, "shot_type": null, "shot_distance_ft": null, "screen_type": null, "ball_screen_position": null, "transition_type": null, "paint_touch": false, "kick_out": false, "assist_type": null, "motion": false, "defensive_scheme": null, "hedge_style": null, "help_defense": null, "deny_style": null, "press_trigger": null, "play_description": null}]}
+{"plays": [{"side": "offense", "frame": 1, "event_type": "shot", "result": null, "score_margin": null, "quarter": null, "shot_clock_range": null, "confidence": 0.85, "play_action": null, "shot_zone": null, "shot_type": null, "shot_distance_ft": null, "screen_type": null, "ball_screen_position": null, "transition_type": null, "paint_touch": false, "kick_out": false, "assist_type": null, "motion": false, "inbound_type": null, "inbound_side": null, "inbound_set": null, "inbound_primary_action": null, "inbound_scorer_position": null, "inbound_defense_coverage": null, "inbound_situation": null, "inbound_result_zone": null, "defensive_scheme": null, "hedge_style": null, "help_defense": null, "deny_style": null, "press_trigger": null, "oob_defense_coverage": null, "play_description": null}]}
 
 Zero events: {"plays": []}"""
 
@@ -258,6 +284,11 @@ class AiDetectWorker(BaseWorker):
                             "paint_touch", "kick_out", "assist_type",
                             "defensive_scheme", "hedge_style", "help_defense", "deny_style", "press_trigger",
                             "score_margin", "quarter", "shot_clock_range",
+                            # Basketball inbound plays
+                            "inbound_type", "inbound_side", "inbound_set", "inbound_primary_action",
+                            "inbound_scorer_position", "inbound_defense_coverage",
+                            "inbound_situation", "inbound_result_zone",
+                            "oob_defense_coverage",
                         )
 
                         events = [

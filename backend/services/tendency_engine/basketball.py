@@ -57,6 +57,7 @@ def analyze_basketball(events) -> Dict[str, Any]:
         "paint_and_drive": _paint_drive_analysis(offense_events),
         "screen_usage": _screen_analysis(offense_events),
         "inbound_plays": _inbound_analysis(offense_events),
+        "inbound_defense": _inbound_defense_analysis(defense_events),
         "shot_clock": _shot_clock_analysis(shots),
         "quarter_breakdown": _quarter_breakdown(events),
         "game_script": _game_script_analysis(events),
@@ -344,29 +345,166 @@ def _screen_analysis(events) -> Dict[str, Any]:
     }
 
 
-def _inbound_analysis(events) -> Dict[str, Any]:
-    blobs = [e for e in events if _x(e, "play_action") == "BLOB"]
-    slobs = [e for e in events if _x(e, "play_action") == "SLOB"]
-    if not blobs and not slobs:
-        return {"total": 0}
+def _inbound_set_detail(plays) -> Dict[str, Any]:
+    """Break down a group of inbound plays by set, primary action, scoring zone, and FG%."""
+    if not plays:
+        return {}
 
-    blob_shots = [e for e in blobs if e.event_type == "shot"]
-    blob_makes = [e for e in blob_shots if _is_made(e)]
-    slob_shots = [e for e in slobs if e.event_type == "shot"]
-    slob_makes = [e for e in slob_shots if _is_made(e)]
+    shots = [e for e in plays if e.event_type == "shot"]
+    makes = [e for e in shots if _is_made(e)]
+
+    by_set = defaultdict(list)
+    for e in plays:
+        s = _x(e, "inbound_set")
+        if s:
+            by_set[s].append(e)
+
+    set_detail = {}
+    for s, sp in sorted(by_set.items(), key=lambda x: -len(x[1])):
+        ss = [e for e in sp if e.event_type == "shot"]
+        sm = [e for e in ss if _is_made(e)]
+        set_detail[s] = {
+            "count": len(sp),
+            "shot_attempts": len(ss),
+            "fg_pct": round(len(sm) / len(ss) * 100, 1) if ss else 0,
+        }
+
+    by_action = defaultdict(list)
+    for e in plays:
+        a = _x(e, "inbound_primary_action")
+        if a:
+            by_action[a].append(e)
+
+    action_detail = {}
+    for a, ap in sorted(by_action.items(), key=lambda x: -len(x[1])):
+        as_ = [e for e in ap if e.event_type == "shot"]
+        am = [e for e in as_ if _is_made(e)]
+        action_detail[a] = {
+            "count": len(ap),
+            "shot_attempts": len(as_),
+            "fg_pct": round(len(am) / len(as_) * 100, 1) if as_ else 0,
+        }
+
+    by_zone = defaultdict(list)
+    for e in plays:
+        z = _x(e, "inbound_result_zone") or _x(e, "shot_zone")
+        if z:
+            by_zone[z].append(e)
+
+    zone_detail = {}
+    for z, zp in sorted(by_zone.items(), key=lambda x: -len(x[1])):
+        zs = [e for e in zp if e.event_type == "shot"]
+        zm = [e for e in zs if _is_made(e)]
+        zone_detail[z] = {
+            "attempts": len(zp),
+            "fg_pct": round(len(zm) / len(zs) * 100, 1) if zs else 0,
+        }
+
+    by_situation = Counter(_x(e, "inbound_situation") for e in plays if _x(e, "inbound_situation"))
+    by_defense = Counter(_x(e, "inbound_defense_coverage") for e in plays if _x(e, "inbound_defense_coverage"))
+    by_side = Counter(_x(e, "inbound_side") for e in plays if _x(e, "inbound_side"))
 
     return {
-        "total": len(blobs) + len(slobs),
-        "blob": {
-            "count": len(blobs),
-            "shot_attempts": len(blob_shots),
-            "fg_pct": round(len(blob_makes) / len(blob_shots) * 100, 1) if blob_shots else 0,
-        },
-        "slob": {
-            "count": len(slobs),
-            "shot_attempts": len(slob_shots),
-            "fg_pct": round(len(slob_makes) / len(slob_shots) * 100, 1) if slob_shots else 0,
-        },
+        "total": len(plays),
+        "shot_attempts": len(shots),
+        "fg_pct": round(len(makes) / len(shots) * 100, 1) if shots else 0,
+        "by_set": set_detail,
+        "most_used_set": max(set_detail, key=lambda k: set_detail[k]["count"]) if set_detail else None,
+        "best_set": max(set_detail, key=lambda k: set_detail[k]["fg_pct"]) if set_detail else None,
+        "by_primary_action": action_detail,
+        "most_used_action": max(action_detail, key=lambda k: action_detail[k]["count"]) if action_detail else None,
+        "best_action": max(action_detail, key=lambda k: action_detail[k]["fg_pct"]) if action_detail else None,
+        "by_scoring_zone": zone_detail,
+        "hottest_zone": max(zone_detail, key=lambda k: zone_detail[k]["fg_pct"]) if zone_detail else None,
+        "most_targeted_zone": max(zone_detail, key=lambda k: zone_detail[k]["attempts"]) if zone_detail else None,
+        "by_situation": dict(by_situation.most_common()),
+        "defense_coverage_seen": dict(by_defense.most_common()),
+        "by_inbound_side": dict(by_side.most_common()),
+    }
+
+
+def _inbound_analysis(events) -> Dict[str, Any]:
+    blobs = [e for e in events if _x(e, "play_action") == "BLOB" or _x(e, "inbound_type") == "BLOB"]
+    slobs = [e for e in events if _x(e, "play_action") == "SLOB" or _x(e, "inbound_type") == "SLOB"]
+    all_inbounds = blobs + slobs
+
+    if not all_inbounds:
+        return {"total": 0}
+
+    all_shots = [e for e in all_inbounds if e.event_type == "shot"]
+    all_makes = [e for e in all_shots if _is_made(e)]
+
+    late_game = [e for e in all_inbounds if _x(e, "inbound_situation") in ("End of Game (<30s)", "End of Quarter")]
+    after_timeout = [e for e in all_inbounds if _x(e, "inbound_situation") == "After Timeout"]
+
+    return {
+        "total": len(all_inbounds),
+        "overall_fg_pct": round(len(all_makes) / len(all_shots) * 100, 1) if all_shots else 0,
+        "blob": _inbound_set_detail(blobs),
+        "slob": _inbound_set_detail(slobs),
+        "late_game_inbounds": len(late_game),
+        "after_timeout_inbounds": len(after_timeout),
+        "most_dangerous_play": (
+            max(
+                [
+                    (k, v) for d in [
+                        (_x(e, "inbound_set") or "", _x(e, "inbound_primary_action") or "")
+                        for e in all_inbounds
+                    ]
+                    for k in [d[0]]
+                    for v in [d[1]]
+                    if k and v
+                ],
+                key=lambda x: sum(
+                    1 for e in all_inbounds
+                    if _x(e, "inbound_set") == x[0]
+                    and _x(e, "inbound_primary_action") == x[1]
+                    and e.event_type == "shot"
+                    and _is_made(e)
+                ),
+                default=None,
+            )
+        ),
+    }
+
+
+def _inbound_defense_analysis(events) -> Dict[str, Any]:
+    """How this team defends opponent BLOB/SLOB — what our offense can exploit."""
+    oob_defense = [e for e in events if _x(e, "oob_defense_coverage")]
+    if not oob_defense:
+        return {"total": 0}
+
+    coverage_counts = Counter(_x(e, "oob_defense_coverage") for e in oob_defense)
+    total = sum(coverage_counts.values())
+
+    shots_allowed = [e for e in oob_defense if e.event_type == "shot"]
+    made_allowed = [e for e in shots_allowed if _is_made(e)]
+
+    by_zone = defaultdict(list)
+    for e in oob_defense:
+        z = _x(e, "inbound_result_zone") or _x(e, "shot_zone")
+        if z:
+            by_zone[z].append(e)
+
+    zone_allowed = {}
+    for z, zp in sorted(by_zone.items(), key=lambda x: -len(x[1])):
+        zs = [e for e in zp if e.event_type == "shot"]
+        zm = [e for e in zs if _is_made(e)]
+        zone_allowed[z] = {
+            "attempts": len(zp),
+            "fg_pct": round(len(zm) / len(zs) * 100, 1) if zs else 0,
+        }
+
+    return {
+        "total": total,
+        "primary_coverage": coverage_counts.most_common(1)[0][0] if coverage_counts else None,
+        "coverage_distribution": dict(coverage_counts.most_common()),
+        "shots_allowed": len(shots_allowed),
+        "fg_pct_allowed": round(len(made_allowed) / len(shots_allowed) * 100, 1) if shots_allowed else 0,
+        "zones_surrendered": zone_allowed,
+        "most_vulnerable_zone": (
+            max(zone_allowed, key=lambda k: zone_allowed[k]["fg_pct"]) if zone_allowed else None
+        ),
     }
 
 

@@ -362,8 +362,41 @@ async def _generate_basketball_sections(
                 "Post up: if post_up has data, cite FG% and kick-out frequency. "
                 "Use screen_usage: what screens do they run most and how effective are they? "
                 "Use transition: how often do they push pace? Primary break FG%? "
-                "Use inbound_plays: do they score off BLOB/SLOB sets? "
+                "Use inbound_plays: do they score off BLOB/SLOB sets? Cite most used set and action. "
                 "Advise: what scheme stops their primary action? How do we disrupt their sets?"
+            ),
+        },
+        {
+            "heading": "Inbound Play Intelligence — Offense (BLOB & SLOB)",
+            "insight_type": "tendency",
+            "instructions": (
+                "This is one of the most exploitable areas in basketball — teams run the same inbound sets repeatedly. "
+                "Use inbound_plays.blob and inbound_plays.slob for full detail. "
+                "BLOB (Baseline Out of Bounds): most used set (most_used_set), best FG% set (best_set). "
+                "Most used primary action (most_used_action) and how it creates a shot. "
+                "Where do they score from? (hottest_zone, most_targeted_zone). "
+                "How many late-game and after-timeout BLOBs? "
+                "What defense coverage have they faced, and which leaves them open? "
+                "SLOB (Sideline Out of Bounds): same depth — most used set, primary action, scoring zone. "
+                "Preferred inbound_side (left or right sideline). "
+                "After-timeout SLOBs — what play do they call coming out of a timeout? "
+                "Most dangerous play overall: the set + action combo with highest made shot rate. "
+                "Advise defense: exactly how to take away their best BLOB and best SLOB. "
+                "Only include BLOB/SLOB sections if inbound_plays.blob.total > 0 or slob.total > 0."
+            ),
+        },
+        {
+            "heading": "Inbound Defense — How They Defend BOB/SLOB",
+            "insight_type": "defense",
+            "instructions": (
+                "Use inbound_defense to understand how OUR offense attacks their inbound defense. "
+                "Primary coverage (Man Switch, Man No Switch, Zone, etc.). "
+                "Coverage distribution — are they consistent or mixed? "
+                "FG% they allow on inbound plays (fg_pct_allowed). "
+                "Zones they surrender (zones_surrendered + most_vulnerable_zone). "
+                "Advise OC: design specific BLOB and SLOB sets that attack their coverage. "
+                "For example: 'They Man No Switch on BLOBs — run Box set with cross screen. They will NOT switch, so the mismatch exists every time.' "
+                "Only include if inbound_defense.total > 0."
             ),
         },
         {
