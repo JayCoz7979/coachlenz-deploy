@@ -58,6 +58,11 @@ def analyze_basketball(events) -> Dict[str, Any]:
         "screen_usage": _screen_analysis(offense_events),
         "inbound_plays": _inbound_analysis(offense_events),
         "inbound_defense": _inbound_defense_analysis(defense_events),
+        "zone_offense": _zone_offense_analysis(offense_events),
+        "press_break": _press_break_analysis(events),
+        "clutch": _clutch_analysis(events),
+        "foul_drawing": _foul_drawing_analysis(events),
+        "transition_defense": _transition_defense_analysis(defense_events),
         "shot_clock": _shot_clock_analysis(shots),
         "quarter_breakdown": _quarter_breakdown(events),
         "game_script": _game_script_analysis(events),
@@ -505,6 +510,160 @@ def _inbound_defense_analysis(events) -> Dict[str, Any]:
         "most_vulnerable_zone": (
             max(zone_allowed, key=lambda k: zone_allowed[k]["fg_pct"]) if zone_allowed else None
         ),
+    }
+
+
+def _zone_offense_analysis(events) -> Dict[str, Any]:
+    """Offense vs zone defense — actions, FG%, shot zone distribution."""
+    zone_events = [
+        e for e in events
+        if _x(e, "vs_zone") is True or _x(e, "zone_offense_action") is not None
+    ]
+    if not zone_events:
+        return {"total_zone_possessions": 0}
+
+    shots = [e for e in zone_events if e.event_type == "shot"]
+    makes = [e for e in shots if _is_made(e)]
+    fg_pct = round(len(makes) / len(shots) * 100, 1) if shots else 0
+
+    actions = Counter(_x(e, "zone_offense_action") for e in zone_events if _x(e, "zone_offense_action"))
+    shot_zones = Counter(_x(e, "shot_zone") for e in shots if _x(e, "shot_zone"))
+
+    action_detail = {}
+    for action, count in actions.items():
+        ae = [e for e in zone_events if _x(e, "zone_offense_action") == action]
+        ashots = [e for e in ae if e.event_type == "shot"]
+        amakes = [e for e in ashots if _is_made(e)]
+        action_detail[action] = {
+            "count": count,
+            "shot_attempts": len(ashots),
+            "fg_pct": round(len(amakes) / len(ashots) * 100, 1) if ashots else 0,
+        }
+
+    best_action = max(
+        (k for k in action_detail if action_detail[k]["shot_attempts"] >= 2),
+        key=lambda k: action_detail[k]["fg_pct"],
+        default=None,
+    )
+
+    return {
+        "total_zone_possessions": len(zone_events),
+        "fg_pct_vs_zone": fg_pct,
+        "by_action": action_detail,
+        "most_effective_action": best_action,
+        "shot_zone_distribution": dict(shot_zones.most_common(8)),
+    }
+
+
+def _press_break_analysis(events) -> Dict[str, Any]:
+    """How team breaks a full-court press."""
+    press_events = [e for e in events if _x(e, "press_break_action") is not None]
+    if not press_events:
+        return {"press_possessions": 0}
+
+    actions = Counter(_x(e, "press_break_action") for e in press_events)
+    turnovers = [e for e in press_events if e.event_type == "turnover"]
+    press_turnover_rate = round(len(turnovers) / len(press_events) * 100, 1)
+
+    by_action = {}
+    for action in actions:
+        ae = [e for e in press_events if _x(e, "press_break_action") == action]
+        atos = [e for e in ae if e.event_type == "turnover"]
+        by_action[action] = {
+            "count": len(ae),
+            "turnovers": len(atos),
+            "success_rate": round((len(ae) - len(atos)) / len(ae) * 100, 1) if ae else 0,
+        }
+
+    return {
+        "press_possessions": len(press_events),
+        "press_turnovers": len(turnovers),
+        "press_turnover_rate": press_turnover_rate,
+        "by_action": by_action,
+        "primary_method": actions.most_common(1)[0][0] if actions else None,
+    }
+
+
+def _clutch_analysis(events) -> Dict[str, Any]:
+    """Last 2 minutes of close-game tendencies (Q4/OT, margin within 5)."""
+    clutch = [
+        e for e in events
+        if _x(e, "clutch_situation") is True
+        or (
+            (_x(e, "score_margin") or "") in ("Up 1-9", "Down 1-9", "Tied")
+            and (_x(e, "quarter") or 0) >= 4
+        )
+    ]
+    if not clutch:
+        return {"clutch_possessions": 0}
+
+    shots = [e for e in clutch if e.event_type == "shot"]
+    makes = [e for e in shots if _is_made(e)]
+    threes = [e for e in shots if _is_three(e)]
+    turnovers = [e for e in clutch if e.event_type == "turnover"]
+    inbounds = [e for e in clutch if _x(e, "play_action") in ("BLOB", "SLOB") or _x(e, "inbound_type")]
+    transition = [e for e in clutch if e.side == "transition" or _x(e, "transition_type")]
+    play_actions = Counter(_x(e, "play_action") for e in clutch if _x(e, "play_action"))
+
+    return {
+        "clutch_possessions": len(clutch),
+        "fg_pct": round(len(makes) / len(shots) * 100, 1) if shots else 0,
+        "three_point_attempts": len(threes),
+        "turnovers": len(turnovers),
+        "primary_play_actions": dict(play_actions.most_common(5)),
+        "best_clutch_action": play_actions.most_common(1)[0][0] if play_actions else None,
+        "transition_attempts": len(transition),
+        "inbound_plays": len(inbounds),
+    }
+
+
+def _foul_drawing_analysis(events) -> Dict[str, Any]:
+    """Which offensive actions draw the most fouls."""
+    foul_events = [
+        e for e in events
+        if _x(e, "foul_drawn_action") is not None or e.event_type == "foul"
+    ]
+    if not foul_events:
+        return {"total_fouls_drawn": 0}
+
+    actions = Counter(_x(e, "foul_drawn_action") for e in foul_events if _x(e, "foul_drawn_action"))
+    by_quarter = Counter(_x(e, "quarter") for e in foul_events if _x(e, "quarter"))
+    offensive = [e for e in foul_events if (e.side or "") in ("offense", "transition")]
+    defensive = [e for e in foul_events if (e.side or "") == "defense"]
+
+    return {
+        "total_fouls_drawn": len(foul_events),
+        "by_action": dict(actions.most_common(8)),
+        "most_effective_action": actions.most_common(1)[0][0] if actions else None,
+        "by_quarter": {f"Q{k}": v for k, v in by_quarter.items()},
+        "offensive_fouls": len(offensive),
+        "defensive_fouls": len(defensive),
+    }
+
+
+def _transition_defense_analysis(events) -> Dict[str, Any]:
+    """How this team defends fast breaks — FG% allowed, turnovers forced."""
+    trans_def = [
+        e for e in events
+        if _x(e, "transition_type") is not None
+        or e.event_type in ("block", "steal")
+    ]
+    if not trans_def:
+        return {"transition_possessions_defended": 0}
+
+    opp_shots = [e for e in trans_def if e.event_type == "shot"]
+    opp_makes = [e for e in opp_shots if _is_made(e)]
+    steals = [e for e in trans_def if e.event_type == "steal"]
+    blocks = [e for e in trans_def if e.event_type == "block"]
+    tos_forced = [e for e in trans_def if e.event_type == "turnover"]
+
+    return {
+        "transition_possessions_defended": len(trans_def),
+        "fg_pct_allowed_in_transition": round(len(opp_makes) / len(opp_shots) * 100, 1) if opp_shots else 0,
+        "shots_allowed": len(opp_shots),
+        "steals": len(steals),
+        "blocks": len(blocks),
+        "turnovers_forced": len(tos_forced),
     }
 
 

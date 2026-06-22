@@ -79,6 +79,9 @@ OFFENSE DEEP EXTRACTION:
 - tempo: "Hurry Up", "No Huddle", "Normal", "Slow/Deliberate" — pace of the offense getting to the line
 - score_situation: "Leading 8+", "Leading 1-7", "Tied", "Trailing 1-7", "Trailing 8+" — infer from scoreboard if visible
 - play_description: 1-2 sentence coaching description of exactly what happened (e.g. "Power right to the B-gap, RB cuts back to A for 6 yards. Lead block sealed the WILL.")
+- is_play_action: true if there was a handoff fake before a pass attempt, false otherwise (only meaningful when play_type=Pass)
+- screen_subtype: if this is a screen pass — "RB Screen" | "WR Screen" | "TE Screen" | "Bubble Screen" | "Slip Screen" | "Tunnel Screen" | null
+- goal_line: true if the offense is inside the opponent's 5-yard line, false otherwise
 
 DEFENSE DEEP EXTRACTION:
 - defensive_front: "4-3", "3-4", "4-2-5", "3-3-5", "4-4", "5-2", "Nickel", "Dime", "Goal Line", "Bear", "Okie", null
@@ -137,6 +140,11 @@ Use null ONLY if genuinely not determinable.
 - kick_out: true if ball was driven into paint then kicked out to perimeter, false otherwise
 - assist_type: "Drive and Kick" | "Post Kick" | "Skip Pass" | "Hand-Off" | "Corner Kick" | "Swing" | null
 - motion: true if team running motion offense (constant movement, no set play), false otherwise
+- vs_zone: true if this possession is against a zone defense, false if vs man
+- zone_offense_action: if vs_zone=true, what offensive action — "Skip Pass" | "High Post Entry" | "Flash Cut" | "Baseline Runner" | "Corner Flash" | "Swing Pass" | "Dribble Entry" | null
+- press_break_action: if defending team applied a press, how was it broken — "Push Center" | "Outlet Wing" | "Long Pass" | "Dribble Up" | "Stack Break" | null
+- clutch_situation: true if score margin is within 5 points AND in Q4 or OT, false otherwise
+- foul_drawn_action: if a foul was drawn, what action caused it — "Drive" | "Post Move" | "Pump Fake" | "Catch and Shoot" | "Screen Set" | "And-1 Drive" | null
 
 ── INBOUND PLAYS — extract these whenever play_action is BLOB or SLOB ──
 These fields are CRITICAL for coaching — extract as precisely as possible from the film.
@@ -289,6 +297,11 @@ class AiDetectWorker(BaseWorker):
                             "inbound_scorer_position", "inbound_defense_coverage",
                             "inbound_situation", "inbound_result_zone",
                             "oob_defense_coverage",
+                            # Basketball zone/press/clutch/foul
+                            "vs_zone", "zone_offense_action", "press_break_action",
+                            "clutch_situation", "foul_drawn_action",
+                            # Football moat fields
+                            "is_play_action", "screen_subtype", "goal_line",
                         )
 
                         events = [

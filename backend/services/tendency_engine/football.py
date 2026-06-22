@@ -727,6 +727,301 @@ def _short_yardage_detail(plays) -> Dict[str, Any]:
     }
 
 
+def _play_action_analysis(plays) -> Dict[str, Any]:
+    """Play action rate vs pure dropback — yards, success rate, top formations and fakes."""
+    passes = [e for e in plays if _is_pass(e)]
+    if not passes:
+        return {"total_pa": 0, "pa_rate": 0}
+
+    def _is_pa(e) -> bool:
+        pt = (e.play_type or "").lower()
+        if "play" in pt and "action" in pt:
+            return True
+        if "play-action" in pt or pt == "pa":
+            return True
+        if _x(e, "run_concept") is not None and _is_pass(e):
+            return True
+        if _x(e, "is_play_action") is True:
+            return True
+        return False
+
+    pa_passes = [e for e in passes if _is_pa(e)]
+    pure_dropback = [e for e in passes if not _is_pa(e)]
+
+    def _avg_yards(lst):
+        ys = [e.yards_gained for e in lst if e.yards_gained is not None]
+        return round(sum(ys) / len(ys), 1) if ys else 0
+
+    def _success_rate(lst):
+        return round(sum(1 for e in lst if _is_success(e)) / len(lst) * 100, 1) if lst else 0
+
+    pa_formations = Counter(e.formation for e in pa_passes if e.formation)
+    pa_concepts = Counter(
+        (_x(e, "run_concept") or e.play_type) for e in pa_passes
+        if (_x(e, "run_concept") or e.play_type)
+    )
+
+    return {
+        "total_pa": len(pa_passes),
+        "pa_rate": round(len(pa_passes) / len(passes) * 100, 1) if passes else 0,
+        "pa_avg_yards": _avg_yards(pa_passes),
+        "dropback_avg_yards": _avg_yards(pure_dropback),
+        "pa_success_rate": _success_rate(pa_passes),
+        "dropback_success_rate": _success_rate(pure_dropback),
+        "top_pa_formations": dict(pa_formations.most_common(5)),
+        "top_pa_fake_concepts": dict(pa_concepts.most_common(5)),
+    }
+
+
+def _screen_game_analysis(plays) -> Dict[str, Any]:
+    """Screen pass analysis by sub-type, down, and personnel."""
+    passes = [e for e in plays if _is_pass(e)]
+    if not passes:
+        return {"total_screens": 0, "screen_rate": 0}
+
+    SCREEN_CONCEPTS = {"Screen", "Bubble", "Slip Screen", "RB Screen", "WR Screen",
+                       "TE Screen", "Tunnel Screen", "Bubble Screen"}
+
+    def _is_screen(e) -> bool:
+        pt = (e.play_type or "").lower()
+        if "screen" in pt or "bubble" in pt:
+            return True
+        concept = _x(e, "pass_concept") or _x(e, "screen_subtype") or ""
+        return concept in SCREEN_CONCEPTS
+
+    screens = [e for e in passes if _is_screen(e)]
+    if not screens:
+        return {"total_screens": 0, "screen_rate": 0}
+
+    def _subtype(e):
+        st = _x(e, "screen_subtype")
+        if st:
+            return st
+        concept = _x(e, "pass_concept") or ""
+        if concept in SCREEN_CONCEPTS:
+            return concept
+        pt = (e.play_type or "").lower()
+        if "bubble" in pt:
+            return "Bubble Screen"
+        if "slip" in pt:
+            return "Slip Screen"
+        if "tunnel" in pt:
+            return "Tunnel Screen"
+        return "Screen"
+
+    by_subtype = defaultdict(lambda: {"count": 0, "yards": [], "success": 0, "explosive": 0})
+    for e in screens:
+        st = _subtype(e)
+        by_subtype[st]["count"] += 1
+        if e.yards_gained is not None:
+            by_subtype[st]["yards"].append(e.yards_gained)
+        if _is_success(e):
+            by_subtype[st]["success"] += 1
+        if _is_explosive(e):
+            by_subtype[st]["explosive"] += 1
+
+    subtype_summary = {}
+    for st, d in by_subtype.items():
+        ys = d["yards"]
+        subtype_summary[st] = {
+            "count": d["count"],
+            "avg_yards": round(sum(ys) / len(ys), 1) if ys else 0,
+            "success_rate": round(d["success"] / d["count"] * 100, 1) if d["count"] else 0,
+            "explosive": d["explosive"],
+        }
+
+    return {
+        "total_screens": len(screens),
+        "screen_rate": round(len(screens) / len(passes) * 100, 1),
+        "by_subtype": subtype_summary,
+        "by_down": dict(Counter(e.down for e in screens if e.down)),
+        "by_personnel": dict(Counter(e.personnel for e in screens if e.personnel).most_common(6)),
+    }
+
+
+def _goal_line_analysis(plays) -> Dict[str, Any]:
+    """OPP 5 and in — tightest red zone, highest leverage plays."""
+    gl = []
+    for e in plays:
+        fp = (e.field_position or "")
+        parts = fp.split()
+        try:
+            if len(parts) >= 2 and parts[0].upper() == "OPP" and int(parts[1]) <= 5:
+                gl.append(e)
+                continue
+        except (ValueError, IndexError):
+            pass
+        if _x(e, "goal_line") is True:
+            gl.append(e)
+
+    if not gl:
+        return {"total_plays": 0}
+
+    runs = [e for e in gl if _is_run(e)]
+    passes = [e for e in gl if _is_pass(e)]
+    scoring = [e for e in gl if (e.result or "").lower() in ("touchdown", "td")]
+    success = [e for e in gl if _is_success(e)]
+
+    return {
+        "total_plays": len(gl),
+        "run_pct": round(len(runs) / len(gl) * 100, 1) if gl else 0,
+        "pass_pct": round(len(passes) / len(gl) * 100, 1) if gl else 0,
+        "top_formations": dict(Counter(e.formation for e in gl if e.formation).most_common(5)),
+        "top_play_types": dict(Counter(e.play_type for e in gl if e.play_type).most_common(5)),
+        "personnel_distribution": dict(Counter(e.personnel for e in gl if e.personnel).most_common(5)),
+        "scoring_plays": len(scoring),
+        "scoring_rate": round(len(scoring) / len(gl) * 100, 1) if gl else 0,
+        "success_rate": round(len(success) / len(gl) * 100, 1) if gl else 0,
+    }
+
+
+def _fourth_down_analysis(plays) -> Dict[str, Any]:
+    """4th down go-for-it analysis by field position zone."""
+    fourth = [e for e in plays if e.down == 4]
+    if not fourth:
+        return {"total": 0}
+
+    own = [e for e in fourth if (e.field_position or "").upper().startswith("OWN")]
+    opp = [e for e in fourth if (e.field_position or "").upper().startswith("OPP")]
+    success = [e for e in fourth if _is_success(e)]
+    distances = [e.distance for e in fourth if e.distance is not None]
+
+    def _zone_summary(zone_plays):
+        if not zone_plays:
+            return {"total": 0}
+        s = [e for e in zone_plays if _is_success(e)]
+        return {
+            "total": len(zone_plays),
+            "success_rate": round(len(s) / len(zone_plays) * 100, 1),
+            "top_formations": dict(Counter(e.formation for e in zone_plays if e.formation).most_common(4)),
+            "top_plays": dict(Counter(e.play_type for e in zone_plays if e.play_type).most_common(4)),
+            "avg_distance": round(
+                sum(e.distance for e in zone_plays if e.distance) / len([e for e in zone_plays if e.distance]), 1
+            ) if any(e.distance for e in zone_plays) else 0,
+        }
+
+    return {
+        "total": len(fourth),
+        "success_rate": round(len(success) / len(fourth) * 100, 1),
+        "avg_distance": round(sum(distances) / len(distances), 1) if distances else 0,
+        "own_territory": _zone_summary(own),
+        "opp_territory": _zone_summary(opp),
+    }
+
+
+def _third_down_by_distance(plays) -> Dict[str, Any]:
+    """3rd down split into 4 buckets: short, manageable, medium, long."""
+    third = [e for e in plays if e.down == 3]
+    if not third:
+        return {}
+
+    buckets = {
+        "short_1_2": [e for e in third if e.distance and e.distance <= 2],
+        "manageable_3_5": [e for e in third if e.distance and 3 <= e.distance <= 5],
+        "medium_6_8": [e for e in third if e.distance and 6 <= e.distance <= 8],
+        "long_9_plus": [e for e in third if e.distance and e.distance >= 9],
+    }
+
+    def _bucket(bp):
+        if not bp:
+            return {"total": 0}
+        runs = [e for e in bp if _is_run(e)]
+        passes = [e for e in bp if _is_pass(e)]
+        rp = len(runs) + len(passes)
+        success = [e for e in bp if _is_success(e)]
+        top_concepts = Counter(
+            _x(e, "pass_concept") or e.play_type for e in passes
+            if (_x(e, "pass_concept") or e.play_type)
+        )
+        return {
+            "total": len(bp),
+            "run_pct": round(len(runs) / rp * 100, 1) if rp else 0,
+            "pass_pct": round(len(passes) / rp * 100, 1) if rp else 0,
+            "conversion_rate": round(len(success) / len(bp) * 100, 1),
+            "top_pass_concepts": dict(top_concepts.most_common(5)),
+            "top_formations": dict(Counter(e.formation for e in bp if e.formation).most_common(4)),
+        }
+
+    return {k: _bucket(v) for k, v in buckets.items()}
+
+
+def _two_minute_drill(plays) -> Dict[str, Any]:
+    """Late-game hurry-up / trailing-score tendencies."""
+    two_min = [
+        e for e in plays
+        if (_x(e, "tempo") or "").lower() in ("hurry up", "hurry-up", "hurry", "no-huddle", "no huddle")
+        or (_x(e, "score_situation") or "") in ("Trailing 1-7", "Trailing 8+")
+    ]
+    if not two_min:
+        return {"total": 0}
+
+    runs = [e for e in two_min if _is_run(e)]
+    passes = [e for e in two_min if _is_pass(e)]
+    rp = len(runs) + len(passes)
+    success = [e for e in two_min if _is_success(e)]
+    explosive = [e for e in two_min if _is_explosive(e)]
+    no_huddle = [e for e in two_min if (_x(e, "tempo") or "").lower() in ("no-huddle", "no huddle")]
+    concepts = Counter(
+        _x(e, "pass_concept") or e.play_type for e in passes if (_x(e, "pass_concept") or e.play_type)
+    )
+
+    return {
+        "total": len(two_min),
+        "run_pct": round(len(runs) / rp * 100, 1) if rp else 0,
+        "pass_pct": round(len(passes) / rp * 100, 1) if rp else 0,
+        "success_rate": round(len(success) / len(two_min) * 100, 1) if two_min else 0,
+        "explosive_count": len(explosive),
+        "no_huddle_rate": round(len(no_huddle) / len(two_min) * 100, 1) if two_min else 0,
+        "pass_concept_distribution": dict(concepts.most_common(8)),
+    }
+
+
+def _pre_snap_tell_matrix(plays) -> list:
+    """Formation + motion + down + distance bucket → play prediction (top 10 combos, count >= 3)."""
+    def _dist_bucket(distance):
+        if distance is None:
+            return "Unknown"
+        if distance <= 3:
+            return "Short (1-3)"
+        if distance <= 7:
+            return "Medium (4-7)"
+        return "Long (8+)"
+
+    combos = defaultdict(lambda: {"runs": 0, "passes": 0, "concepts": [], "total": 0})
+    for e in plays:
+        if not (e.formation and e.down):
+            continue
+        key = (e.formation, bool(e.motion), e.down, _dist_bucket(e.distance))
+        combos[key]["total"] += 1
+        if _is_run(e):
+            combos[key]["runs"] += 1
+        elif _is_pass(e):
+            combos[key]["passes"] += 1
+        concept = _x(e, "pass_concept") or e.play_type
+        if concept:
+            combos[key]["concepts"].append(concept)
+
+    result = []
+    for (formation, motion, down, dist_bucket), d in combos.items():
+        if d["total"] < 3:
+            continue
+        rp = d["runs"] + d["passes"]
+        most_common = Counter(d["concepts"]).most_common(1)
+        result.append({
+            "formation": formation,
+            "motion": motion,
+            "down": down,
+            "distance_bucket": dist_bucket,
+            "count": d["total"],
+            "run_pct": round(d["runs"] / rp * 100, 1) if rp else 0,
+            "pass_pct": round(d["passes"] / rp * 100, 1) if rp else 0,
+            "most_common_concept": most_common[0][0] if most_common else None,
+        })
+
+    result.sort(key=lambda x: x["count"], reverse=True)
+    return result[:10]
+
+
 def analyze_football(events) -> Dict[str, Any]:
     plays = [e for e in events if _is_play(e)]
     total = len(plays)
@@ -816,6 +1111,15 @@ def analyze_football(events) -> Dict[str, Any]:
 
         # Play results
         "play_results": dict(results.most_common(10)),
+
+        # Moat analysis — advanced
+        "play_action": _play_action_analysis(plays),
+        "screen_game": _screen_game_analysis(plays),
+        "goal_line": _goal_line_analysis(plays),
+        "fourth_down_deep": _fourth_down_analysis(plays),
+        "third_down_by_distance": _third_down_by_distance(plays),
+        "two_minute_drill": _two_minute_drill(plays),
+        "pre_snap_tells": _pre_snap_tell_matrix(plays),
     }
 
 
