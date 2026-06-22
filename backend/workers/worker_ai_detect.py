@@ -49,6 +49,10 @@ Catch EVERY snap: run, pass, screen, draw, QB sneak, RPO, option, punt, field go
 
 Skip: timeouts, huddles, sideline shots, commercials, halftime, replays (same action shown twice), pre-game, post-game, no live action.
 
+IMAGE SET PER FRAME: For each frame you receive the full image PLUS two zoomed crops — the "lower" and "upper" score/overlay zones (magnified 2x). The broadcast score graphic (the "score bug") almost always shows DOWN, DISTANCE, SCORE, QUARTER, and GAME CLOCK. READ THESE DIGITS CAREFULLY FROM THE ZOOMED CROPS — they are your source of truth for down/distance/score/clock. Down & distance usually appears like "2ND & 7" or "3RD & GOAL". If the graphic is genuinely absent (coaches' end-zone film with no overlay), set those fields to null and note it in blind_spot — do NOT guess.
+
+RUN vs PASS — decide from the SEQUENCE across the consecutive frames, never a single still: QB hands the ball to a back or keeps it and runs = "Run"; QB drops straight back, the ball is in the air, or a receiver is catching downfield = "Pass"; quick flip behind the line = "Screen". If you cannot tell, use null rather than guessing.
+
 PHASE classification (side field):
 - "offense": scouted team has the ball
 - "defense": scouted team is defending
@@ -116,6 +120,8 @@ FRAMES: Consecutive moments from basketball game film. Each frame cluster typica
 CAPTURE EVERY EVENT: shots (made or missed), turnovers, fouls, rebounds (offensive/defensive), assists, steals, blocks, timeouts, and significant possessions.
 
 SKIP: dead balls between possessions already captured, halftime, non-game footage.
+
+IMAGE SET PER FRAME: For each frame you receive the full image PLUS two zoomed crops — the "lower" and "upper" score/overlay zones (magnified 2x). The broadcast score graphic usually shows SCORE, QUARTER, and GAME/SHOT CLOCK. Read those digits from the zoomed crops; use them as the source of truth for score_margin, quarter, and shot_clock_range. If no graphic is present, set them null and note it in blind_spot — do not guess.
 
 PHASE — classify first:
 - "offense": scouted team has the ball
@@ -326,6 +332,10 @@ class AiDetectWorker(BaseWorker):
 
                 # ── Deduplicate by time (within 5s = same play) ───────────
                 deduped = self._deduplicate_plays(all_plays)
+                # Derive yards/result from the down-and-distance progression — far more
+                # reliable than reading yardage off a still frame.
+                if sport in ("football", "flag_football"):
+                    deduped = self._derive_from_sequence(deduped)
                 logger.info(f"[ai_detect] {len(all_plays)} raw → {len(deduped)} after dedup")
 
                 # ── Confidence + escalation accounting (UATP) ──────────────
@@ -403,6 +413,8 @@ class AiDetectWorker(BaseWorker):
                             "blind_spot",
                             # Player-level tracking (all sports)
                             "players", "primary_player_jersey",
+                            # Derivation provenance
+                            "yards_source",
                         )
 
                         events = [
@@ -541,6 +553,35 @@ class AiDetectWorker(BaseWorker):
 
         return frames
 
+    def _frame_blocks(self, path: str, frame_no: int) -> list:
+        """Return Claude content blocks for one frame: the full image PLUS upscaled
+        crops of the upper and lower regions where the broadcast score/down-distance
+        graphic usually sits. The full frame loses overlay legibility once Vision
+        downsamples it; the zoomed crops keep the small digits readable.
+        """
+        blocks = []
+        with open(path, "rb") as f:
+            full = base64.standard_b64encode(f.read()).decode()
+        blocks.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": full}})
+        try:
+            import io
+            from PIL import Image
+            img = Image.open(path).convert("RGB")
+            w, h = img.size
+            # Score bugs live in the lower bar or the upper bar depending on broadcast.
+            regions = [("lower", (0, int(h * 0.74), w, h)), ("upper", (0, 0, w, int(h * 0.16)))]
+            for label, box in regions:
+                crop = img.crop(box)
+                crop = crop.resize((crop.width * 2, crop.height * 2), Image.LANCZOS)
+                buf = io.BytesIO()
+                crop.save(buf, format="JPEG", quality=92)
+                data = base64.standard_b64encode(buf.getvalue()).decode()
+                blocks.append({"type": "text", "text": f"Frame {frame_no} {label} score/overlay zone (zoomed 2x for legibility):"})
+                blocks.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": data}})
+        except Exception as e:
+            logger.warning(f"[ai_detect] overlay crop failed for {path}: {e}")
+        return blocks
+
     async def _analyze_batch(self, batch, batch_idx: int, total_batches: int, sport: str = "football") -> list[dict]:
         """Send a batch of (path, time_seconds) frames to Claude Vision.
 
@@ -558,10 +599,8 @@ class AiDetectWorker(BaseWorker):
 
         content = []
         for i, (path, t) in enumerate(batch):
-            with open(path, "rb") as f:
-                data = base64.standard_b64encode(f.read()).decode()
             content.append({"type": "text", "text": f"Frame {i + 1} (timestamp {int(t)}s):"})
-            content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": data}})
+            content.extend(self._frame_blocks(path, i + 1))
 
         content.append({"type": "text", "text": prompt})
 
@@ -593,6 +632,50 @@ class AiDetectWorker(BaseWorker):
                 p["time_seconds"] = round(batch[len(batch) // 2][1])
             out.append(p)
         return out
+
+    def _derive_from_sequence(self, plays: list[dict]) -> list[dict]:
+        """Fill yards_gained / result from the down-and-distance progression.
+
+        When two consecutive offensive plays show the down incrementing within the
+        same series (e.g. 1st & 10 then 2nd & 7), the yardage is EXACT (10-7 = 3).
+        This is far more reliable than asking the model to read yardage off a still.
+        Only fills values that are missing; never overwrites a real read.
+        """
+        plays = sorted(plays, key=lambda p: p.get("time_seconds") or 0)
+        n = len(plays)
+
+        def is_off(p):
+            return (p.get("side") or "offense") == "offense"
+
+        for i, p in enumerate(plays):
+            if not is_off(p) or p.get("down") is None or p.get("distance") is None:
+                continue
+            d_i, dist_i = p["down"], p["distance"]
+            # next offensive play in the same possession
+            q = None
+            for j in range(i + 1, n):
+                nj = plays[j]
+                if ((nj.get("time_seconds") or 0) - (p.get("time_seconds") or 0)) > 180:
+                    break
+                if (nj.get("side") or "offense") == "defense":
+                    break  # possession changed — can't chain
+                if is_off(nj) and nj.get("down") is not None:
+                    q = nj
+                    break
+            if not q:
+                continue
+            d_j, dist_j = q.get("down"), q.get("distance")
+            if d_j == d_i + 1 and dist_j is not None:
+                gained = dist_i - dist_j  # exact: distance-to-go dropped by the gain
+                if -30 <= gained <= 40:
+                    if p.get("yards_gained") is None:
+                        p["yards_gained"] = gained
+                        p["yards_source"] = "derived"
+                    if not p.get("result"):
+                        p["result"] = "Loss" if gained < 0 else "Gain"
+            elif d_j == 1 and (dist_j in (10, None)) and not p.get("result"):
+                p["result"] = "First Down"  # series reset = they converted
+        return plays
 
     def _deduplicate_plays(self, plays: list[dict]) -> list[dict]:
         """Merge plays within 8s of each other (likely the same play seen across adjacent frames)."""
