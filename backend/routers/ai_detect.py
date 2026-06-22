@@ -197,6 +197,31 @@ async def detect_status(
     }
 
 
+@router.get("/{game_id}/players")
+async def player_tendencies(
+    game_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Per-player tendency tracking for a game (charter Component 1).
+
+    Single-camera, jersey-based: only players with a legible jersey number are tracked.
+    """
+    from backend.services.tendency_engine.players import analyze_players
+
+    game = (await db.execute(
+        select(Game).where(Game.id == game_id, Game.organization_id == user.organization_id)
+    )).scalar_one_or_none()
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    res = await db.execute(
+        select(Event).where(Event.game_id == game_id, Event.organization_id == user.organization_id)
+    )
+    events = res.scalars().all()
+    return analyze_players(events, game.sport or "football")
+
+
 @router.get("/{game_id}/agent-log")
 async def agent_log(
     game_id: str,

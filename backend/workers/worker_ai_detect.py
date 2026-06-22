@@ -99,8 +99,12 @@ DEFENSE DEEP EXTRACTION:
 - pressure_gap: "A", "B", "C", "Edge" — where primary pressure came from
 - linebacker_alignment: "Under", "Over", "Tite", "Stack", "Spread", null
 
+PLAYER IDENTIFICATION (single-camera, best-effort — NEVER guess a number):
+- players: array of the key players whose JERSEY NUMBER you can actually READ on this play. Only include a player if the number is legible — if you cannot read it, leave them out. Each entry: {"jersey": "<number as string>", "team": "offense" or "defense", "role": "<role>", "confidence": 0.0-1.0}. Football roles: "passer", "ball_carrier", "rusher", "targeted_receiver", "receiver", "tackler", "pass_rusher", "interceptor", "kicker", "returner", "blocker". Use [] if no jersey is legible.
+- primary_player_jersey: the jersey number (string) of the MAIN actor of the play (ball carrier, passer, or kicker), or null if not legible.
+
 Return ONLY valid JSON, nothing else:
-{"plays": [{"side": "offense", "frame": 1, "down": null, "distance": null, "field_position": null, "formation": null, "play_type": null, "personnel": null, "result": null, "yards_gained": null, "confidence": 0.8, "blind_spot": null, "hash_position": null, "motion": false, "motion_type": null, "receiver_alignment": null, "run_direction": null, "run_gap": null, "run_concept": null, "pass_concept": null, "pass_depth": null, "target_area": null, "tempo": null, "score_situation": null, "play_description": null, "is_play_action": false, "screen_subtype": null, "goal_line": false, "defensive_front": null, "coverage": null, "coverage_shell": null, "safety_rotation": null, "corner_technique": null, "blitz": null, "pressure_type": null, "pressure_gap": null, "linebacker_alignment": null}]}
+{"plays": [{"side": "offense", "frame": 1, "down": null, "distance": null, "field_position": null, "formation": null, "play_type": null, "personnel": null, "result": null, "yards_gained": null, "confidence": 0.8, "blind_spot": null, "hash_position": null, "motion": false, "motion_type": null, "receiver_alignment": null, "run_direction": null, "run_gap": null, "run_concept": null, "pass_concept": null, "pass_depth": null, "target_area": null, "tempo": null, "score_situation": null, "play_description": null, "is_play_action": false, "screen_subtype": null, "goal_line": false, "defensive_front": null, "coverage": null, "coverage_shell": null, "safety_rotation": null, "corner_technique": null, "blitz": null, "pressure_type": null, "pressure_gap": null, "linebacker_alignment": null, "players": [], "primary_player_jersey": null}]}
 
 If zero plays: {"plays": []}"""
 
@@ -185,12 +189,16 @@ These fields are CRITICAL for coaching — extract as precisely as possible from
   "Man Switch" | "Man No Switch" | "Zone" | "Box and 1" | "Deny Inbounder" | "Full Denial All" | null
   (use this when side=defense and the opponent is running an inbound play)
 
+── PLAYER IDENTIFICATION (single-camera, best-effort — NEVER guess a number) ──
+- players: array of players whose JERSEY NUMBER you can actually READ on this event. Only include legible numbers — never guess. Each: {"jersey": "<number as string>", "team": "offense" or "defense", "role": "<role>", "confidence": 0.0-1.0}. Basketball roles: "shooter", "ball_handler", "passer", "screener", "roll_man", "cutter", "defender", "rebounder", "fouler", "fouled", "assister", "stealer", "blocker". Use [] if no jersey is legible.
+- primary_player_jersey: jersey number (string) of the MAIN actor (shooter / ball handler), or null if not legible.
+
 ── EVERY EVENT ──
 - play_description: ONE sharp sentence describing the possession/action. Specific enough to reconstruct without film. For inbounds: name the set, the action, and what happened. Examples: "BLOB right baseline: Box set, back screen frees cutter at restricted area, lob over zone for layup (made)." | "SLOB left sideline after timeout: Stack set, cross screen action, shooter pops to left wing 3 (missed, long)." | "PG drives baseline, draws hard hedge from center on ball screen at elbow, kicks to corner shooter for open 3 (missed)."
 
 ━━━ JSON FORMAT ━━━
 Return ONLY this JSON:
-{"plays": [{"side": "offense", "frame": 1, "event_type": "shot", "result": null, "score_margin": null, "quarter": null, "shot_clock_range": null, "confidence": 0.85, "blind_spot": null, "play_action": null, "shot_zone": null, "shot_type": null, "shot_distance_ft": null, "screen_type": null, "ball_screen_position": null, "transition_type": null, "paint_touch": false, "kick_out": false, "assist_type": null, "motion": false, "vs_zone": false, "zone_offense_action": null, "press_break_action": null, "clutch_situation": false, "foul_drawn_action": null, "inbound_type": null, "inbound_side": null, "inbound_set": null, "inbound_primary_action": null, "inbound_scorer_position": null, "inbound_defense_coverage": null, "inbound_situation": null, "inbound_result_zone": null, "defensive_scheme": null, "hedge_style": null, "help_defense": null, "deny_style": null, "press_trigger": null, "oob_defense_coverage": null, "play_description": null}]}
+{"plays": [{"side": "offense", "frame": 1, "event_type": "shot", "result": null, "score_margin": null, "quarter": null, "shot_clock_range": null, "confidence": 0.85, "blind_spot": null, "play_action": null, "shot_zone": null, "shot_type": null, "shot_distance_ft": null, "screen_type": null, "ball_screen_position": null, "transition_type": null, "paint_touch": false, "kick_out": false, "assist_type": null, "motion": false, "vs_zone": false, "zone_offense_action": null, "press_break_action": null, "clutch_situation": false, "foul_drawn_action": null, "inbound_type": null, "inbound_side": null, "inbound_set": null, "inbound_primary_action": null, "inbound_scorer_position": null, "inbound_defense_coverage": null, "inbound_situation": null, "inbound_result_zone": null, "defensive_scheme": null, "hedge_style": null, "help_defense": null, "deny_style": null, "press_trigger": null, "oob_defense_coverage": null, "players": [], "primary_player_jersey": null, "play_description": null}]}
 
 Zero events: {"plays": []}"""
 
@@ -393,6 +401,8 @@ class AiDetectWorker(BaseWorker):
                             "is_play_action", "screen_subtype", "goal_line",
                             # Single-camera transparency (all sports)
                             "blind_spot",
+                            # Player-level tracking (all sports)
+                            "players", "primary_player_jersey",
                         )
 
                         events = [

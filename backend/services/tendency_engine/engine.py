@@ -65,6 +65,7 @@ async def run_tendency_engine(sport: str, events: List[Event]) -> Dict[str, Any]
     from .basketball import analyze_basketball
     from .flag_football import analyze_flag_football
     from .base_sports import analyze_base_sport
+    from .players import analyze_players
 
     if sport in ("football", "flag_football"):
         offense = [e for e in events if _side(e) == "offense"]
@@ -82,15 +83,18 @@ async def run_tendency_engine(sport: str, events: List[Event]) -> Dict[str, Any]
             "defense": deff,
             "special_teams": st,
             "data_confidence": _coverage_report(events),
+            "player_tendencies": analyze_players(events, sport),
         }
 
     elif sport == "basketball":
         result = analyze_basketball(events)
         result["data_confidence"] = _coverage_report(events)
+        result["player_tendencies"] = analyze_players(events, sport)
         return result
 
     else:
         result = analyze_base_sport(sport, events)
         if isinstance(result, dict):
             result["data_confidence"] = _coverage_report(events)
+            result["player_tendencies"] = analyze_players(events, sport)
         return result
