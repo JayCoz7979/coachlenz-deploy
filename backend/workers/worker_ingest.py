@@ -275,6 +275,21 @@ class IngestWorker(BaseWorker):
             return 0.0
 
 
+async def _run_ingest_and_detect():
+    """Run the ingest worker AND the AI detection worker in one process.
+
+    Detection has no dedicated Railway service, and this service already holds the
+    exact environment detection needs (ANTHROPIC_API_KEY, R2_*, DATABASE_URL, and
+    ffmpeg in the image). Co-locating them here is what makes auto-detect actually
+    execute in production. Each worker's run_forever loop isolates its own errors.
+    """
+    from backend.workers.worker_ai_detect import AiDetectWorker
+    await asyncio.gather(
+        IngestWorker().run_forever(),
+        AiDetectWorker().run_forever(),
+    )
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    asyncio.run(IngestWorker().run_forever())
+    asyncio.run(_run_ingest_and_detect())
