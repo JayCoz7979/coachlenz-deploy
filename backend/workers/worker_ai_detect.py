@@ -547,17 +547,24 @@ class AiDetectWorker(BaseWorker):
         # Scene-cut frames alone cluster on broadcast cuts/replays and miss most
         # snaps (a sparse 1-frame-per-11s on long film). The grid guarantees no
         # coverage gap larger than FALLBACK_INTERVAL so every snap window is sampled.
-        logger.info(f"[ai_detect] {len(frames)} scene frames — adding uniform {FALLBACK_INTERVAL}s grid")
+        scene_count = len(frames)
         interval_dir = os.path.join(output_dir, "interval")
         os.makedirs(interval_dir, exist_ok=True)
-        subprocess.run([
+        # ffmpeg's fps filter needs a clean rate. "1/2.0" is REJECTED by ffmpeg;
+        # pass an explicit decimal (e.g. 0.5 fps = one frame every 2s).
+        rate = 1.0 / FALLBACK_INTERVAL
+        logger.info(f"[ai_detect] {scene_count} scene frames — adding uniform grid at {rate:.4f} fps (every {FALLBACK_INTERVAL}s)")
+        proc = subprocess.run([
             "ffmpeg", "-y", "-ss", str(SKIP_START_SECONDS), "-i", video_source,
-            "-vf", f"fps=1/{FALLBACK_INTERVAL}", "-q:v", "3",
+            "-vf", f"fps={rate:.5f}", "-q:v", "3",
             os.path.join(interval_dir, "frame_%06d.jpg"),
         ], capture_output=True, text=True, timeout=1800)
         ifiles = sorted(
             os.path.join(interval_dir, f) for f in os.listdir(interval_dir) if f.endswith(".jpg")
         )
+        logger.info(f"[ai_detect] uniform grid produced {len(ifiles)} interval frames")
+        if not ifiles:
+            logger.warning(f"[ai_detect] interval grid produced ZERO frames. ffmpeg stderr tail: {(proc.stderr or '')[-400:]}")
         for i, f in enumerate(ifiles):
             frames.append((f, SKIP_START_SECONDS + i * FALLBACK_INTERVAL))
 
