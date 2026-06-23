@@ -43,6 +43,8 @@ MIN_CONFIDENCE = 0.5       # unchanged — keep quality gate
 CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
+# Bumped on each detection-pipeline change so the DB agent log proves which code ran.
+CODE_VERSION = "recall-v3-diag"
 
 
 DETECTION_PROMPT = """You are the most thorough football film analyst in the world. The frames below are consecutive moments from game film (a few seconds apart), shown in time order.
@@ -300,9 +302,10 @@ class AiDetectWorker(BaseWorker):
                     game_id=game_id, organization_id=str(org_id), job_id=job_id,
                     phase="frame_extraction", level="info",
                     action=f"Extracted {len(frame_paths)} frames to analyze",
-                    reason="Sampled the film at scene changes plus fixed intervals to catch every snap "
-                           "without over-sampling. Each frame carries its real timestamp.",
-                    detail={"frame_count": len(frame_paths)},
+                    reason="Sampled the film at scene changes plus a uniform interval grid to catch every "
+                           "snap. Each frame carries its real timestamp.",
+                    detail={"frame_count": len(frame_paths), "after_cluster": len(frame_paths),
+                            **getattr(self, "_extract_diag", {})},
                 )
 
                 # ── Send batches to Claude Vision ──────────────────────────
@@ -563,18 +566,27 @@ class AiDetectWorker(BaseWorker):
             os.path.join(interval_dir, f) for f in os.listdir(interval_dir) if f.endswith(".jpg")
         )
         logger.info(f"[ai_detect] uniform grid produced {len(ifiles)} interval frames")
-        if not ifiles:
-            logger.warning(f"[ai_detect] interval grid produced ZERO frames. ffmpeg stderr tail: {(proc.stderr or '')[-400:]}")
         for i, f in enumerate(ifiles):
             frames.append((f, SKIP_START_SECONDS + i * FALLBACK_INTERVAL))
 
         frames.sort(key=lambda x: x[1])
+        merged = len(frames)
 
         # Cap total frames to control cost; sample evenly across the game.
         if len(frames) > MAX_FRAMES:
             step = len(frames) // MAX_FRAMES
             frames = frames[::step][:MAX_FRAMES]
 
+        # Persistent diagnostics (survive in the DB agent log; worker logs roll off).
+        self._extract_diag = {
+            "code_version": CODE_VERSION,
+            "scene_frames": scene_count,
+            "interval_frames": len(ifiles),
+            "interval_rc": proc.returncode,
+            "merged_pre_cap": merged,
+            "final_frames": len(frames),
+            "ffmpeg_err": ((proc.stderr or "")[-300:] if not ifiles else None),
+        }
         return frames
 
     def _cluster_frames(self, frames: list, min_gap_seconds: float = CLUSTER_GAP_SECONDS) -> list:
