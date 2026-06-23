@@ -531,7 +531,7 @@ class AiDetectWorker(BaseWorker):
             "-f", "image2",
             os.path.join(scene_frames_dir, "frame_%06d.jpg"),
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
         # showinfo logs one "pts_time:N" per emitted frame, in output order.
         pts_times = [float(x) for x in re.findall(r"pts_time:([0-9.]+)", result.stderr or "")]
         scene_files = sorted(
@@ -543,21 +543,23 @@ class AiDetectWorker(BaseWorker):
             t = (pts_times[i] if i < len(pts_times) else i * FALLBACK_INTERVAL) + SKIP_START_SECONDS
             frames.append((f, t))
 
-        min_expected = max(10, (duration_seconds or 0) // 30)
-        if len(frames) < min_expected:
-            logger.info(f"[ai_detect] Only {len(frames)} scene frames — adding interval frames")
-            interval_dir = os.path.join(output_dir, "interval")
-            os.makedirs(interval_dir, exist_ok=True)
-            subprocess.run([
-                "ffmpeg", "-y", "-ss", str(SKIP_START_SECONDS), "-i", video_source,
-                "-vf", f"fps=1/{FALLBACK_INTERVAL}", "-q:v", "3",
-                os.path.join(interval_dir, "frame_%06d.jpg"),
-            ], capture_output=True, text=True, timeout=900)
-            ifiles = sorted(
-                os.path.join(interval_dir, f) for f in os.listdir(interval_dir) if f.endswith(".jpg")
-            )
-            for i, f in enumerate(ifiles):
-                frames.append((f, SKIP_START_SECONDS + i * FALLBACK_INTERVAL))
+        # ALWAYS lay down a uniform interval grid and merge it with scene frames.
+        # Scene-cut frames alone cluster on broadcast cuts/replays and miss most
+        # snaps (a sparse 1-frame-per-11s on long film). The grid guarantees no
+        # coverage gap larger than FALLBACK_INTERVAL so every snap window is sampled.
+        logger.info(f"[ai_detect] {len(frames)} scene frames — adding uniform {FALLBACK_INTERVAL}s grid")
+        interval_dir = os.path.join(output_dir, "interval")
+        os.makedirs(interval_dir, exist_ok=True)
+        subprocess.run([
+            "ffmpeg", "-y", "-ss", str(SKIP_START_SECONDS), "-i", video_source,
+            "-vf", f"fps=1/{FALLBACK_INTERVAL}", "-q:v", "3",
+            os.path.join(interval_dir, "frame_%06d.jpg"),
+        ], capture_output=True, text=True, timeout=1800)
+        ifiles = sorted(
+            os.path.join(interval_dir, f) for f in os.listdir(interval_dir) if f.endswith(".jpg")
+        )
+        for i, f in enumerate(ifiles):
+            frames.append((f, SKIP_START_SECONDS + i * FALLBACK_INTERVAL))
 
         frames.sort(key=lambda x: x[1])
 
