@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import signal
 import subprocess
 import tempfile
 from backend.workers.base import BaseWorker
@@ -282,12 +283,31 @@ async def _run_ingest_and_detect():
     exact environment detection needs (ANTHROPIC_API_KEY, R2_*, DATABASE_URL, and
     ffmpeg in the image). Co-locating them here is what makes auto-detect actually
     execute in production. Each worker's run_forever loop isolates its own errors.
+
+    GRACEFUL SHUTDOWN: handle SIGTERM/SIGINT so the container EXITS on deploy. Without
+    this the old container ignored SIGTERM, lingered through every rolling deploy, and
+    kept grabbing jobs off the queue with stale code — which silently defeated every
+    detection fix. Exiting on signal lets Railway swap containers cleanly.
     """
     from backend.workers.worker_ai_detect import AiDetectWorker
-    await asyncio.gather(
-        IngestWorker().run_forever(),
-        AiDetectWorker().run_forever(),
-    )
+
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, stop.set)
+        except NotImplementedError:  # e.g. Windows
+            pass
+
+    tasks = [
+        asyncio.create_task(IngestWorker().run_forever()),
+        asyncio.create_task(AiDetectWorker().run_forever()),
+    ]
+    await stop.wait()
+    logger.info("[worker] shutdown signal received — exiting cleanly for container swap")
+    for t in tasks:
+        t.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
 
 
 if __name__ == "__main__":
