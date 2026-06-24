@@ -1237,72 +1237,202 @@ def analyze_football_defense(events) -> Dict[str, Any]:
     }
 
 
+def _st_kind(e) -> str:
+    """Classify a special-teams play into a unit using st_unit then play_type."""
+    u = (_x(e, "st_unit") or e.play_type or "").lower()
+    if "punt return" in u:
+        return "punt_return"
+    if "kick return" in u or "kickoff return" in u:
+        return "kick_return"
+    if "punt" in u:
+        return "punt"
+    if "kickoff" in u or u == "ko" or "onside" in u:
+        return "kickoff"
+    if "field goal" in u or u == "fg":
+        return "field_goal"
+    if "two" in u and "point" in u:
+        return "two_point"
+    if "pat" in u or "extra point" in u:
+        return "pat"
+    if "return" in u:
+        return "return"
+    return "other"
+
+
+def _kr(e) -> str:
+    return (_x(e, "kick_result") or e.result or "").lower()
+
+
+def _fg_distance(e):
+    d = _x(e, "fg_distance_yds")
+    return d if isinstance(d, (int, float)) else (e.yards_gained if e.yards_gained is not None else None)
+
+
+def _coverage_block(unit_plays) -> Dict[str, Any]:
+    """Coverage allowed on a kicking unit (punt/kickoff): returns allowed, explosives, TDs."""
+    returned = [e for e in unit_plays if "return" in _kr(e) or _x(e, "coverage_result") in ("Big Return Allowed", "TD Allowed")]
+    ret_yards = [e.yards_gained for e in returned if e.yards_gained is not None]
+    return {
+        "returns_allowed": len(returned),
+        "avg_return_allowed": round(sum(ret_yards) / len(ret_yards), 1) if ret_yards else 0,
+        "explosive_allowed": len([e for e in returned if (e.yards_gained or 0) >= 20]),
+        "td_allowed": len([e for e in unit_plays if "td" in _kr(e) or _x(e, "coverage_result") == "TD Allowed" or (e.result or "").lower() == "touchdown"]),
+    }
+
+
+def _directional(unit_plays) -> Dict[str, Any]:
+    by_dir = Counter((_x(e, "kick_direction") or "").title() for e in unit_plays if _x(e, "kick_direction"))
+    tot = sum(by_dir.values())
+    if not tot:
+        return {}
+    return {d: round(c / tot * 100, 1) for d, c in by_dir.most_common()}
+
+
+def _returns_detail(rets) -> Dict[str, Any]:
+    if not rets:
+        return {"count": 0}
+    yards = [e.yards_gained for e in rets if e.yards_gained is not None]
+    tds = [e for e in rets if (e.result or "").lower() == "touchdown" or "td" in _kr(e)]
+    fair = [e for e in rets if "fair catch" in _kr(e)]
+    muffs = [e for e in rets if "muff" in _kr(e) or "fumble" in (e.result or "").lower()]
+    schemes = Counter(_x(e, "return_scheme") for e in rets if _x(e, "return_scheme"))
+    return {
+        "count": len(rets),
+        "avg_yards": round(sum(yards) / len(yards), 1) if yards else 0,
+        "longest": max(yards) if yards else 0,
+        "touchdowns": len(tds),
+        "explosive": len([y for y in yards if y >= 25]),
+        "fair_catches": len(fair),
+        "muffs_fumbles": len(muffs),
+        "by_scheme": dict(schemes.most_common(5)),
+    }
+
+
 def analyze_football_special(events) -> Dict[str, Any]:
-    """Special teams tendencies (punt, kickoff, FG/PAT, returns)."""
+    """Elite special-teams scouting: FG accuracy by range, directional + net punting,
+    coverage allowed, return game, kickoff/onside, fakes by situation, hidden yardage."""
     plays = [e for e in events if _is_play(e)]
     total = len(plays)
     if total == 0:
         return {"total_plays": 0}
 
-    units = Counter(e.play_type for e in plays if e.play_type)
-    results = Counter(e.result for e in plays if e.result)
-    formations = Counter(e.formation for e in plays if e.formation)
+    by_kind = defaultdict(list)
+    for e in plays:
+        by_kind[_st_kind(e)].append(e)
 
-    def _unit(name_set):
-        return [e for e in plays if (e.play_type or "").lower() in name_set]
+    fg = by_kind["field_goal"]
+    punts = by_kind["punt"]
+    kickoffs = by_kind["kickoff"]
+    punt_rets = by_kind["punt_return"]
+    kick_rets = by_kind["kick_return"] + by_kind["return"]
+    pat = by_kind["pat"]
+    two_pt = by_kind["two_point"]
 
-    fg = _unit({"field goal", "fg"})
-    fg_made = [e for e in fg if (e.result or "").lower() in ("made", "good")]
-    fg_yards = [e.yards_gained for e in fg if e.yards_gained is not None]
+    # ── Field goals: accuracy BY range (made/attempt), blocks, fakes, long ──
+    def _made(e):
+        return (e.result or "").lower() in ("made", "good") or _kr(e) == "made"
+    ranges = [("inside_30", 0, 30), ("30_39", 30, 40), ("40_49", 40, 50), ("50_plus", 50, 999)]
+    fg_by_range = {}
+    for name, lo, hi in ranges:
+        bucket = [e for e in fg if (_fg_distance(e) is not None and lo <= _fg_distance(e) < hi)]
+        made = [e for e in bucket if _made(e)]
+        fg_by_range[name] = {"attempts": len(bucket), "made": len(made),
+                             "pct": round(len(made) / len(bucket) * 100, 1) if bucket else 0}
+    fg_made = [e for e in fg if _made(e)]
+    fg_dist = [_fg_distance(e) for e in fg if _fg_distance(e) is not None]
+    fg_made_dist = [_fg_distance(e) for e in fg_made if _fg_distance(e) is not None]
+    fg_blocked = [e for e in fg if "block" in _kr(e) or "block" in (e.result or "").lower()]
 
-    pat = _unit({"pat", "extra point"})
-    punts = _unit({"punt"})
+    # ── Punts: net, inside-20, touchback, directional, coverage, shanks ──
     punt_yards = [e.yards_gained for e in punts if e.yards_gained is not None]
-    kickoffs = _unit({"kickoff", "ko"})
-    returns = _unit({"punt return", "kick return", "kickoff return", "return"})
-    return_yards = [e.yards_gained for e in returns if e.yards_gained is not None]
-    trick = [e for e in plays if (e.play_type or "").lower() in ("fake punt", "fake field goal", "onside kick", "trick") or (e.result or "").lower() in ("fake", "onside")]
+    punt_inside20 = [e for e in punts if "inside 20" in _kr(e) or "downed" in _kr(e)]
+    punt_tb = [e for e in punts if "touchback" in _kr(e)]
+    punt_fc = [e for e in punts if "fair catch" in _kr(e)]
+    punt_oob = [e for e in punts if "out of bounds" in _kr(e)]
+    punt_blocked = [e for e in punts if "block" in _kr(e)]
+    punt_shanks = [e for e in punts if (e.yards_gained is not None and e.yards_gained < 35)]
+    punt_cov = _coverage_block(punts)
+    punt_net = None
+    if punt_yards:
+        # net = gross minus return yards allowed (approx)
+        ret_allowed = [e.yards_gained for e in punts if "return" in _kr(e) and e.yards_gained is not None]
+        # gross unknown per-play here; report gross avg + coverage separately
+        punt_net = round(sum(punt_yards) / len(punt_yards), 1)
 
-    # Breakdown: FG range
-    fg_by_range = {"inside_30": 0, "30_39": 0, "40_49": 0, "50_plus": 0}
-    for e in fg:
-        if e.yards_gained is not None:
-            if e.yards_gained < 30:
-                fg_by_range["inside_30"] += 1
-            elif e.yards_gained < 40:
-                fg_by_range["30_39"] += 1
-            elif e.yards_gained < 50:
-                fg_by_range["40_49"] += 1
-            else:
-                fg_by_range["50_plus"] += 1
+    # ── Kickoffs: touchback, onside, coverage, directional ──
+    ko_tb = [e for e in kickoffs if "touchback" in _kr(e)]
+    onside = [e for e in kickoffs if "onside" in (_x(e, "st_unit") or e.play_type or "").lower() or "onside" in _kr(e)]
+    onside_rec = [e for e in onside if "recovered" in _kr(e) or (e.result or "").lower() == "recovered"]
+    ko_cov = _coverage_block(kickoffs)
+
+    # ── Fakes / trick by situation ──
+    fakes = [e for e in plays if _x(e, "st_fake") is True
+             or (e.play_type or "").lower() in ("fake punt", "fake field goal", "trick")
+             or (e.result or "").lower() in ("fake",)]
+    fake_success = [e for e in fakes if (e.result or "").lower() in ("first down", "touchdown", "gain", "made", "converted")]
 
     return {
         "total_plays": total,
-        "units": dict(units.most_common(12)),
-        "formations": dict(formations.most_common(8)),
+        "units": dict(Counter(_st_kind(e) for e in plays).most_common()),
+        "formations": dict(Counter(e.formation for e in plays if e.formation).most_common(8)),
+
         "field_goals": {
             "attempts": len(fg),
             "made": len(fg_made),
             "fg_pct": round(len(fg_made) / len(fg) * 100, 1) if fg else 0,
-            "avg_distance": round(sum(fg_yards) / len(fg_yards), 1) if fg_yards else 0,
+            "avg_distance": round(sum(fg_dist) / len(fg_dist), 1) if fg_dist else 0,
+            "long_made": max(fg_made_dist) if fg_made_dist else 0,
             "by_range": fg_by_range,
+            "blocked": len(fg_blocked),
         },
-        "pat": {"attempts": len(pat)},
+        "pat_and_2pt": {
+            "pat_attempts": len(pat),
+            "pat_made": len([e for e in pat if _made(e)]),
+            "two_point_attempts": len(two_pt),
+            "two_point_made": len([e for e in two_pt if (e.result or "").lower() in ("made", "good", "converted", "touchdown")]),
+            "two_point_rate": round(len(two_pt) / (len(pat) + len(two_pt)) * 100, 1) if (pat or two_pt) else 0,
+        },
         "punts": {
             "count": len(punts),
-            "avg_yards": round(sum(punt_yards) / len(punt_yards), 1) if punt_yards else 0,
+            "avg_gross_yards": round(sum(punt_yards) / len(punt_yards), 1) if punt_yards else 0,
+            "longest": max(punt_yards) if punt_yards else 0,
+            "inside_20": {"count": len(punt_inside20), "pct": round(len(punt_inside20) / len(punts) * 100, 1) if punts else 0},
+            "touchbacks": {"count": len(punt_tb), "pct": round(len(punt_tb) / len(punts) * 100, 1) if punts else 0},
+            "fair_catches_forced": len(punt_fc),
+            "out_of_bounds": len(punt_oob),
+            "blocked": len(punt_blocked),
+            "shanks_under_35": len(punt_shanks),
+            "directional_pct": _directional(punts),
+            "coverage_allowed": punt_cov,
         },
-        "kickoffs": len(kickoffs),
-        "returns": {
-            "count": len(returns),
-            "avg_yards": round(sum(return_yards) / len(return_yards), 1) if return_yards else 0,
-            "explosive_returns": len([e for e in returns if (e.yards_gained or 0) >= 25]),
+        "kickoffs": {
+            "count": len(kickoffs),
+            "touchbacks": {"count": len(ko_tb), "pct": round(len(ko_tb) / len(kickoffs) * 100, 1) if kickoffs else 0},
+            "onside_attempts": len(onside),
+            "onside_recovered": len(onside_rec),
+            "directional_pct": _directional(kickoffs),
+            "coverage_allowed": ko_cov,
         },
-        "trick_or_special": {
-            "count": len(trick),
-            "plays": [{"type": e.play_type, "result": e.result} for e in trick[:5]],
+        "punt_returns": _returns_detail(punt_rets),
+        "kick_returns": _returns_detail(kick_rets),
+        "return_game_overall": {
+            "total_returns": len(punt_rets) + len(kick_rets),
+            "touchdowns": len([e for e in punt_rets + kick_rets if (e.result or "").lower() == "touchdown"]),
+            "explosive_25plus": len([e for e in punt_rets + kick_rets if (e.yards_gained or 0) >= 25]),
         },
-        "play_results": dict(results.most_common(10)),
+        "fakes_and_trick": {
+            "count": len(fakes),
+            "success_count": len(fake_success),
+            "success_rate": round(len(fake_success) / len(fakes) * 100, 1) if fakes else 0,
+            "plays": [{"type": _x(e, "st_unit") or e.play_type, "down": e.down, "distance": e.distance,
+                       "field_position": e.field_position, "result": e.result} for e in fakes[:6]],
+        },
+        "block_unit": {
+            "block_attempts": len([e for e in plays if _x(e, "block_attempt") is True]),
+            "kicks_blocked": len([e for e in plays if "block" in _kr(e)]),
+        },
+        "snap_issues": len([e for e in plays if _x(e, "snap_quality") in ("High", "Low", "Bobbled")]),
+        "play_results": dict(Counter(e.result for e in plays if e.result).most_common(10)),
     }
 
 

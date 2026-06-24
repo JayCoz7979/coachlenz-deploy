@@ -128,8 +128,19 @@ PLAYER IDENTIFICATION (single-camera, best-effort — NEVER guess a number):
 - players: array of the key players whose JERSEY NUMBER you can actually READ on this play. Only include a player if the number is legible — if you cannot read it, leave them out. Each entry: {"jersey": "<number as string>", "team": "offense" or "defense", "role": "<role>", "confidence": 0.0-1.0}. Football roles: "passer", "ball_carrier", "rusher", "targeted_receiver", "receiver", "tackler", "pass_rusher", "interceptor", "kicker", "returner", "blocker". Use [] if no jersey is legible.
 - primary_player_jersey: the jersey number (string) of the MAIN actor of the play (ball carrier, passer, or kicker), or null if not legible.
 
+SPECIAL TEAMS DEEP EXTRACTION (when side=special_teams):
+- st_unit: "Punt", "Punt Return", "Kickoff", "Kick Return", "Field Goal", "PAT", "Two-Point", "Onside Kick", null
+- kick_direction: "Left", "Middle", "Right", null — which way the punt/kickoff was placed
+- kick_result: "Touchback", "Fair Catch", "Returned", "Downed Inside 20", "Out of Bounds", "Muffed", "Blocked", "Made", "Missed", "Recovered", null
+- return_scheme: "Middle Return", "Left Wall", "Right Wall", "Reverse", "Wedge", "No Return", null
+- coverage_result: "Tackle in Coverage", "Big Return Allowed", "TD Allowed", "Contained", "Fair Catch Forced", null
+- fg_distance_yds: estimated field-goal distance in yards (integer) if Field Goal, else null
+- snap_quality: "Clean", "High", "Low", "Bobbled", null
+- block_attempt: true if the defense rushed hard to block the kick, false otherwise
+- st_fake: true if this kicking down turned into a fake/trick (fake punt, fake FG, pooch, surprise onside), false otherwise
+
 Return ONLY valid JSON, nothing else:
-{"plays": [{"side": "offense", "frame": 1, "down": null, "distance": null, "field_position": null, "formation": null, "play_type": null, "personnel": null, "result": null, "yards_gained": null, "confidence": 0.8, "blind_spot": null, "hash_position": null, "motion": false, "motion_type": null, "receiver_alignment": null, "run_direction": null, "run_gap": null, "run_concept": null, "pass_concept": null, "pass_depth": null, "target_area": null, "tempo": null, "score_situation": null, "play_description": null, "is_play_action": false, "screen_subtype": null, "goal_line": false, "defensive_front": null, "coverage": null, "coverage_shell": null, "safety_rotation": null, "corner_technique": null, "blitz": null, "pressure_type": null, "pressure_gap": null, "linebacker_alignment": null, "players": [], "primary_player_jersey": null}]}
+{"plays": [{"side": "offense", "frame": 1, "down": null, "distance": null, "field_position": null, "formation": null, "play_type": null, "personnel": null, "result": null, "yards_gained": null, "confidence": 0.8, "blind_spot": null, "hash_position": null, "motion": false, "motion_type": null, "receiver_alignment": null, "run_direction": null, "run_gap": null, "run_concept": null, "pass_concept": null, "pass_depth": null, "target_area": null, "tempo": null, "score_situation": null, "play_description": null, "is_play_action": false, "screen_subtype": null, "goal_line": false, "defensive_front": null, "coverage": null, "coverage_shell": null, "safety_rotation": null, "corner_technique": null, "blitz": null, "pressure_type": null, "pressure_gap": null, "linebacker_alignment": null, "players": [], "primary_player_jersey": null, "st_unit": null, "kick_direction": null, "kick_result": null, "return_scheme": null, "coverage_result": null, "fg_distance_yds": null, "snap_quality": null, "block_attempt": false, "st_fake": false}]}
 
 If zero plays: {"plays": []}"""
 
@@ -448,6 +459,10 @@ class AiDetectWorker(BaseWorker):
                             "players", "primary_player_jersey",
                             # Derivation provenance
                             "yards_source", "field_position_derived",
+                            # Special teams deep extraction
+                            "st_unit", "kick_direction", "kick_result", "return_scheme",
+                            "coverage_result", "fg_distance_yds", "snap_quality",
+                            "block_attempt", "st_fake",
                         )
 
                         events = [

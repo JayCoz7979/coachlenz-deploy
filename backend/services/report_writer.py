@@ -207,15 +207,34 @@ async def generate_prose_sections(
 
     if st_plays >= 3:
         sections_spec.append({
-            "heading": "Opponent Special Teams",
-            "insight_type": "tendency",
+            "heading": "Opponent Special Teams — Kicking Game",
+            "insight_type": "special_teams",
             "instructions": (
-                "Cover: FG range and accuracy (by distance range if data has it), "
-                "punt operation (avg distance, hangtime tendencies), "
-                "kickoff approach, "
-                "return threat (avg yards, explosive returns), "
-                "trick/fake play tendency. "
-                "Advise on: field goal block chances, return opportunities, and fake alert situations."
+                "Use the special_teams data block in full. This must be coaching-grade, not a summary. "
+                "FIELD GOALS: cite field_goals.by_range — make percentage at each range (inside_30, 30_39, 40_49, 50_plus), "
+                "their realistic make range, long_made, and blocked count. State the exact distance beyond which they become unreliable "
+                "(that is the line where you take points off the board / go for it on 4th down). "
+                "PUNTS: avg_gross_yards, longest, inside_20 pct (do they pin deep?), touchback pct, fair_catches_forced, "
+                "shanks_under_35 (operation reliability), directional_pct (do they punt to a side you can set up a return on?), "
+                "and coverage_allowed (avg_return_allowed, explosive_allowed, td_allowed). "
+                "KICKOFFS: touchback pct (do you even get a return chance?), onside_attempts/recovered, directional_pct, coverage_allowed. "
+                "PAT/2PT: pat make rate and two_point_rate (are they aggressive?). "
+                "Advise: FG block opportunities (long attempts, blocked history), where to attack their coverage, "
+                "and operation weaknesses (shanks, bad snaps via snap_issues, blocks allowed)."
+            ),
+        })
+        sections_spec.append({
+            "heading": "Opponent Special Teams — Return Game & Fakes",
+            "insight_type": "special_teams",
+            "instructions": (
+                "Use punt_returns, kick_returns, return_game_overall, fakes_and_trick, and block_unit. "
+                "RETURN THREAT: punt and kick return avg, longest, touchdowns, explosive_25plus, fair_catch rate, muffs_fumbles "
+                "(ball security you can attack), and by_scheme (which return scheme they favor — middle, wall left/right, reverse). "
+                "Tell the coverage units exactly where the return is coming and how dangerous the returner is. "
+                "FAKE ALERT: fakes_and_trick count, success_rate, and the situations (down/distance/field_position) where they fake — "
+                "name the exact down-and-distance and field zones to stay alert. "
+                "BLOCK THREAT: block_unit (do they rush kicks aggressively, have they blocked kicks?). "
+                "Advise: returner containment plan, fake-alert situations, and whether to protect against a block rush."
             ),
         })
 
