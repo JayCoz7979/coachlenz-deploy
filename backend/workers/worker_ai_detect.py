@@ -45,7 +45,7 @@ CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "parallel-windows-v2"
+CODE_VERSION = "multipass-v1"
 
 # Parallel ranged extraction: one long fps=0.5 pass over a 2.75h stream times out
 # silently. Instead decode many short windows concurrently, each its own ffmpeg.
@@ -53,6 +53,15 @@ WINDOW_SIZE = 300          # seconds per window (5 min)
 FRAMES_PER_WINDOW = 40     # frames sampled per window -> 1 frame / 7.5s
 PARALLEL_JOBS = 6          # concurrent ffmpeg processes
 JOB_TIMEOUT = 300          # per-window timeout (s); a stuck window fails alone, not the whole job
+
+# ── Multi-pass vision (depth past single-prompt detection) ─────────────────────
+# Pass 1 reads the pre-snap picture, Pass 2 enriches post-snap, Pass 3 (Opus)
+# adversarially verifies low-confidence reads. Model-tiering keeps cost sane.
+MULTIPASS_ENABLED = True
+DETECT_MODEL = "claude-sonnet-4-6"   # bulk passes (volume)
+VERIFY_MODEL = "claude-opus-4-8"     # hardest reads only (the tie-breaker)
+VERIFY_CONFIDENCE_THRESHOLD = 0.65   # merged plays below this get an Opus second look
+MAX_VERIFY_PER_BATCH = 3             # cap Opus calls per batch (cost guardrail)
 
 
 DETECTION_PROMPT = """You are the most thorough football film analyst in the world. The frames below are consecutive moments from game film (a few seconds apart), shown in time order.
@@ -152,6 +161,90 @@ Return ONLY valid JSON, nothing else:
 {"plays": [{"side": "offense", "frame": 1, "down": null, "distance": null, "field_position": null, "formation": null, "play_type": null, "personnel": null, "result": null, "yards_gained": null, "confidence": 0.8, "blind_spot": null, "hash_position": null, "motion": false, "motion_type": null, "receiver_alignment": null, "run_direction": null, "run_gap": null, "run_concept": null, "pass_concept": null, "pass_depth": null, "target_area": null, "tempo": null, "score_situation": null, "play_description": null, "is_play_action": false, "screen_subtype": null, "goal_line": false, "defensive_front": null, "coverage": null, "coverage_shell": null, "safety_rotation": null, "corner_technique": null, "blitz": null, "pressure_type": null, "pressure_gap": null, "linebacker_alignment": null, "ol_stance": null, "ol_hand_weight": null, "ol_splits": null, "key_pre_snap_tell": null, "db_leverage": null, "lb_depth_tell": null, "safety_depth_tell": null, "players": [], "primary_player_jersey": null, "st_unit": null, "kick_direction": null, "kick_result": null, "return_scheme": null, "coverage_result": null, "fg_distance_yds": null, "snap_quality": null, "block_attempt": false, "st_fake": false}]}
 
 If zero plays: {"plays": []}"""
+
+
+# ── Multi-pass prompts ─────────────────────────────────────────────────────────
+# PASS 1: segment the plays and read ONLY the pre-snap picture deeply. We do not
+# ask about the result here — a focused prompt reads formation/alignment/tells far
+# better than one overloaded prompt trying to do everything at once.
+DETECTION_PROMPT_PRESNAP = """You are the best pre-snap film analyst alive — better than any college or NFL quality-control coach. The frames below are consecutive moments of game film in time order. Each frame also includes two zoomed crops of the score/overlay zones for reading the down-and-distance bug.
+
+YOUR ONLY JOB IN THIS PASS: find every DISTINCT football play in this window and read the PRE-SNAP picture for each. Do NOT judge the result yet — another pass handles that.
+
+Identify each distinct snap (run, pass, screen, RPO, option, punt, FG, PAT, kickoff). Skip huddles, timeouts, sideline shots, replays, commercials, dead time.
+
+For each play, assign a sequential play_index starting at 0 (0,1,2…) in time order — this is the KEY that the post-snap pass uses to match your read, so it MUST be present and stable.
+
+Read from the PRE-SNAP frames (offense set at the line). Extract:
+- play_index: 0-based sequential integer (REQUIRED)
+- frame: the frame NUMBER showing the best pre-snap look (REQUIRED)
+- side: "offense" | "defense" | "special_teams"
+- down, distance, field_position, hash_position: from the score bug + field. null if truly unreadable — never guess.
+- formation: "Shotgun","I-Form","Pistol","Singleback","Empty","Trips","Bunch","Wildcat","Ace","Offset I","Pro Set","Other"
+- personnel: back/TE count e.g. "11","12","21","10" if countable, else null
+- receiver_alignment: "Trips Right","Twins Left","Bunch","2x2","3x1","Empty","Tight", null
+- motion: true/false, motion_type: "Jet","Orbit","Shift","Across","Return","None"
+- defensive_front: "4-3","3-4","4-2-5","Bear","Nickel","Dime","Goal Line","Even","Odd", null
+- coverage_shell: pre-snap shell ONLY (what the safeties show before the snap): "1-high","2-high","0-high","Quarters look","Press","Off", null
+- db_leverage: "Inside","Outside","Press","Off","Mixed", null — corner leverage on the receivers
+- lb_depth_tell: "Walked up","Stacked","Depth","Creeping", null
+- safety_depth_tell: "Rolled down","Deep middle","Two deep","Robber", null
+PRE-SNAP MICRO-TELLS — ONLY if the camera is tight enough to actually see a lineman's hand and stance. On a wide press-box or end-zone angle you CANNOT see these — set them to null and say so in blind_spot. Never invent them.
+- ol_stance: "Heavy (weight forward)","Light (weight back)","Balanced","Mixed", null
+- ol_hand_weight: "Knuckles white / loaded","Light fingertips","Hand off ground","Mixed", null
+- ol_splits: "Tight","Normal","Wide","Uneven", null
+- key_pre_snap_tell: one short phrase naming the single biggest pre-snap giveaway, or null
+- st_unit: "Punt","Kickoff","Field Goal","PAT","Two-Point","Onside Kick", null (special teams only)
+- confidence: 0-1, your confidence in THIS pre-snap read
+- blind_spot: what the camera/angle prevented you from seeing, or null
+
+Return ONLY JSON: {"plays": [{"play_index": 0, "frame": 1, "side": "offense", ...}]}
+If zero plays: {"plays": []}"""
+
+
+# PASS 2: given Pass 1's plays, read ONLY what happened AFTER the snap. Returns the
+# SAME plays (same play_index, same order) enriched — keeps the play set aligned.
+DETECTION_PROMPT_POSTSNAP = """You are the best post-snap film analyst alive. The frames below are the SAME consecutive moments of game film, in time order.
+
+A pre-snap pass already segmented the plays in this window. Here they are (match your reads to these by play_index — return the SAME plays, SAME play_index, SAME count, do not invent or drop any):
+
+{presnap_plays}
+
+YOUR ONLY JOB: for each play above, read what happened AFTER the snap from the at-snap and post-play frames. Use the SEQUENCE across frames, never a single still.
+
+For each play return:
+- play_index: echo the matching index from the list above (REQUIRED)
+- play_type: "Run","Pass","Screen","Draw","RPO","QB Run","Option","Punt","Field Goal","Kickoff","PAT","Two-Point", null
+- run_pass: "Run" | "Pass" | null (the fundamental call)
+- run_gap: "A","B","C","D/Edge", null  | run_direction: "Left","Right","Middle", null
+- run_concept: "Inside Zone","Outside Zone","Power","Counter","Trap","Duo","Sweep","Toss","Dive", null
+- pass_concept: "Slant-Flat","Mesh","Smash","Four Verts","Stick","Curl-Flat","Y-Cross","Screen", null
+- pass_depth: "Behind LOS","Short (1-9)","Intermediate (10-19)","Deep (20+)", null
+- target_area: "Left flat","Left seam","Middle","Right seam","Right flat","Backfield", null
+- is_play_action: true/false  | screen_subtype: "Bubble","Tunnel","RB Screen","Slip","Jailbreak", null
+- coverage: the coverage actually PLAYED after the snap (may differ from the shell): "Cover 0/1/2/3/4/6","Man","Zone","Match", null
+- blitz: true/false  | pressure_type: "A-gap","Edge","Corner","Zone blitz","None", null  | pressure_gap: "A","B","C","Edge", null
+- ball_carrier_jersey / primary_player_jersey: visible jersey number of the main ball-handler, or null
+- players: [{"jersey": "12", "role": "QB"}] for any clearly identifiable players, else []
+- result: "Gain","Loss","First Down","Touchdown","Incomplete","Sack","Turnover","No Gain","Made","Missed", null
+- yards_gained: integer if visibly clear from the frames, else null (a later step derives it from down progression)
+- st_unit / kick_direction / kick_result / return_scheme / fg_distance_yds / st_fake: special teams only, else null
+- confidence: 0-1, your confidence in THIS post-snap read
+
+Return ONLY JSON: {"plays": [{"play_index": 0, "play_type": ..., ...}]}"""
+
+
+# PASS 3: Opus adversarially verifies ONE low-confidence merged play.
+VERIFY_PROMPT = """You are the sharpest, most skeptical film reviewer in football. An automated system produced this play read from the frames below. Your job is to REFUTE or CONFIRM it — assume it may be wrong.
+
+Candidate read:
+{candidate}
+
+Look at the frames carefully. Correct any field you can clearly see is wrong, and ONLY change a field if the film actually supports a different value — otherwise leave it. Be honest about what the camera cannot show.
+
+Return ONLY JSON with the fields you are confident about plus a final judgment:
+{{"down": ..., "distance": ..., "formation": ..., "play_type": ..., "run_pass": ..., "coverage": ..., "result": ..., "yards_gained": ..., "confidence": 0.0, "verdict": "confirmed" | "corrected" | "unreadable", "note": "one short sentence on what you changed or why you trust it"}}
+Set confidence to your HONEST final confidence after looking. Use null for anything the film cannot support."""
 
 
 DETECTION_PROMPT_BASKETBALL = """You are the most thorough basketball film analyst in the world. Extract every possible piece of intelligence from each possession or event. Coaches depend on this data to build game plans.
@@ -475,6 +568,10 @@ class AiDetectWorker(BaseWorker):
                             "st_unit", "kick_direction", "kick_result", "return_scheme",
                             "coverage_result", "fg_distance_yds", "snap_quality",
                             "block_attempt", "st_fake",
+                            # Multi-pass engine (pre/post-snap split + Opus verify)
+                            "run_pass", "ball_carrier_jersey",
+                            "confidence_presnap", "confidence_postsnap",
+                            "verified", "verdict", "verify_note",
                         )
 
                         events = [
@@ -767,56 +864,142 @@ class AiDetectWorker(BaseWorker):
             logger.warning(f"[ai_detect] overlay crop failed for {path}: {e}")
         return blocks
 
-    async def _analyze_batch(self, batch, batch_idx: int, total_batches: int, sport: str = "football") -> list[dict]:
-        """Send a batch of (path, time_seconds) frames to Claude Vision.
-
-        The AI returns which FRAME each play is in; WE assign the real timestamp
-        from that frame — never trusting an AI-estimated time.
-        """
-        import anthropic
-
-        if not settings.ANTHROPIC_API_KEY:
-            raise ValueError("ANTHROPIC_API_KEY not set")
-
-        client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-
-        prompt = DETECTION_PROMPT_BASKETBALL if sport == "basketball" else DETECTION_PROMPT
-
+    def _frame_content(self, batch) -> list:
+        """Shared Claude content blocks for a batch (full frame + zoomed overlay
+        crops). Built once and reused across multi-pass calls — same images."""
         content = []
         for i, (path, t) in enumerate(batch):
             content.append({"type": "text", "text": f"Frame {i + 1} (timestamp {int(t)}s):"})
             content.extend(self._frame_blocks(path, i + 1))
+        return content
 
-        content.append({"type": "text", "text": prompt})
-
-        response = await client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=4096,
-            messages=[{"role": "user", "content": content}],
-        )
-        raw = response.content[0].text.strip()
+    @staticmethod
+    def _parse_json(raw: str) -> dict:
+        raw = (raw or "").strip()
         if "```" in raw:
             raw = raw.split("```")[1]
             if raw.startswith("json"):
                 raw = raw[4:]
+        try:
+            return json.loads(raw)
+        except Exception:
+            return {}
 
-        parsed = json.loads(raw)
-        plays = parsed.get("plays", [])
+    async def _vision_json(self, client, model: str, content: list, max_tokens: int = 4096) -> dict:
+        """One vision call -> parsed JSON dict ({} on parse failure)."""
+        response = await client.messages.create(
+            model=model, max_tokens=max_tokens,
+            messages=[{"role": "user", "content": content}],
+        )
+        return self._parse_json(response.content[0].text)
 
+    def _assign_times(self, plays: list, batch) -> list:
+        """Confidence-gate plays and stamp each with the REAL timestamp of the frame
+        the model picked — never an AI-estimated time."""
         out = []
-        tmin, tmax = batch[0][1], batch[-1][1]
         for p in plays:
             if p.get("confidence", 0) < MIN_CONFIDENCE:
                 continue
-            # Assign the REAL timestamp from the frame the AI picked.
             fr = p.get("frame")
             if isinstance(fr, (int, float)) and 1 <= int(fr) <= len(batch):
                 p["time_seconds"] = round(batch[int(fr) - 1][1])
             else:
-                # No valid frame ref — center it in this batch's real window.
                 p["time_seconds"] = round(batch[len(batch) // 2][1])
             out.append(p)
         return out
+
+    async def _analyze_batch(self, batch, batch_idx: int, total_batches: int, sport: str = "football") -> list[dict]:
+        """Route a batch of frames to Claude Vision. Football uses the multi-pass
+        engine (detect+pre-snap -> post-snap enrich -> Opus verify); other sports
+        use the single focused prompt."""
+        if not settings.ANTHROPIC_API_KEY:
+            raise ValueError("ANTHROPIC_API_KEY not set")
+        import anthropic
+        client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+
+        if MULTIPASS_ENABLED and sport in ("football", "flag_football"):
+            return await self._analyze_batch_multipass(client, batch, batch_idx)
+
+        prompt = DETECTION_PROMPT_BASKETBALL if sport == "basketball" else DETECTION_PROMPT
+        content = self._frame_content(batch) + [{"type": "text", "text": prompt}]
+        parsed = await self._vision_json(client, DETECT_MODEL, content)
+        return self._assign_times(parsed.get("plays", []), batch)
+
+    # Pre-snap fields handed to the post-snap pass as alignment context.
+    _PRESNAP_CTX_KEYS = (
+        "play_index", "frame", "side", "down", "distance", "field_position",
+        "formation", "personnel", "receiver_alignment", "st_unit",
+    )
+    # Fields the verify pass / post-snap pass may overwrite on a play.
+    _VERIFY_KEYS = ("down", "distance", "formation", "play_type", "run_pass",
+                    "coverage", "result", "yards_gained")
+
+    async def _analyze_batch_multipass(self, client, batch, batch_idx: int) -> list[dict]:
+        """Three-pass football detection. Pass 1 (pre-snap) segments + reads the
+        pre-snap picture; Pass 2 (post-snap) enriches the SAME plays by play_index;
+        Pass 3 (Opus) adversarially verifies only the low-confidence merges."""
+        frames = self._frame_content(batch)
+
+        # Pass 1 — detect + pre-snap
+        p1 = await self._vision_json(client, DETECT_MODEL,
+                                     frames + [{"type": "text", "text": DETECTION_PROMPT_PRESNAP}])
+        pre = p1.get("plays", [])
+        if not pre:
+            return []
+        for i, pl in enumerate(pre):
+            pl.setdefault("play_index", i)
+
+        # Pass 2 — post-snap enrich, anchored to pass-1 plays
+        ctx = json.dumps([{k: pl.get(k) for k in self._PRESNAP_CTX_KEYS} for pl in pre], default=str)
+        p2 = {}
+        try:
+            post_resp = await self._vision_json(
+                client, DETECT_MODEL,
+                frames + [{"type": "text", "text": DETECTION_PROMPT_POSTSNAP.replace("{presnap_plays}", ctx)}])
+            p2 = {pl.get("play_index"): pl for pl in post_resp.get("plays", []) if pl.get("play_index") is not None}
+        except Exception as e:
+            logger.warning(f"[ai_detect] post-snap pass failed batch {batch_idx}: {e}")
+
+        # Merge: post-snap fields layer onto the pre-snap play; confidence = mean.
+        merged = []
+        for pl in pre:
+            post = p2.get(pl.get("play_index"), {})
+            m = dict(pl)
+            for k, v in post.items():
+                if v is not None and k != "play_index":
+                    m[k] = v
+            c_pre = float(pl.get("confidence") or 0.7)
+            c_post = post.get("confidence")
+            m["confidence_presnap"] = c_pre
+            m["confidence_postsnap"] = c_post
+            m["confidence"] = round((c_pre + float(c_post)) / 2, 2) if c_post is not None else c_pre
+            merged.append(m)
+
+        # Pass 3 — Opus verifies the shakiest reads (capped for cost)
+        weak = sorted((m for m in merged if m["confidence"] < VERIFY_CONFIDENCE_THRESHOLD),
+                      key=lambda m: m["confidence"])[:MAX_VERIFY_PER_BATCH]
+        for m in weak:
+            cand = json.dumps({k: m.get(k) for k in self._VERIFY_KEYS}, default=str)
+            try:
+                v = await self._vision_json(
+                    client, VERIFY_MODEL,
+                    frames + [{"type": "text", "text": VERIFY_PROMPT.format(candidate=cand)}],
+                    max_tokens=1024)
+            except Exception as e:
+                logger.warning(f"[ai_detect] verify pass failed batch {batch_idx}: {e}")
+                continue
+            if not v:
+                continue
+            for k in self._VERIFY_KEYS:
+                if v.get(k) is not None:
+                    m[k] = v[k]
+            if v.get("confidence") is not None:
+                m["confidence"] = round(float(v["confidence"]), 2)
+            m["verified"] = True
+            m["verdict"] = v.get("verdict")
+            m["verify_note"] = v.get("note")
+
+        return self._assign_times(merged, batch)
 
     def _derive_from_sequence(self, plays: list[dict]) -> list[dict]:
         """Fill yards_gained / result from the down-and-distance progression.
