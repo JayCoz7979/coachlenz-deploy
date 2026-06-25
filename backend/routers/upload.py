@@ -16,6 +16,11 @@ router = APIRouter(prefix="/upload", tags=["upload"])
 
 MAX_FILE_SIZE = 20 * 1024 * 1024 * 1024  # 20GB
 
+
+@router.get("/__ping")
+async def _deploy_ping():
+    return {"marker": "proxy-upload-v1"}
+
 class UploadRequest(BaseModel):
     game_id: str
     file_name: str
