@@ -113,6 +113,15 @@ OFFENSE DEEP EXTRACTION:
 - screen_subtype: if this is a screen pass — "RB Screen" | "WR Screen" | "TE Screen" | "Bubble Screen" | "Slip Screen" | "Tunnel Screen" | null
 - goal_line: true if the offense is inside the opponent's 5-yard line, false otherwise
 
+PRE-SNAP MICRO-TELLS (ONLY when the camera is tight enough to actually see the linemen up close — All-22 / end-zone / sideline coaches' film. If the shot is a wide press-box angle where linemen are tiny, set ALL of these to null — do NOT guess):
+- ol_stance: offensive line's dominant stance — "Heavy 3-Point" (weight forward, run lean), "Light 3-Point", "2-Point" (pass lean), "Mixed", null
+- ol_hand_weight: weight on the down linemen's hands — "Heavy/Forward" (run lean), "Balanced", "Light/Back" (pass lean), null
+- ol_splits: offensive line splits — "Tight", "Normal", "Wide", null
+- key_pre_snap_tell: ONE sentence naming the single most telling pre-snap cue you can actually see (e.g. "Right guard in a heavy stance, weight rolled forward onto his hand, leaning into the run"), or null
+- db_leverage: primary corner leverage on the key matchup — "Inside", "Outside", "Head-up", null
+- lb_depth_tell: linebacker depth / movement — "Walked Up", "Stacked Tight", "Off/Depth", "Creeping (blitz tell)", null
+- safety_depth_tell: pre-snap safety depth — "Single-High Deep", "Two-High Deep", "Rolled Down", "Cheating Down (run/blitz tell)", null
+
 DEFENSE DEEP EXTRACTION:
 - defensive_front: "4-3", "3-4", "4-2-5", "3-3-5", "4-4", "5-2", "Nickel", "Dime", "Goal Line", "Bear", "Okie", null
 - coverage: "Cover 0", "Cover 1", "Cover 2", "Cover 2 Man", "Cover 3", "Cover 4", "Cover 6", "Man", "Zone", "Tampa 2", null
@@ -140,7 +149,7 @@ SPECIAL TEAMS DEEP EXTRACTION (when side=special_teams):
 - st_fake: true if this kicking down turned into a fake/trick (fake punt, fake FG, pooch, surprise onside), false otherwise
 
 Return ONLY valid JSON, nothing else:
-{"plays": [{"side": "offense", "frame": 1, "down": null, "distance": null, "field_position": null, "formation": null, "play_type": null, "personnel": null, "result": null, "yards_gained": null, "confidence": 0.8, "blind_spot": null, "hash_position": null, "motion": false, "motion_type": null, "receiver_alignment": null, "run_direction": null, "run_gap": null, "run_concept": null, "pass_concept": null, "pass_depth": null, "target_area": null, "tempo": null, "score_situation": null, "play_description": null, "is_play_action": false, "screen_subtype": null, "goal_line": false, "defensive_front": null, "coverage": null, "coverage_shell": null, "safety_rotation": null, "corner_technique": null, "blitz": null, "pressure_type": null, "pressure_gap": null, "linebacker_alignment": null, "players": [], "primary_player_jersey": null, "st_unit": null, "kick_direction": null, "kick_result": null, "return_scheme": null, "coverage_result": null, "fg_distance_yds": null, "snap_quality": null, "block_attempt": false, "st_fake": false}]}
+{"plays": [{"side": "offense", "frame": 1, "down": null, "distance": null, "field_position": null, "formation": null, "play_type": null, "personnel": null, "result": null, "yards_gained": null, "confidence": 0.8, "blind_spot": null, "hash_position": null, "motion": false, "motion_type": null, "receiver_alignment": null, "run_direction": null, "run_gap": null, "run_concept": null, "pass_concept": null, "pass_depth": null, "target_area": null, "tempo": null, "score_situation": null, "play_description": null, "is_play_action": false, "screen_subtype": null, "goal_line": false, "defensive_front": null, "coverage": null, "coverage_shell": null, "safety_rotation": null, "corner_technique": null, "blitz": null, "pressure_type": null, "pressure_gap": null, "linebacker_alignment": null, "ol_stance": null, "ol_hand_weight": null, "ol_splits": null, "key_pre_snap_tell": null, "db_leverage": null, "lb_depth_tell": null, "safety_depth_tell": null, "players": [], "primary_player_jersey": null, "st_unit": null, "kick_direction": null, "kick_result": null, "return_scheme": null, "coverage_result": null, "fg_distance_yds": null, "snap_quality": null, "block_attempt": false, "st_fake": false}]}
 
 If zero plays: {"plays": []}"""
 
@@ -453,6 +462,9 @@ class AiDetectWorker(BaseWorker):
                             "clutch_situation", "foul_drawn_action",
                             # Football moat fields
                             "is_play_action", "screen_subtype", "goal_line",
+                            # Pre-snap micro-tells (tight/All-22 film)
+                            "ol_stance", "ol_hand_weight", "ol_splits", "key_pre_snap_tell",
+                            "db_leverage", "lb_depth_tell", "safety_depth_tell",
                             # Single-camera transparency (all sports)
                             "blind_spot",
                             # Player-level tracking (all sports)

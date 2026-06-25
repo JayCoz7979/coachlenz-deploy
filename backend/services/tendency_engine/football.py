@@ -1022,6 +1022,42 @@ def _pre_snap_tell_matrix(plays) -> list:
     return result[:10]
 
 
+def _micro_tell_analysis(plays) -> Dict[str, Any]:
+    """Pre-snap micro-tells → run/pass predictive value. The film-room edge:
+    'when the O-line shows heavy hands, they run 85% of the time.' Only populates
+    on tight film where the model could actually read stance/hand weight."""
+    tells = {}
+    for field, label in (("ol_hand_weight", "hand_weight"), ("ol_stance", "stance"), ("ol_splits", "splits")):
+        by_val = defaultdict(list)
+        for e in plays:
+            v = _x(e, field)
+            if v and (_is_run(e) or _is_pass(e)):
+                by_val[v].append(e)
+        detail = {}
+        for v, ps in sorted(by_val.items(), key=lambda x: -len(x[1])):
+            runs = [p for p in ps if _is_run(p)]
+            passes = [p for p in ps if _is_pass(p)]
+            rp = len(runs) + len(passes)
+            detail[v] = {
+                "count": len(ps),
+                "run_pct": round(len(runs) / rp * 100, 1) if rp else 0,
+                "pass_pct": round(len(passes) / rp * 100, 1) if rp else 0,
+            }
+        if detail:
+            tells[label] = detail
+
+    with_tell = [e for e in plays if _x(e, "ol_hand_weight") or _x(e, "ol_stance") or _x(e, "key_pre_snap_tell")]
+    return {
+        "plays_with_a_tell": len(with_tell),
+        "coverage_pct": round(len(with_tell) / len(plays) * 100, 1) if plays else 0,
+        "ol_tells_vs_run_pass": tells,
+        "key_tell_examples": [_x(e, "key_pre_snap_tell") for e in plays if _x(e, "key_pre_snap_tell")][:6],
+        "db_leverage": dict(Counter(_x(e, "db_leverage") for e in plays if _x(e, "db_leverage")).most_common()),
+        "lb_depth_tells": dict(Counter(_x(e, "lb_depth_tell") for e in plays if _x(e, "lb_depth_tell")).most_common()),
+        "safety_depth_tells": dict(Counter(_x(e, "safety_depth_tell") for e in plays if _x(e, "safety_depth_tell")).most_common()),
+    }
+
+
 def analyze_football(events) -> Dict[str, Any]:
     plays = [e for e in events if _is_play(e)]
     total = len(plays)
@@ -1120,6 +1156,7 @@ def analyze_football(events) -> Dict[str, Any]:
         "third_down_by_distance": _third_down_by_distance(plays),
         "two_minute_drill": _two_minute_drill(plays),
         "pre_snap_tells": _pre_snap_tell_matrix(plays),
+        "micro_tells": _micro_tell_analysis(plays),
     }
 
 
