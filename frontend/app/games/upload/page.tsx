@@ -4,7 +4,6 @@ import Sidebar from '@/components/layout/Sidebar'
 import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
 import { useRouter, useSearchParams } from 'next/navigation'
-import axios from 'axios'
 import { Suspense } from 'react'
 
 const SPORTS = ['football','flag_football','basketball','baseball','softball','volleyball','soccer']
@@ -99,11 +98,16 @@ function UploadPageInner() {
         team_id: form.team_id || undefined,
         is_home: form.is_home === '' ? undefined : form.is_home === 'true',
       })
-      await axios.put(gameRes.data.upload_url, file, {
-        headers: { 'Content-Type': file.type || 'video/mp4' },
+      // Proxy upload through the backend (no browser->R2 PUT, so no R2 CORS needed).
+      const fd = new FormData()
+      fd.append('file', file)
+      await api.post(`/upload/file?game_id=${gameRes.data.id}`, fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 0,
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
         onUploadProgress: (ev) => setProgress(Math.round((ev.loaded / (ev.total || 1)) * 100)),
       })
-      await api.post(`/upload/complete?game_id=${gameRes.data.id}`)
       router.push('/games')
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Upload failed')

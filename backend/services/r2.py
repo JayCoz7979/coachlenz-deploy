@@ -44,6 +44,22 @@ def generate_presigned_upload_url(key: str, content_type: str = "video/mp4") -> 
     return {"upload_url": url, "key": key}
 
 
+def upload_fileobj(key: str, fileobj, content_type: str = "video/mp4"):
+    """Stream a file-like object straight to R2 server-side (multipart under the
+    hood — bounded memory). Used by the proxy-upload endpoint so the browser never
+    has to PUT to R2 directly, sidestepping the need for R2 bucket CORS."""
+    if _use_local():
+        os.makedirs(LOCAL_STORAGE_DIR, exist_ok=True)
+        save_local_file(key, fileobj.read())
+        return {"key": key}
+    client = get_r2_client()
+    client.upload_fileobj(
+        fileobj, settings.R2_BUCKET_NAME, key,
+        ExtraArgs={"ContentType": content_type},
+    )
+    return {"key": key}
+
+
 def generate_presigned_download_url(key: str, expires_in: int = 604800) -> str:
     if _use_local():
         return f"{_base_url()}/files/{key}"
