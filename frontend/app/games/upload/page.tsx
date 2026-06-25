@@ -102,7 +102,7 @@ function UploadPageInner() {
       const fd = new FormData()
       fd.append('file', file)
       await api.post(`/upload/file?game_id=${gameRes.data.id}`, fd, {
-        headers: { 'Content-Type': 'multipart/form-data' },
+        // Let axios set multipart/form-data WITH the boundary — do not set it manually.
         timeout: 0,
         maxContentLength: Infinity,
         maxBodyLength: Infinity,
