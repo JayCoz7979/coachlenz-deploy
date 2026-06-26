@@ -9,6 +9,7 @@ from backend.models.base import get_db
 from backend.models.user import User
 from backend.models.organization import Organization
 from backend.models.game import Game
+from backend.models.job import Job
 from backend.services.auth import get_current_user, get_current_org
 from backend.services.r2 import generate_presigned_upload_url, upload_fileobj
 
@@ -62,7 +63,11 @@ async def upload_file_proxy(
         await run_in_threadpool(upload_fileobj, key, file.file, file.content_type or "video/mp4")
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Storage upload failed: {e}")
+    # File is now in R2 — set the key and enqueue ingest AFTER the upload, so the
+    # ingest worker probes a file that actually exists (the POST /games ingest job
+    # races ahead of the upload and fails the r2_key check).
     await db.execute(update(Game).where(Game.id == game_id).values(r2_key=key, status="processing"))
+    db.add(Job(organization_id=org.id, job_type="ingest", payload={"game_id": str(game_id)}))
     await db.commit()
     return {"ok": True, "key": key, "status": "processing"}
 

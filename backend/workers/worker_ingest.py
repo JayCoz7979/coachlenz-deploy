@@ -45,6 +45,13 @@ class IngestWorker(BaseWorker):
                     duration_seconds=int(duration),
                 )
             )
+            # Auto-chain detection so an uploaded game analyzes itself end-to-end
+            # (upload -> ingest -> ready -> multi-pass detection) with no extra click.
+            db.add(Job(
+                organization_id=game.organization_id,
+                job_type="ai_detect",
+                payload={"game_id": str(game_id), "dry_run": False},
+            ))
             await db.commit()
 
         return {"game_id": game_id, "duration_seconds": int(duration)}
