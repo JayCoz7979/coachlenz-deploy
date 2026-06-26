@@ -50,7 +50,9 @@ class IngestWorker(BaseWorker):
             db.add(Job(
                 organization_id=game.organization_id,
                 job_type="ai_detect",
-                payload={"game_id": str(game_id), "dry_run": False},
+                # Default auto-runs to the cheap single-pass engine; users opt into
+                # the 3x-cost deep engine explicitly from the game page.
+                payload={"game_id": str(game_id), "dry_run": False, "detection_mode": "fast"},
             ))
             await db.commit()
 

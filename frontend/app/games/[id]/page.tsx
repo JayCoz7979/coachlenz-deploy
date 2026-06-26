@@ -640,14 +640,18 @@ export default function GamePage() {
 
   useEffect(() => () => { if (detectPollRef.current) clearInterval(detectPollRef.current) }, [])
 
-  const handleAutoDetect = async (dryRun = false) => {
+  const handleAutoDetect = async (dryRun = false, mode: 'fast' | 'deep' = 'fast') => {
     try {
       setAgentLog([])
-      await api.post(`/games/${id}/auto-detect${dryRun ? '?dry_run=true' : ''}`)
+      const qs = new URLSearchParams()
+      if (dryRun) qs.set('dry_run', 'true')
+      qs.set('mode', mode)
+      await api.post(`/games/${id}/auto-detect?${qs.toString()}`)
       const r = await api.get(`/games/${id}/auto-detect/status`)
       setDetectStatus(r.data)
       startDetectPoll()
-      showToast(dryRun ? 'Dry run started (no plays will be saved)…' : 'AI play detection started…')
+      showToast(dryRun ? 'Dry run started (no plays will be saved)…'
+        : mode === 'deep' ? 'Deep 3-pass analysis started…' : 'AI play detection started…')
     } catch (e: any) {
       showToast(e?.response?.data?.detail ?? 'Failed to start detection')
     }
@@ -833,19 +837,31 @@ export default function GamePage() {
                   <Zap size={15} style={{ color: '#C9A84C', flexShrink: 0 }} />
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 13, fontWeight: 600, color: '#f8f6f0' }}>Auto-detect plays with AI</div>
-                    <div style={{ fontSize: 11, color: '#7a7a6e' }}>Claude Vision scans the film and tags every play automatically — usually under 5 minutes.</div>
+                    <div style={{ fontSize: 11, color: '#7a7a6e' }}>Claude Vision scans the film and tags every play. <b style={{ color: '#a8a89a' }}>Fast</b> = quick &amp; economical. <b style={{ color: '#C9A84C' }}>Deep</b> = 3-pass engine (pre-snap, post-snap, verify) — richest read, ~3x the cost.</div>
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
-                    <button
-                      onClick={() => handleAutoDetect()}
-                      style={{
-                        background: '#C9A84C', color: '#1c1c1c', border: 'none', borderRadius: 4,
-                        padding: '8px 16px', fontSize: 12, fontWeight: 700, cursor: 'pointer',
-                        letterSpacing: '0.06em',
-                      }}
-                    >
-                      AUTO-DETECT
-                    </button>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button
+                        onClick={() => handleAutoDetect(false, 'fast')}
+                        title="Single-pass detection — quick and economical."
+                        style={{
+                          background: '#2e2e28', color: '#f0eee6', border: '1px solid #44443c', borderRadius: 4,
+                          padding: '8px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer', letterSpacing: '0.06em',
+                        }}
+                      >
+                        FAST
+                      </button>
+                      <button
+                        onClick={() => handleAutoDetect(false, 'deep')}
+                        title="Three-pass engine: pre-snap read, post-snap enrichment, and Opus verification. Richest analysis, ~3x cost."
+                        style={{
+                          background: '#C9A84C', color: '#1c1c1c', border: 'none', borderRadius: 4,
+                          padding: '8px 16px', fontSize: 12, fontWeight: 700, cursor: 'pointer', letterSpacing: '0.06em',
+                        }}
+                      >
+                        DEEP · 3-PASS
+                      </button>
+                    </div>
                     <button
                       onClick={() => handleAutoDetect(true)}
                       title="Run a dry run — the AI analyzes the film and shows what it would tag, without saving anything."

@@ -350,6 +350,10 @@ class AiDetectWorker(BaseWorker):
         game_id = payload["game_id"]
         dry_run = bool(payload.get("dry_run"))
         job_id = payload.get("_job_id")
+        # "fast" = single focused pass (~1x cost), "deep" = 3-pass engine (~3x cost).
+        # Default fast to protect API spend; deep is opt-in for games that matter.
+        mode = (payload.get("detection_mode") or "fast").lower()
+        self._multipass = MULTIPASS_ENABLED and mode == "deep"
         return await self._detect_plays(game_id, dry_run=dry_run, job_id=job_id)
 
     async def _detect_plays(self, game_id: str, dry_run: bool = False, job_id=None) -> dict:
@@ -917,7 +921,8 @@ class AiDetectWorker(BaseWorker):
         import anthropic
         client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
 
-        if MULTIPASS_ENABLED and sport in ("football", "flag_football"):
+        # Per-run flag set from the job's detection_mode (falls back to the global).
+        if getattr(self, "_multipass", MULTIPASS_ENABLED) and sport in ("football", "flag_football"):
             return await self._analyze_batch_multipass(client, batch, batch_idx)
 
         prompt = DETECTION_PROMPT_BASKETBALL if sport == "basketball" else DETECTION_PROMPT
