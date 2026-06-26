@@ -807,8 +807,11 @@ export default function GamePage() {
                     {detectStatus.plays_detected} plays auto-detected
                   </span>
                   <span style={{ color: '#7a7a6e', marginLeft: 4 }}>— review in the Play Log, edit any you need.</span>
-                  <button onClick={() => handleAutoDetect()} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#7a7a6e', fontSize: 11, cursor: 'pointer' }}>
-                    Re-run
+                  <button onClick={() => handleAutoDetect(false, 'fast')} title="Quick single-pass re-run." style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#7a7a6e', fontSize: 11, cursor: 'pointer' }}>
+                    Re-run Fast
+                  </button>
+                  <button onClick={() => handleAutoDetect(false, 'deep')} title="Three-pass engine: pre-snap, post-snap, and Opus verify. Richest read, higher confidence, ~3x cost." style={{ background: '#C9A84C', color: '#1c1c1c', border: 'none', borderRadius: 4, padding: '5px 12px', fontSize: 11, fontWeight: 700, cursor: 'pointer', letterSpacing: '0.04em' }}>
+                    DEEP · 3-PASS
                   </button>
                 </div>
               )
@@ -821,8 +824,11 @@ export default function GamePage() {
                 }}>
                   <AlertCircle size={14} style={{ color: '#e07070' }} />
                   <span style={{ color: '#e07070' }}>Auto-detection failed. Tag plays manually or </span>
-                  <button onClick={() => handleAutoDetect()} style={{ background: 'none', border: 'none', color: '#C9A84C', fontSize: 13, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
-                    try again
+                  <button onClick={() => handleAutoDetect(false, 'fast')} style={{ background: 'none', border: 'none', color: '#C9A84C', fontSize: 13, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
+                    try again (Fast)
+                  </button>
+                  <button onClick={() => handleAutoDetect(false, 'deep')} style={{ background: 'none', border: 'none', color: '#C9A84C', fontSize: 13, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
+                    or Deep · 3-pass
                   </button>
                 </div>
               )
