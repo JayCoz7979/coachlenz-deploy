@@ -586,6 +586,8 @@ export default function GamePage() {
     error: string | null
   }>(null)
   const [agentLog, setAgentLog] = useState<AgentLogEntry[]>([])
+  const [scorecard, setScorecard] = useState<any>(null)
+  const [accuracy, setAccuracy] = useState<any>(null)
   const detectPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => { fetchMe() }, [])
@@ -603,6 +605,7 @@ export default function GamePage() {
       }
     }).catch(() => {})
     fetchAgentLog()
+    fetchScorecard()
   }, [user, id])
 
   const fetchAgentLog = async () => {
@@ -610,6 +613,11 @@ export default function GamePage() {
       const r = await api.get(`/games/${id}/agent-log`)
       setAgentLog(r.data.entries || [])
     } catch {}
+  }
+
+  const fetchScorecard = async () => {
+    try { const r = await api.get(`/games/${id}/coverage`); setScorecard(r.data) } catch {}
+    try { const r = await api.get(`/games/${id}/accuracy`); setAccuracy(r.data) } catch {}
   }
 
   const startDetectPoll = () => {
@@ -626,6 +634,7 @@ export default function GamePage() {
           // Reload events
           const evRes = await api.get(`/events?game_id=${id}`)
           setEvents(evRes.data)
+          fetchScorecard()
           if (r.data.dry_run) {
             showToast('Dry run complete — no plays were saved')
           } else if (r.data.plays_detected > 0) {
@@ -879,6 +888,54 @@ export default function GamePage() {
                 </div>
               )
             })()}
+
+            {/* Detection scorecard — how complete and confident the read is (+ accuracy vs tagged plays) */}
+            {scorecard?.ready && (
+              <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6, padding: '14px 16px', marginBottom: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                  <Activity size={14} style={{ color: '#C9A84C' }} />
+                  <span style={{ fontSize: 13, fontWeight: 700, color: '#f8f6f0' }}>Detection Scorecard</span>
+                  <span style={{ fontSize: 11, color: '#7a7a6e', marginLeft: 'auto' }}>
+                    {scorecard.plays} plays · {scorecard.confident_pct}% confident
+                  </span>
+                </div>
+                <div style={{ display: 'flex', gap: 16, marginBottom: 12, flexWrap: 'wrap' }}>
+                  <div><div style={{ fontSize: 20, fontWeight: 700, color: '#2d8c40' }}>{scorecard.confident}</div><div style={{ fontSize: 10, color: '#7a7a6e' }}>confident</div></div>
+                  <div><div style={{ fontSize: 20, fontWeight: 700, color: '#e0a050' }}>{scorecard.flagged_for_review}</div><div style={{ fontSize: 10, color: '#7a7a6e' }}>flagged for review</div></div>
+                  <div><div style={{ fontSize: 20, fontWeight: 700, color: '#f8f6f0' }}>{scorecard.avg_confidence}</div><div style={{ fontSize: 10, color: '#7a7a6e' }}>avg confidence</div></div>
+                  <div><div style={{ fontSize: 20, fontWeight: 700, color: '#f8f6f0' }}>{scorecard.side_split?.offense}/{scorecard.side_split?.defense}/{scorecard.side_split?.special_teams}</div><div style={{ fontSize: 10, color: '#7a7a6e' }}>off / def / ST</div></div>
+                </div>
+                <div style={{ fontSize: 11, color: '#a8a89a', marginBottom: 6 }}>Field coverage (how often each detail was read)</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 6 }}>
+                  {Object.entries(scorecard.fill_rates || {}).map(([k, v]: any) => (
+                    <div key={k} style={{ fontSize: 11 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', color: '#b8b8aa' }}>
+                        <span>{k.replace(/_/g, ' ')}</span><span style={{ color: v >= 70 ? '#2d8c40' : v >= 40 ? '#e0a050' : '#e07070' }}>{v}%</span>
+                      </div>
+                      <div style={{ height: 4, background: 'rgba(255,255,255,0.08)', borderRadius: 2, marginTop: 2 }}>
+                        <div style={{ height: 4, width: `${v}%`, background: v >= 70 ? '#2d8c40' : v >= 40 ? '#e0a050' : '#e07070', borderRadius: 2 }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {scorecard.weakest_fields?.length > 0 && (
+                  <div style={{ fontSize: 10, color: '#7a7a6e', marginTop: 8 }}>Weakest reads: {scorecard.weakest_fields.join(', ')} — verify these in the Play Log.</div>
+                )}
+                {accuracy?.ready ? (
+                  <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                    <div style={{ fontSize: 11, color: '#a8a89a', marginBottom: 4 }}>Accuracy vs your tagged plays</div>
+                    <div style={{ display: 'flex', gap: 16, fontSize: 12, color: '#f0eee6' }}>
+                      <span><b style={{ color: '#C9A84C' }}>{accuracy.recall_pct}%</b> recall ({accuracy.matched}/{accuracy.truth_plays} real plays caught)</span>
+                      <span><b style={{ color: '#C9A84C' }}>{accuracy.precision_pct}%</b> precision</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 10, color: '#7a7a6e', marginTop: 10, paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                    Want a true accuracy score? Tag this game's plays manually (ground truth), then re-open this card for recall and precision vs your tags.
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* UATP live activity panel — coach sees the agent work in real time */}
             <AgentActivityPanel

@@ -97,6 +97,66 @@ async def accuracy_benchmark(
     }
 
 
+# Fields whose fill rate we score, and whether they live on the column or in extra_data.
+_COVERAGE_FIELDS = [
+    ("down", False), ("distance", False), ("formation", False), ("play_type", False),
+    ("result", False), ("field_position", False), ("personnel", False),
+    ("coverage", False), ("defensive_front", False),
+]
+
+
+@router.get("/{game_id}/coverage")
+async def coverage_scorecard(
+    game_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Instant detection scorecard, no manual tagging required. Reports how complete
+    the AI reads are (fill rate per field) and how confident (confident vs flagged),
+    so a coach can judge a game's data quality before game-planning around it."""
+    res = await db.execute(
+        select(Event).where(Event.game_id == game_id, Event.organization_id == user.organization_id)
+    )
+    events = [e for e in res.scalars().all() if _is_ai(e)]
+    n = len(events)
+    if not n:
+        return {"ready": False, "reason": "No AI-detected plays yet. Run auto-detect first.", "plays": 0}
+
+    def filled(attr, in_extra):
+        c = 0
+        for e in events:
+            v = (e.extra_data or {}).get(attr) if in_extra else getattr(e, attr, None)
+            if v not in (None, "", [], {}):
+                c += 1
+        return round(c / n * 100, 1)
+
+    fill_rates = {attr: filled(attr, in_extra) for attr, in_extra in _COVERAGE_FIELDS}
+
+    confs = [float((e.extra_data or {}).get("confidence") or 0) for e in events]
+    avg_conf = round(sum(confs) / n, 2)
+    flagged = sum(1 for e in events if (e.extra_data or {}).get("needs_review"))
+    confident = n - flagged
+
+    def side_of(e):
+        return (e.side or "offense")
+    sides = {s: sum(1 for e in events if side_of(e) == s) for s in ("offense", "defense", "special_teams")}
+
+    # Weakest fields surface what to fix first.
+    weakest = sorted(fill_rates.items(), key=lambda kv: kv[1])[:3]
+
+    return {
+        "ready": True,
+        "plays": n,
+        "fill_rates": fill_rates,
+        "avg_confidence": avg_conf,
+        "confident": confident,
+        "flagged_for_review": flagged,
+        "confident_pct": round(confident / n * 100, 1),
+        "side_split": sides,
+        "weakest_fields": [k for k, _ in weakest],
+    }
+
+
 @router.post("/{game_id}/auto-detect")
 async def trigger_auto_detect(
     game_id: str,
