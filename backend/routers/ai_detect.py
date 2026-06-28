@@ -105,6 +105,50 @@ _COVERAGE_FIELDS = [
 ]
 
 
+@router.post("/{game_id}/rederive-downs")
+async def rederive_downs(
+    game_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Propagate down & distance across each drive from the anchors already present
+    (coach tags or AI reads), filling in the gaps. Only fills missing values."""
+    from backend.services.derive_downs import fill_down_distance
+
+    res = await db.execute(
+        select(Event)
+        .where(Event.game_id == game_id, Event.organization_id == user.organization_id)
+        .order_by(Event.time_seconds.asc())
+    )
+    events = list(res.scalars().all())
+    if not events:
+        raise HTTPException(status_code=404, detail="No plays on this game yet")
+
+    rows = [{
+        "side": e.side, "down": e.down, "distance": e.distance,
+        "yards_gained": e.yards_gained,
+    } for e in events]
+
+    filled = fill_down_distance(rows)
+
+    # Write the filled values back to the events.
+    for e, r in zip(events, rows):
+        if e.down is None and r.get("down") is not None:
+            e.down = r["down"]
+        if e.distance is None and r.get("distance") is not None:
+            e.distance = r["distance"]
+    await db.commit()
+
+    with_dd = sum(1 for e in events if e.down is not None and e.distance is not None)
+    return {
+        "ok": True,
+        "fields_filled": filled,
+        "plays": len(events),
+        "plays_with_down_distance": with_dd,
+        "down_distance_coverage_pct": round(with_dd / len(events) * 100, 1),
+    }
+
+
 @router.get("/{game_id}/coverage")
 async def coverage_scorecard(
     game_id: str,

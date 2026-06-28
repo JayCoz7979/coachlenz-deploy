@@ -620,6 +620,17 @@ export default function GamePage() {
     try { const r = await api.get(`/games/${id}/accuracy`); setAccuracy(r.data) } catch {}
   }
 
+  const handleRederiveDowns = async () => {
+    try {
+      const r = await api.post(`/games/${id}/rederive-downs`)
+      const ev = await api.get(`/events?game_id=${id}`); setEvents(ev.data)
+      fetchScorecard()
+      showToast(`Filled ${r.data.fields_filled} down/distance values — ${r.data.down_distance_coverage_pct}% of plays now have down & distance`)
+    } catch (e: any) {
+      showToast(e?.response?.data?.detail ?? 'Could not fill downs')
+    }
+  }
+
   const startDetectPoll = () => {
     if (detectPollRef.current) return
     detectPollRef.current = setInterval(async () => {
@@ -921,6 +932,12 @@ export default function GamePage() {
                 {scorecard.weakest_fields?.length > 0 && (
                   <div style={{ fontSize: 10, color: '#7a7a6e', marginTop: 8 }}>Weakest reads: {scorecard.weakest_fields.join(', ')} — verify these in the Play Log.</div>
                 )}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10 }}>
+                  <button onClick={handleRederiveDowns} title="Propagate down & distance across each drive from the plays you've already tagged. Tag the 1st & 10 that starts a drive, then fill the rest automatically." style={{ background: '#2e2e28', color: '#f0eee6', border: '1px solid #44443c', borderRadius: 4, padding: '6px 12px', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
+                    Auto-fill down &amp; distance
+                  </button>
+                  <span style={{ fontSize: 10, color: '#7a7a6e' }}>Tag the first play of a drive (e.g. 1st &amp; 10), then click to chain the rest from each play's yardage.</span>
+                </div>
                 {accuracy?.ready ? (
                   <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
                     <div style={{ fontSize: 11, color: '#a8a89a', marginBottom: 4 }}>Accuracy vs your tagged plays</div>
