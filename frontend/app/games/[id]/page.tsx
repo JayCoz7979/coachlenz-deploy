@@ -628,7 +628,7 @@ export default function GamePage() {
       await api.patch(`/games/${id}`, { scout_jersey: scoutJersey, opponent_jersey: oppJersey })
       setJerseySaved(true)
       setTimeout(() => setJerseySaved(false), 2500)
-      showToast('Team colors saved — re-run detection so the AI applies them')
+      showToast('Saved. Run detection (or Quick Test) and the breakdown will be on that team.')
     } catch {
       showToast('Could not save team colors')
     }
@@ -930,23 +930,23 @@ export default function GamePage() {
 
             {/* Team attribution — jersey colors so the AI knows which team is which */}
             <div style={{ background: 'rgba(201,168,76,0.06)', border: '1px solid rgba(201,168,76,0.25)', borderRadius: 6, padding: '12px 16px', marginBottom: 12 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: '#f8f6f0', marginBottom: 2 }}>Team colors (which team to scout)</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#f8f6f0', marginBottom: 2 }}>Which team do you want the breakdown on?</div>
               <div style={{ fontSize: 11, color: '#a8a89a', marginBottom: 8 }}>
-                Tell the AI what each team wears so the tendencies are about the right team. Set these, then re-run detection.
+                The AI needs to tell the two teams apart. Just type each team's jersey color (10 seconds), then run detection. The first box is the team you'll get the scouting report on.
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
                 <div style={{ flex: 1, minWidth: 160 }}>
-                  <label style={{ fontSize: 10, color: '#7a7a6e' }}>Your team (scouted)</label>
-                  <input value={scoutJersey} onChange={e => setScoutJersey(e.target.value)} placeholder="white jerseys, navy helmets"
+                  <label style={{ fontSize: 10, color: '#C9A84C', fontWeight: 700 }}>Team you want the report on — their jersey</label>
+                  <input value={scoutJersey} onChange={e => setScoutJersey(e.target.value)} placeholder="e.g. green jerseys"
                     style={{ width: '100%', background: '#2a2a24', border: '1px solid #44443c', borderRadius: 4, padding: '6px 10px', fontSize: 12, color: '#f0eee6' }} />
                 </div>
                 <div style={{ flex: 1, minWidth: 160 }}>
-                  <label style={{ fontSize: 10, color: '#7a7a6e' }}>Opponent</label>
-                  <input value={oppJersey} onChange={e => setOppJersey(e.target.value)} placeholder="red jerseys"
+                  <label style={{ fontSize: 10, color: '#7a7a6e' }}>The other team — their jersey</label>
+                  <input value={oppJersey} onChange={e => setOppJersey(e.target.value)} placeholder="e.g. white jerseys"
                     style={{ width: '100%', background: '#2a2a24', border: '1px solid #44443c', borderRadius: 4, padding: '6px 10px', fontSize: 12, color: '#f0eee6' }} />
                 </div>
                 <button onClick={saveJerseys} style={{ background: '#C9A84C', color: '#1c1c1c', border: 'none', borderRadius: 4, padding: '7px 16px', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
-                  {jerseySaved ? 'Saved ✓' : 'Save colors'}
+                  {jerseySaved ? 'Saved ✓' : 'Save'}
                 </button>
               </div>
             </div>

@@ -210,16 +210,16 @@ function UploadPageInner() {
                 <input type="date" className="input" value={form.game_date} onChange={set('game_date')} />
               </div>
               <div>
-                <label className="label">Your team's jersey</label>
-                <input className="input" value={form.scout_jersey} onChange={set('scout_jersey')} placeholder="e.g. white jerseys, navy helmets" />
+                <label className="label">Team you want the report on — their jersey</label>
+                <input className="input" value={form.scout_jersey} onChange={set('scout_jersey')} placeholder="e.g. green jerseys" />
               </div>
               <div>
-                <label className="label">Opponent's jersey</label>
-                <input className="input" value={form.opponent_jersey} onChange={set('opponent_jersey')} placeholder="e.g. red jerseys" />
+                <label className="label">The other team — their jersey</label>
+                <input className="input" value={form.opponent_jersey} onChange={set('opponent_jersey')} placeholder="e.g. white jerseys" />
               </div>
             </div>
             <p className="text-xs" style={{ color: '#7a7a6e', marginTop: -4, marginBottom: 8 }}>
-              Jersey colors let the AI tell the teams apart, so the tendency report is about the right team. Optional but strongly recommended.
+              Type each team's jersey color so the AI knows which team to break down. Ten seconds, and your report is about the right team. Strongly recommended.
             </p>
 
             {tab === 'upload' && (
