@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update, and_, or_
+from datetime import datetime, timedelta
 from backend.models.base import get_db
 from backend.models.user import User
 from backend.models.game import Game
@@ -226,12 +227,29 @@ async def trigger_auto_detect(
             detail=f"Game must be ready before auto-detection (current status: {game.status})",
         )
 
-    # Check for an already-running detect job
+    # Clean up orphaned jobs: a "running" job whose worker died (e.g. a redeploy)
+    # would otherwise block re-runs for 30 min. Mark stale ones errored so a fresh
+    # run can proceed and the orphan never double-runs.
+    stale_cutoff = datetime.utcnow() - timedelta(minutes=10)
+    await db.execute(
+        update(Job).where(
+            Job.job_type == "ai_detect",
+            Job.payload["game_id"].as_string() == game_id,
+            Job.status == "running",
+            Job.locked_at < stale_cutoff,
+        ).values(status="error", error_message="Orphaned (worker restarted); superseded by a new run.")
+    )
+    await db.commit()
+
+    # Block only if a genuinely active job exists (queued, or running-and-fresh).
     existing = await db.execute(
         select(Job).where(
             Job.job_type == "ai_detect",
-            Job.status.in_(["queued", "running"]),
             Job.payload["game_id"].as_string() == game_id,
+            or_(
+                Job.status == "queued",
+                and_(Job.status == "running", Job.locked_at >= stale_cutoff),
+            ),
         )
     )
     if existing.scalar_one_or_none():

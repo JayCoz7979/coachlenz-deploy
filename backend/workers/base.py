@@ -10,7 +10,7 @@ from backend.models.job import Job
 logger = logging.getLogger(__name__)
 
 WORKER_ID = socket.gethostname()
-STUCK_THRESHOLD_MINUTES = 30
+STUCK_THRESHOLD_MINUTES = 10  # re-queue jobs orphaned by a worker restart within 10 min
 
 class BaseWorker:
     job_type: str
