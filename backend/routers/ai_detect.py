@@ -290,19 +290,27 @@ async def detect_status(
     )
     job = job_result.scalar_one_or_none()
 
+    # Capture ORM values up front: the self-heal commit below expires ORM objects,
+    # and reading them afterward triggers a forbidden async lazy-load (500).
+    game_status = game.status
+    job_status = job.status if job else None
+    job_locked_at = job.locked_at if job else None
+    job_payload = job.payload if job else None
+    job_error = job.error_message if job else None
+
     # Self-heal a stuck "analyzing" game: if the run that set it is no longer active
     # (errored, done, or orphaned), reset to "ready" so the UI recovers and re-run
     # buttons reappear instead of spinning forever.
-    if game.status == "analyzing":
+    if game_status == "analyzing":
         stale_cutoff = datetime.utcnow() - timedelta(minutes=10)
         active = job is not None and (
-            job.status == "queued"
-            or (job.status == "running" and job.locked_at is not None and job.locked_at >= stale_cutoff)
+            job_status == "queued"
+            or (job_status == "running" and job_locked_at is not None and job_locked_at >= stale_cutoff)
         )
         if not active:
             await db.execute(update(Game).where(Game.id == game_id).values(status="ready"))
             await db.commit()
-            game.status = "ready"
+            game_status = "ready"
 
     # Count auto-detected events
     count_result = await db.execute(
@@ -325,12 +333,12 @@ async def detect_status(
 
     return {
         "game_id": game_id,
-        "game_status": game.status,
-        "job_status": job.status if job else None,
+        "game_status": game_status,
+        "job_status": job_status,
         "plays_detected": auto_count,
         "needs_review": needs_review,
-        "dry_run": bool((job.payload or {}).get("dry_run")) if job else False,
-        "error": job.error_message if (job and job.status == "error") else None,
+        "dry_run": bool((job_payload or {}).get("dry_run")) if job_payload else False,
+        "error": job_error if job_status == "error" else None,
     }
 
 
