@@ -45,7 +45,7 @@ CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "multipass-v2-recall"
+CODE_VERSION = "multipass-v3-parallel"
 
 # Parallel ranged extraction: one long fps=0.5 pass over a 2.75h stream times out
 # silently. Instead decode many short windows concurrently, each its own ffmpeg.
@@ -67,6 +67,10 @@ DETECT_MODEL = "claude-sonnet-4-6"   # bulk passes (volume)
 VERIFY_MODEL = "claude-opus-4-8"     # hardest reads only (the tie-breaker)
 VERIFY_CONFIDENCE_THRESHOLD = 0.65   # merged plays below this get an Opus second look
 MAX_VERIFY_PER_BATCH = 3             # cap Opus calls per batch (cost guardrail)
+# Concurrency for the vision pass. Segments run in parallel instead of one-at-a-time.
+# DEEP makes 2-3 calls per segment, so fewer run at once to respect rate limits.
+PARALLEL_VISION_FAST = 8
+PARALLEL_VISION_DEEP = 4
 
 
 DETECTION_PROMPT = """You are the most thorough football film analyst in the world. The frames below are consecutive moments from game film (a few seconds apart), shown in time order.
@@ -457,36 +461,48 @@ class AiDetectWorker(BaseWorker):
                 # shows steady progress without flooding the log.
                 log_every = max(1, len(batches) // 10)
                 failed_batches = 0
-                for batch_idx, batch in enumerate(batches):
-                    try:
-                        plays = await self._analyze_batch(batch, batch_idx, len(batches), sport)
-                        all_plays.extend(plays)
+                completed = 0
+                # Process segments concurrently (was one-at-a-time). Bounded by a
+                # semaphore so we stay within API rate limits; deep mode runs fewer at
+                # once because each segment makes 2-3 calls.
+                concurrency = PARALLEL_VISION_DEEP if getattr(self, "_multipass", False) else PARALLEL_VISION_FAST
+                sem = asyncio.Semaphore(concurrency)
+
+                async def process_batch(batch_idx, batch):
+                    nonlocal failed_batches, completed
+                    async with sem:
+                        try:
+                            plays = await self._analyze_batch(batch, batch_idx, len(batches), sport)
+                        except Exception as e:
+                            failed_batches += 1
+                            logger.warning(f"[ai_detect] Batch {batch_idx+1} failed: {e}")
+                            await log_agent_action(
+                                game_id=game_id, organization_id=str(org_id), job_id=job_id,
+                                phase="vision_analysis", level="warn",
+                                action=f"Segment {batch_idx+1} could not be read",
+                                reason=f"This segment failed and was skipped so the rest of the film still gets "
+                                       f"analyzed. Cause: {str(e)[:200]}",
+                                detail={"batch": batch_idx + 1},
+                            )
+                            return
+                        all_plays.extend(plays)  # safe: no await between read and append (single-threaded loop)
+                        completed += 1
                         logger.info(f"[ai_detect] Batch {batch_idx+1}/{len(batches)}: {len(plays)} plays")
-                        if plays and (batch_idx % log_every == 0 or batch_idx == len(batches) - 1):
+                        if plays and (completed % log_every == 0 or completed == len(batches)):
                             confs = [p.get("confidence", 0) for p in plays]
                             avg_c = round(sum(confs) / len(confs), 2) if confs else None
                             await log_agent_action(
                                 game_id=game_id, organization_id=str(org_id), job_id=job_id,
                                 phase="vision_analysis", level="info",
-                                action=f"Analyzed segment {batch_idx+1} of {len(batches)} — {len(plays)} play(s) read",
+                                action=f"Analyzed {completed} of {len(batches)} segments — {len(plays)} play(s) in the latest",
                                 reason=f"Reading play development across consecutive frames. "
                                        f"Segment confidence: {confidence_band(avg_c)}.",
                                 confidence=avg_c,
-                                detail={"batch": batch_idx + 1, "total_batches": len(batches),
+                                detail={"completed": completed, "total_batches": len(batches),
                                         "plays_in_batch": len(plays)},
                             )
-                    except Exception as e:
-                        failed_batches += 1
-                        logger.warning(f"[ai_detect] Batch {batch_idx+1} failed: {e}")
-                        await log_agent_action(
-                            game_id=game_id, organization_id=str(org_id), job_id=job_id,
-                            phase="vision_analysis", level="warn",
-                            action=f"Segment {batch_idx+1} could not be read",
-                            reason=f"This segment failed and was skipped so the rest of the film still gets "
-                                   f"analyzed. Cause: {str(e)[:200]}",
-                            detail={"batch": batch_idx + 1},
-                        )
-                        continue
+
+                await asyncio.gather(*[process_batch(i, b) for i, b in enumerate(batches)])
 
                 # ── Deduplicate by time (within 5s = same play) ───────────
                 deduped = self._deduplicate_plays(all_plays)
