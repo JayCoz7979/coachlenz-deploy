@@ -290,6 +290,20 @@ async def detect_status(
     )
     job = job_result.scalar_one_or_none()
 
+    # Self-heal a stuck "analyzing" game: if the run that set it is no longer active
+    # (errored, done, or orphaned), reset to "ready" so the UI recovers and re-run
+    # buttons reappear instead of spinning forever.
+    if game.status == "analyzing":
+        stale_cutoff = datetime.utcnow() - timedelta(minutes=10)
+        active = job is not None and (
+            job.status == "queued"
+            or (job.status == "running" and job.locked_at is not None and job.locked_at >= stale_cutoff)
+        )
+        if not active:
+            await db.execute(update(Game).where(Game.id == game_id).values(status="ready"))
+            await db.commit()
+            game.status = "ready"
+
     # Count auto-detected events
     count_result = await db.execute(
         select(func.count(Event.id)).where(
