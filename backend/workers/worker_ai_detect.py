@@ -368,7 +368,9 @@ class AiDetectWorker(BaseWorker):
             game = result.scalar_one_or_none()
             if not game:
                 raise ValueError(f"Game {game_id} not found")
-            if game.status != "ready":
+            # "analyzing" is allowed too: a prior run may have set it and not finished
+            # (re-run / orphan recovery). Only block genuinely un-ingested film.
+            if game.status not in ("ready", "analyzing"):
                 raise ValueError(f"Game not ready for detection (status={game.status})")
             sport = (game.sport or "football").lower()
             org_id = game.organization_id
