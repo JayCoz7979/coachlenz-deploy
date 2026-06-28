@@ -45,12 +45,17 @@ CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "multipass-v1"
+CODE_VERSION = "multipass-v2-recall"
 
 # Parallel ranged extraction: one long fps=0.5 pass over a 2.75h stream times out
 # silently. Instead decode many short windows concurrently, each its own ffmpeg.
 WINDOW_SIZE = 300          # seconds per window (5 min)
-FRAMES_PER_WINDOW = 40     # frames sampled per window -> 1 frame / 7.5s
+FRAMES_PER_WINDOW = 40     # default / back-compat -> 1 frame / 7.5s
+# Recall tuning: denser sampling catches more snaps. Tuned by mode so DEEP (3 calls
+# per batch) does not blow up cost. FAST is one cheap call per batch, so it can afford
+# more frames for better recall.
+FRAMES_PER_WINDOW_FAST = 66  # ~1 frame / 4.5s
+FRAMES_PER_WINDOW_DEEP = 50  # ~1 frame / 6s
 PARALLEL_JOBS = 6          # concurrent ffmpeg processes
 JOB_TIMEOUT = 300          # per-window timeout (s); a stuck window fails alone, not the whole job
 
@@ -410,7 +415,9 @@ class AiDetectWorker(BaseWorker):
                 # instead of one fps=0.5 pass over the whole stream (which timed out
                 # silently and yielded 0 grid frames on long film).
                 duration = await self._probe_duration(video_source, game.duration_seconds)
-                frame_paths = await self._extract_windows(video_source, duration, frames_dir)
+                # Denser sampling for recall; lighter in deep mode since each batch is 3 calls.
+                fpw = FRAMES_PER_WINDOW_DEEP if getattr(self, "_multipass", False) else FRAMES_PER_WINDOW_FAST
+                frame_paths = await self._extract_windows(video_source, duration, frames_dir, frames_per_window=fpw)
                 # Snap-aware clustering: drop same-moment duplicates (no-op on the uniform
                 # window grid, but harmless and protects against overlapping windows).
                 frame_paths = self._cluster_frames(frame_paths, CLUSTER_GAP_SECONDS)
@@ -675,15 +682,16 @@ class AiDetectWorker(BaseWorker):
             return float(fallback)
         raise RuntimeError("Could not determine video duration")
 
-    async def _extract_window(self, url: str, start: float, dur: float, win_dir: str, idx: int):
-        """Decode ONE short window into FRAMES_PER_WINDOW evenly-spaced frames."""
-        rate = FRAMES_PER_WINDOW / WINDOW_SIZE  # fps that spreads the frames across the whole window
+    async def _extract_window(self, url: str, start: float, dur: float, win_dir: str, idx: int,
+                              frames_per_window: int = FRAMES_PER_WINDOW):
+        """Decode ONE short window into frames_per_window evenly-spaced frames."""
+        rate = frames_per_window / WINDOW_SIZE  # fps that spreads the frames across the whole window
         pattern = os.path.join(win_dir, f"w{idx:04d}_%06d.jpg")
         cmd = [
             "ffmpeg", "-y", "-ss", str(start), "-t", str(dur), "-i", url,
             # scale to 1600 keeps decode fast and the score-bug legible (Vision caps ~1568 anyway)
             "-vf", f"fps={rate:.5f},scale=1600:-2",
-            "-q:v", "3", "-frames:v", str(FRAMES_PER_WINDOW), pattern,
+            "-q:v", "3", "-frames:v", str(frames_per_window), pattern,
         ]
         proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         try:
@@ -694,7 +702,8 @@ class AiDetectWorker(BaseWorker):
             await proc.communicate()
             return -1, f"TIMEOUT window {idx} start={start}"
 
-    async def _extract_windows(self, url: str, total_duration: float, out_base: str):
+    async def _extract_windows(self, url: str, total_duration: float, out_base: str,
+                               frames_per_window: int = FRAMES_PER_WINDOW):
         """Parallel ranged extraction. Returns (path, time_seconds) tuples and stamps
         self._extract_diag so the DB proves coverage. Replaces the single fps=0.5 pass
         that timed out silently on long streams."""
@@ -704,13 +713,18 @@ class AiDetectWorker(BaseWorker):
             windows.append((start, min(WINDOW_SIZE, total_duration - start)))
             start += WINDOW_SIZE
 
+        # Safety cap: keep total frames under MAX_FRAMES by thinning density on long film.
+        if windows and frames_per_window * len(windows) > MAX_FRAMES:
+            frames_per_window = max(10, MAX_FRAMES // len(windows))
+        self._frames_per_window = frames_per_window
+
         sem = asyncio.Semaphore(PARALLEL_JOBS)
 
         async def run(idx, s, d):
             async with sem:
                 win_dir = os.path.join(out_base, f"window_{idx:04d}")
                 os.makedirs(win_dir, exist_ok=True)
-                rc, err = await self._extract_window(url, s, d, win_dir, idx)
+                rc, err = await self._extract_window(url, s, d, win_dir, idx, frames_per_window)
                 files = sorted(f for f in os.listdir(win_dir) if f.endswith(".jpg"))
                 if rc != 0 or not files:
                     logger.error(f"[ai_detect] window {idx} FAILED rc={rc} frames={len(files)} start={s} err={err}")
@@ -721,7 +735,7 @@ class AiDetectWorker(BaseWorker):
         results = await asyncio.gather(*[run(i, s, d) for i, (s, d) in enumerate(windows)], return_exceptions=True)
 
         frames, ok, failed, first_err = [], 0, 0, None
-        gap = WINDOW_SIZE / FRAMES_PER_WINDOW
+        gap = WINDOW_SIZE / frames_per_window
         for r in results:
             if isinstance(r, Exception):
                 failed += 1
