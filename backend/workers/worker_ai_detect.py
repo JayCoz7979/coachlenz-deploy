@@ -45,7 +45,7 @@ CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "multipass-v3-parallel"
+CODE_VERSION = "multipass-v4-costguard"
 
 # Parallel ranged extraction: one long fps=0.5 pass over a 2.75h stream times out
 # silently. Instead decode many short windows concurrently, each its own ffmpeg.
@@ -71,6 +71,11 @@ MAX_VERIFY_PER_BATCH = 3             # cap Opus calls per batch (cost guardrail)
 # DEEP makes 2-3 calls per segment, so fewer run at once to respect rate limits.
 PARALLEL_VISION_FAST = 8
 PARALLEL_VISION_DEEP = 4
+# Cost guard: hard cap on segments analyzed per run so one long film can't blow the
+# API budget. Over the cap, segments are thinned EVENLY across the whole film (still
+# start-to-finish coverage, just lower density) rather than truncated. A coach can
+# pass full=true to bypass it for a game that matters.
+MAX_SEGMENTS_PER_RUN = 150
 
 
 DETECTION_PROMPT = """You are the most thorough football film analyst in the world. The frames below are consecutive moments from game film (a few seconds apart), shown in time order.
@@ -363,6 +368,8 @@ class AiDetectWorker(BaseWorker):
         # Default fast to protect API spend; deep is opt-in for games that matter.
         mode = (payload.get("detection_mode") or "fast").lower()
         self._multipass = MULTIPASS_ENABLED and mode == "deep"
+        # Cost guard: bypassed only when the coach explicitly asks for full density.
+        self._full_coverage = bool(payload.get("full"))
         return await self._detect_plays(game_id, dry_run=dry_run, job_id=job_id)
 
     async def _detect_plays(self, game_id: str, dry_run: bool = False, job_id=None) -> dict:
@@ -456,6 +463,25 @@ class AiDetectWorker(BaseWorker):
                 # ── Send batches to Claude Vision ──────────────────────────
                 all_plays = []
                 batches = [frame_paths[i:i + FRAMES_PER_BATCH] for i in range(0, len(frame_paths), FRAMES_PER_BATCH)]
+
+                # ── Cost guard ─────────────────────────────────────────────
+                # Bound API spend per run. Over the cap, thin segments EVENLY across
+                # the whole film (start-to-finish coverage, lower density) so one long
+                # game can't surprise the budget. Coach opts into full=true to bypass.
+                total_segments = len(batches)
+                if not getattr(self, "_full_coverage", False) and total_segments > MAX_SEGMENTS_PER_RUN:
+                    step = total_segments / MAX_SEGMENTS_PER_RUN
+                    batches = [batches[int(i * step)] for i in range(MAX_SEGMENTS_PER_RUN)]
+                    calls_per_seg = 3 if getattr(self, "_multipass", False) else 1
+                    await log_agent_action(
+                        game_id=game_id, organization_id=str(org_id), job_id=job_id,
+                        phase="cost_guard", level="info",
+                        action=f"Cost guard: analyzing {len(batches)} of {total_segments} segments (even sampling across the full film)",
+                        reason=f"To stay within budget I sampled the whole game at lower density "
+                               f"(~{len(batches) * calls_per_seg} vision calls). Re-run with Full coverage to analyze every segment.",
+                        detail={"segments_analyzed": len(batches), "segments_total": total_segments,
+                                "estimated_calls": len(batches) * calls_per_seg},
+                    )
 
                 # Log a heartbeat roughly every 10% of batches so the live panel
                 # shows steady progress without flooding the log.
