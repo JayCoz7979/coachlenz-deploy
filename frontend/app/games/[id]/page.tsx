@@ -588,6 +588,9 @@ export default function GamePage() {
   const [agentLog, setAgentLog] = useState<AgentLogEntry[]>([])
   const [scorecard, setScorecard] = useState<any>(null)
   const [accuracy, setAccuracy] = useState<any>(null)
+  const [scoutJersey, setScoutJersey] = useState('')
+  const [oppJersey, setOppJersey] = useState('')
+  const [jerseySaved, setJerseySaved] = useState(false)
   const detectPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => { fetchMe() }, [])
@@ -595,7 +598,7 @@ export default function GamePage() {
 
   useEffect(() => {
     if (!user || !id) return
-    api.get(`/games/${id}`).then(r => setGame(r.data))
+    api.get(`/games/${id}`).then(r => { setGame(r.data); setScoutJersey(r.data.scout_jersey || ''); setOppJersey(r.data.opponent_jersey || '') })
     api.get(`/events?game_id=${id}`).then(r => setEvents(r.data)).catch(() => {})
     // Check if there's a running detect job
     api.get(`/games/${id}/auto-detect/status`).then(r => {
@@ -618,6 +621,17 @@ export default function GamePage() {
   const fetchScorecard = async () => {
     try { const r = await api.get(`/games/${id}/coverage`); setScorecard(r.data) } catch {}
     try { const r = await api.get(`/games/${id}/accuracy`); setAccuracy(r.data) } catch {}
+  }
+
+  const saveJerseys = async () => {
+    try {
+      await api.patch(`/games/${id}`, { scout_jersey: scoutJersey, opponent_jersey: oppJersey })
+      setJerseySaved(true)
+      setTimeout(() => setJerseySaved(false), 2500)
+      showToast('Team colors saved — re-run detection so the AI applies them')
+    } catch {
+      showToast('Could not save team colors')
+    }
   }
 
   const handleRederiveDowns = async () => {
@@ -899,6 +913,29 @@ export default function GamePage() {
                 </div>
               )
             })()}
+
+            {/* Team attribution — jersey colors so the AI knows which team is which */}
+            <div style={{ background: 'rgba(201,168,76,0.06)', border: '1px solid rgba(201,168,76,0.25)', borderRadius: 6, padding: '12px 16px', marginBottom: 12 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#f8f6f0', marginBottom: 2 }}>Team colors (which team to scout)</div>
+              <div style={{ fontSize: 11, color: '#a8a89a', marginBottom: 8 }}>
+                Tell the AI what each team wears so the tendencies are about the right team. Set these, then re-run detection.
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                <div style={{ flex: 1, minWidth: 160 }}>
+                  <label style={{ fontSize: 10, color: '#7a7a6e' }}>Your team (scouted)</label>
+                  <input value={scoutJersey} onChange={e => setScoutJersey(e.target.value)} placeholder="white jerseys, navy helmets"
+                    style={{ width: '100%', background: '#2a2a24', border: '1px solid #44443c', borderRadius: 4, padding: '6px 10px', fontSize: 12, color: '#f0eee6' }} />
+                </div>
+                <div style={{ flex: 1, minWidth: 160 }}>
+                  <label style={{ fontSize: 10, color: '#7a7a6e' }}>Opponent</label>
+                  <input value={oppJersey} onChange={e => setOppJersey(e.target.value)} placeholder="red jerseys"
+                    style={{ width: '100%', background: '#2a2a24', border: '1px solid #44443c', borderRadius: 4, padding: '6px 10px', fontSize: 12, color: '#f0eee6' }} />
+                </div>
+                <button onClick={saveJerseys} style={{ background: '#C9A84C', color: '#1c1c1c', border: 'none', borderRadius: 4, padding: '7px 16px', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                  {jerseySaved ? 'Saved ✓' : 'Save colors'}
+                </button>
+              </div>
+            </div>
 
             {/* Detection scorecard — how complete and confident the read is (+ accuracy vs tagged plays) */}
             {scorecard?.ready && (

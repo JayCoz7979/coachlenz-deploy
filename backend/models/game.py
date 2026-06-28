@@ -15,6 +15,9 @@ class Game(Base):
     opponent = Column(String)
     game_date = Column(Date)
     is_home = Column(Boolean)
+    # On-field appearance so the vision agent can attribute plays to the right team.
+    scout_jersey = Column(String)      # the team being scouted, e.g. "white jerseys, navy helmets"
+    opponent_jersey = Column(String)   # the opponent, e.g. "red jerseys"
     r2_key = Column(String)
     r2_url = Column(String)
     r2_expires_at = Column(DateTime(timezone=True))

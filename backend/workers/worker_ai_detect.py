@@ -78,6 +78,25 @@ PARALLEL_VISION_DEEP = 4
 MAX_SEGMENTS_PER_RUN = 150
 
 
+def _build_team_context(scout_jersey: Optional[str], opponent_jersey: Optional[str]) -> str:
+    """Preamble that tells the vision agent which team is which, by appearance, so
+    offense/defense is tied to the SCOUTED team consistently. Empty when no jersey
+    info is set (the agent falls back to best-guess, as before)."""
+    scout = (scout_jersey or "").strip()
+    opp = (opponent_jersey or "").strip()
+    if not scout and not opp:
+        return ""
+    lines = ["TEAM ATTRIBUTION — read this FIRST; it determines offense vs defense on every play:"]
+    if scout:
+        lines.append(f"- The team you are SCOUTING wears: {scout}.")
+    if opp:
+        lines.append(f"- Their OPPONENT wears: {opp}.")
+    lines.append("- Use these colors to decide who has the ball on EVERY play, and be consistent across the whole film.")
+    lines.append("- side=\"offense\" ONLY when the SCOUTED team has the ball. side=\"defense\" when the SCOUTED team is defending (opponent has the ball).")
+    lines.append("- If you genuinely cannot tell the colors apart on a play, set side to your best read and note it in blind_spot.")
+    return "\n".join(lines) + "\n\n"
+
+
 DETECTION_PROMPT = """You are the most thorough football film analyst in the world. The frames below are consecutive moments from game film (a few seconds apart), shown in time order.
 
 Your job: identify every DISTINCT football play in this window and extract MAXIMUM structured intelligence. Consecutive frames often show ONE play developing (pre-snap → snap → result) — return ONE play using pre-snap frames for formation/alignment and post-snap frames for result. If frames clearly span multiple snaps, return one object per snap.
@@ -385,6 +404,8 @@ class AiDetectWorker(BaseWorker):
                 raise ValueError(f"Game not ready for detection (status={game.status})")
             sport = (game.sport or "football").lower()
             org_id = game.organization_id
+            # Team attribution context for the vision prompts (which jerseys = scouted team).
+            self._team_context = _build_team_context(game.scout_jersey, game.opponent_jersey)
 
         # UATP identity disclosure — the agent says who it is and what it will do
         # BEFORE it acts, every run.
@@ -984,6 +1005,7 @@ class AiDetectWorker(BaseWorker):
             return await self._analyze_batch_multipass(client, batch, batch_idx)
 
         prompt = DETECTION_PROMPT_BASKETBALL if sport == "basketball" else DETECTION_PROMPT
+        prompt = getattr(self, "_team_context", "") + prompt
         content = self._frame_content(batch) + [{"type": "text", "text": prompt}]
         parsed = await self._vision_json(client, DETECT_MODEL, content)
         return self._assign_times(parsed.get("plays", []), batch)
@@ -1005,7 +1027,7 @@ class AiDetectWorker(BaseWorker):
 
         # Pass 1 — detect + pre-snap
         p1 = await self._vision_json(client, DETECT_MODEL,
-                                     frames + [{"type": "text", "text": DETECTION_PROMPT_PRESNAP}])
+                                     frames + [{"type": "text", "text": getattr(self, "_team_context", "") + DETECTION_PROMPT_PRESNAP}])
         pre = p1.get("plays", [])
         if not pre:
             return []
@@ -1018,7 +1040,7 @@ class AiDetectWorker(BaseWorker):
         try:
             post_resp = await self._vision_json(
                 client, DETECT_MODEL,
-                frames + [{"type": "text", "text": DETECTION_PROMPT_POSTSNAP.replace("{presnap_plays}", ctx)}])
+                frames + [{"type": "text", "text": getattr(self, "_team_context", "") + DETECTION_PROMPT_POSTSNAP.replace("{presnap_plays}", ctx)}])
             p2 = {pl.get("play_index"): pl for pl in post_resp.get("plays", []) if pl.get("play_index") is not None}
         except Exception as e:
             logger.warning(f"[ai_detect] post-snap pass failed batch {batch_idx}: {e}")

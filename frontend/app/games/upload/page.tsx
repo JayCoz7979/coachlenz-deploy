@@ -38,7 +38,7 @@ function UploadPageInner() {
   const searchParams = useSearchParams()
   const [tab, setTab] = useState<Tab>(searchParams.get('tab') === 'url' ? 'url' : 'upload')
   const [teams, setTeams] = useState<any[]>([])
-  const [form, setForm] = useState({ title: '', sport: 'football', team_id: '', opponent: '', game_date: '', is_home: '' })
+  const [form, setForm] = useState({ title: '', sport: 'football', team_id: '', opponent: '', game_date: '', is_home: '', scout_jersey: '', opponent_jersey: '' })
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setForm(f => ({ ...f, [k]: e.target.value }))
 
   const [file, setFile] = useState<File | null>(null)
@@ -209,7 +209,18 @@ function UploadPageInner() {
                 <label className="label">Game Date</label>
                 <input type="date" className="input" value={form.game_date} onChange={set('game_date')} />
               </div>
+              <div>
+                <label className="label">Your team's jersey</label>
+                <input className="input" value={form.scout_jersey} onChange={set('scout_jersey')} placeholder="e.g. white jerseys, navy helmets" />
+              </div>
+              <div>
+                <label className="label">Opponent's jersey</label>
+                <input className="input" value={form.opponent_jersey} onChange={set('opponent_jersey')} placeholder="e.g. red jerseys" />
+              </div>
             </div>
+            <p className="text-xs" style={{ color: '#7a7a6e', marginTop: -4, marginBottom: 8 }}>
+              Jersey colors let the AI tell the teams apart, so the tendency report is about the right team. Optional but strongly recommended.
+            </p>
 
             {tab === 'upload' && (
               <form onSubmit={handleFileUpload} className="space-y-4">

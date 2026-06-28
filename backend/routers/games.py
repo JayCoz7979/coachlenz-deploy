@@ -22,6 +22,8 @@ class GameCreate(BaseModel):
     opponent: Optional[str] = None
     game_date: Optional[str] = None
     is_home: Optional[bool] = None
+    scout_jersey: Optional[str] = None
+    opponent_jersey: Optional[str] = None
     file_name: str
     file_size_bytes: Optional[int] = None
 
@@ -44,6 +46,8 @@ async def create_game(body: GameCreate, user: User = Depends(get_current_user), 
         sport=body.sport,
         opponent=body.opponent,
         is_home=body.is_home,
+        scout_jersey=body.scout_jersey,
+        opponent_jersey=body.opponent_jersey,
         r2_key=key,
         file_size_bytes=body.file_size_bytes,
         status="pending",
@@ -66,7 +70,27 @@ async def get_game(game_id: str, user: User = Depends(get_current_user), db: Asy
         raise HTTPException(status_code=404, detail="Game not found")
     from backend.services.r2 import generate_presigned_download_url
     download_url = generate_presigned_download_url(game.r2_key) if game.r2_key and game.status == "ready" else None
-    return {"id": str(game.id), "title": game.title, "sport": game.sport, "opponent": game.opponent, "status": game.status, "download_url": download_url, "duration_seconds": game.duration_seconds, "is_trial_game": game.is_trial_game}
+    return {"id": str(game.id), "title": game.title, "sport": game.sport, "opponent": game.opponent, "status": game.status, "download_url": download_url, "duration_seconds": game.duration_seconds, "is_trial_game": game.is_trial_game, "scout_jersey": game.scout_jersey, "opponent_jersey": game.opponent_jersey}
+
+class GameUpdate(BaseModel):
+    title: Optional[str] = None
+    opponent: Optional[str] = None
+    scout_jersey: Optional[str] = None
+    opponent_jersey: Optional[str] = None
+
+
+@router.patch("/{game_id}")
+async def update_game(game_id: str, body: GameUpdate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Game).where(Game.id == game_id, Game.organization_id == user.organization_id))
+    game = result.scalar_one_or_none()
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+    fields = body.model_dump(exclude_unset=True)
+    if fields:
+        await db.execute(update(Game).where(Game.id == game_id).values(**fields))
+        await db.commit()
+    return {"ok": True, "updated": list(fields.keys())}
+
 
 @router.delete("/{game_id}")
 async def delete_game(game_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
