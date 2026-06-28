@@ -45,7 +45,7 @@ CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "multipass-v4-costguard"
+CODE_VERSION = "multipass-v5-quicktest"
 
 # Parallel ranged extraction: one long fps=0.5 pass over a 2.75h stream times out
 # silently. Instead decode many short windows concurrently, each its own ffmpeg.
@@ -76,6 +76,7 @@ PARALLEL_VISION_DEEP = 4
 # start-to-finish coverage, just lower density) rather than truncated. A coach can
 # pass full=true to bypass it for a game that matters.
 MAX_SEGMENTS_PER_RUN = 150
+TEST_CLIP_SECONDS = 180   # quick-test mode analyzes only the opening 3 minutes
 
 
 def _build_team_context(scout_jersey: Optional[str], opponent_jersey: Optional[str]) -> str:
@@ -389,6 +390,8 @@ class AiDetectWorker(BaseWorker):
         self._multipass = MULTIPASS_ENABLED and mode == "deep"
         # Cost guard: bypassed only when the coach explicitly asks for full density.
         self._full_coverage = bool(payload.get("full"))
+        # Quick test: analyze only the opening slice of film (cheap confirmation run).
+        self._test_mode = bool(payload.get("test"))
         return await self._detect_plays(game_id, dry_run=dry_run, job_id=job_id)
 
     async def _detect_plays(self, game_id: str, dry_run: bool = False, job_id=None) -> dict:
@@ -449,6 +452,17 @@ class AiDetectWorker(BaseWorker):
                 # instead of one fps=0.5 pass over the whole stream (which timed out
                 # silently and yielded 0 grid frames on long film).
                 duration = await self._probe_duration(video_source, game.duration_seconds)
+                # Quick test: only analyze the opening slice so it costs pennies — enough
+                # to confirm detection + team attribution work before a full run.
+                if getattr(self, "_test_mode", False):
+                    duration = min(duration, TEST_CLIP_SECONDS)
+                    await log_agent_action(
+                        game_id=game_id, organization_id=str(org_id), job_id=job_id,
+                        phase="quick_test", level="info",
+                        action=f"Quick test: analyzing only the first {int(duration//60)}m{int(duration%60)}s of film",
+                        reason="A cheap sample to confirm detection and team attribution before you spend on a full game.",
+                        detail={"test_seconds": int(duration)},
+                    )
                 # Denser sampling for recall; lighter in deep mode since each batch is 3 calls.
                 fpw = FRAMES_PER_WINDOW_DEEP if getattr(self, "_multipass", False) else FRAMES_PER_WINDOW_FAST
                 frame_paths = await self._extract_windows(video_source, duration, frames_dir, frames_per_window=fpw)

@@ -208,6 +208,7 @@ async def trigger_auto_detect(
     dry_run: bool = False,
     mode: str = "fast",  # "fast" = 1x single-pass, "deep" = 3x multi-pass engine
     full: bool = False,  # bypass the per-run segment cost guard (analyze every segment)
+    test: bool = False,  # quick test: analyze only the opening minutes (pennies)
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -260,7 +261,8 @@ async def trigger_auto_detect(
         organization_id=user.organization_id,
         job_type="ai_detect",
         payload={"game_id": game_id, "dry_run": dry_run,
-                 "detection_mode": ("deep" if mode == "deep" else "fast"), "full": bool(full)},
+                 "detection_mode": ("deep" if mode == "deep" else "fast"),
+                 "full": bool(full), "test": bool(test)},
     )
     db.add(job)
     await db.commit()

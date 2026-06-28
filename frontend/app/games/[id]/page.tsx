@@ -674,17 +674,19 @@ export default function GamePage() {
 
   useEffect(() => () => { if (detectPollRef.current) clearInterval(detectPollRef.current) }, [])
 
-  const handleAutoDetect = async (dryRun = false, mode: 'fast' | 'deep' = 'fast') => {
+  const handleAutoDetect = async (dryRun = false, mode: 'fast' | 'deep' = 'fast', test = false) => {
     try {
       setAgentLog([])
       const qs = new URLSearchParams()
       if (dryRun) qs.set('dry_run', 'true')
       qs.set('mode', mode)
+      if (test) qs.set('test', 'true')
       await api.post(`/games/${id}/auto-detect?${qs.toString()}`)
       const r = await api.get(`/games/${id}/auto-detect/status`)
       setDetectStatus(r.data)
       startDetectPoll()
-      showToast(dryRun ? 'Dry run started (no plays will be saved)…'
+      showToast(test ? 'Quick test started (first few minutes, pennies)…'
+        : dryRun ? 'Dry run started (no plays will be saved)…'
         : mode === 'deep' ? 'Deep 3-pass analysis started…' : 'AI play detection started…')
     } catch (e: any) {
       showToast(e?.response?.data?.detail ?? 'Failed to start detection')
@@ -841,7 +843,10 @@ export default function GamePage() {
                     {detectStatus.plays_detected} plays auto-detected
                   </span>
                   <span style={{ color: '#7a7a6e', marginLeft: 4 }}>— review in the Play Log, edit any you need.</span>
-                  <button onClick={() => handleAutoDetect(false, 'fast')} title="Quick single-pass re-run." style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#7a7a6e', fontSize: 11, cursor: 'pointer' }}>
+                  <button onClick={() => handleAutoDetect(false, 'fast', true)} title="Quick test: first few minutes only, costs pennies. Confirms detection + team colors cheaply." style={{ marginLeft: 'auto', background: 'none', border: '1px solid #44443c', borderRadius: 4, color: '#a8d8b0', fontSize: 11, cursor: 'pointer', padding: '4px 10px', fontWeight: 700 }}>
+                    Quick Test
+                  </button>
+                  <button onClick={() => handleAutoDetect(false, 'fast')} title="Quick single-pass re-run." style={{ background: 'none', border: 'none', color: '#7a7a6e', fontSize: 11, cursor: 'pointer' }}>
                     Re-run Fast
                   </button>
                   <button onClick={() => handleAutoDetect(false, 'deep')} title="Three-pass engine: pre-snap, post-snap, and Opus verify. Richest read, higher confidence, ~3x cost." style={{ background: '#C9A84C', color: '#1c1c1c', border: 'none', borderRadius: 4, padding: '5px 12px', fontSize: 11, fontWeight: 700, cursor: 'pointer', letterSpacing: '0.04em' }}>
@@ -902,13 +907,22 @@ export default function GamePage() {
                         DEEP · 3-PASS
                       </button>
                     </div>
-                    <button
-                      onClick={() => handleAutoDetect(true)}
-                      title="Run a dry run — the AI analyzes the film and shows what it would tag, without saving anything."
-                      style={{ background: 'none', border: 'none', color: '#7a7a6e', fontSize: 10, cursor: 'pointer', padding: 0 }}
-                    >
-                      or test run (dry)
-                    </button>
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                      <button
+                        onClick={() => handleAutoDetect(false, 'fast', true)}
+                        title="Quick test: analyzes only the first few minutes of film. Costs pennies. Use it to confirm detection and team colors before a full run."
+                        style={{ background: 'none', border: '1px solid #44443c', borderRadius: 4, color: '#a8d8b0', fontSize: 10, cursor: 'pointer', padding: '4px 10px', fontWeight: 700 }}
+                      >
+                        QUICK TEST (first 3 min, ~pennies)
+                      </button>
+                      <button
+                        onClick={() => handleAutoDetect(true)}
+                        title="Run a dry run — the AI analyzes the film and shows what it would tag, without saving anything."
+                        style={{ background: 'none', border: 'none', color: '#7a7a6e', fontSize: 10, cursor: 'pointer', padding: 0 }}
+                      >
+                        or test run (dry)
+                      </button>
+                    </div>
                   </div>
                 </div>
               )
