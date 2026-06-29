@@ -15,8 +15,8 @@ from backend.models.agent_log import AgentLog
 logger = logging.getLogger(__name__)
 
 # ── Agent identity (UATP identity disclosure) ──────────────────────────────
-AGENT_NAME = "TIA"
-AGENT_ROLE = "Tendency Intelligence Agent — film analyst"
+AGENT_NAME = "Film Assistant"
+AGENT_ROLE = "your AI film assistant"
 
 # ── Confidence policy (UATP confidence flagging + escalation) ──────────────
 # Below HARD_FLOOR: the read is discarded outright (handled in the worker).

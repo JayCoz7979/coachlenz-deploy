@@ -512,10 +512,10 @@ function AccuracyPanel({ gameId }: { gameId: string }) {
         <p style={{ color: '#7a7a6e', marginBottom: 10 }}>{data?.reason || 'Could not load.'}</p>
         <div style={{ background: 'rgba(255,255,255,0.04)', borderRadius: 6, padding: 10, marginBottom: 10 }}>
           <div>Coach-verified plays: <b style={{ color: '#f8f6f0' }}>{data?.truth_plays ?? 0}</b></div>
-          <div>AI-detected plays: <b style={{ color: '#f8f6f0' }}>{data?.ai_plays ?? 0}</b></div>
+          <div>AI plays: <b style={{ color: '#f8f6f0' }}>{data?.ai_plays ?? 0}</b></div>
         </div>
         <p style={{ color: '#7a7a6e', fontSize: 11 }}>
-          <b>How it works:</b> Manually tag this game (your tags = ground truth), then run AI auto-detect.
+          <b>How it works:</b> Tag this game yourself (the plays you tag yourself), then have the AI break down the film.
           We compare the two and score how accurate the AI is.
         </p>
         <button onClick={load} className="btn-secondary" style={{ marginTop: 10, fontSize: 11, height: 30, width: '100%' }}>Refresh</button>
@@ -539,8 +539,8 @@ function AccuracyPanel({ gameId }: { gameId: string }) {
     <div style={{ fontSize: 12, color: '#ede9df', display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ fontWeight: 700, color: '#C9A84C' }}>AI Accuracy vs Your Tags</div>
       <div style={{ display: 'flex', gap: 8 }}>
-        {big('Recall', data.recall_pct, 'plays caught', '#2d8c40')}
-        {big('Precision', data.precision_pct, 'tags real', '#C9A84C')}
+        {big('Plays Caught', data.recall_pct, 'plays caught', '#2d8c40')}
+        {big('How Many Right', data.precision_pct, 'tags real', '#C9A84C')}
       </div>
       <div style={{ fontSize: 11, color: '#7a7a6e' }}>
         Matched {data.matched} of {data.truth_plays} your plays · AI tagged {data.ai_plays} (±{data.match_window_s}s window)
@@ -628,7 +628,7 @@ export default function GamePage() {
       await api.patch(`/games/${id}`, { scout_jersey: scoutJersey, opponent_jersey: oppJersey })
       setJerseySaved(true)
       setTimeout(() => setJerseySaved(false), 2500)
-      showToast('Saved. Run detection (or Quick Test) and the breakdown will be on that team.')
+      showToast('Saved. Break down the film (or Quick Test) and the report will be on that team.')
     } catch {
       showToast('Could not save team colors')
     }
@@ -661,10 +661,10 @@ export default function GamePage() {
           setEvents(evRes.data)
           fetchScorecard()
           if (r.data.dry_run) {
-            showToast('Dry run complete — no plays were saved')
+            showToast('Preview complete — nothing was saved')
           } else if (r.data.plays_detected > 0) {
-            const rv = r.data.needs_review ? ` (${r.data.needs_review} flagged for review)` : ''
-            showToast(`${r.data.plays_detected} plays auto-detected${rv}`)
+            const rv = r.data.needs_review ? ` (${r.data.needs_review} need your eyes)` : ''
+            showToast(`${r.data.plays_detected} plays broken down${rv}`)
             setTab('log')
           }
         }
@@ -686,10 +686,10 @@ export default function GamePage() {
       setDetectStatus(r.data)
       startDetectPoll()
       showToast(test ? 'Quick test started (first few minutes, pennies)…'
-        : dryRun ? 'Dry run started (no plays will be saved)…'
-        : mode === 'deep' ? 'Deep 3-pass analysis started…' : 'AI play detection started…')
+        : dryRun ? 'Preview started (nothing will be saved)…'
+        : mode === 'deep' ? 'Deep 3-pass breakdown started…' : 'Film breakdown started…')
     } catch (e: any) {
-      showToast(e?.response?.data?.detail ?? 'Failed to start detection')
+      showToast(e?.response?.data?.detail ?? 'Could not start the film breakdown')
     }
   }
 
@@ -825,7 +825,7 @@ export default function GamePage() {
                   borderRadius: 6, padding: '10px 16px', fontSize: 13,
                 }}>
                   <Loader2 size={14} style={{ color: '#C9A84C', animation: 'spin 1s linear infinite' }} />
-                  <span style={{ color: '#C9A84C', fontWeight: 600 }}>AI is scanning your film for plays…</span>
+                  <span style={{ color: '#C9A84C', fontWeight: 600 }}>Your film assistant is breaking down the film…</span>
                   {detectStatus.plays_detected > 0 && (
                     <span style={{ color: '#7a7a6e', marginLeft: 4 }}>{detectStatus.plays_detected} found so far</span>
                   )}
@@ -840,16 +840,16 @@ export default function GamePage() {
                 }}>
                   <CheckCircle size={14} style={{ color: '#2d8c40' }} />
                   <span style={{ color: '#2d8c40', fontWeight: 600 }}>
-                    {detectStatus.plays_detected} plays auto-detected
+                    {detectStatus.plays_detected} plays broken down
                   </span>
                   <span style={{ color: '#7a7a6e', marginLeft: 4 }}>— review in the Play Log, edit any you need.</span>
-                  <button onClick={() => handleAutoDetect(false, 'fast', true)} title="Quick test: first few minutes only, costs pennies. Confirms detection + team colors cheaply." style={{ marginLeft: 'auto', background: 'none', border: '1px solid #44443c', borderRadius: 4, color: '#a8d8b0', fontSize: 11, cursor: 'pointer', padding: '4px 10px', fontWeight: 700 }}>
+                  <button onClick={() => handleAutoDetect(false, 'fast', true)} title="Quick test: first few minutes only, costs pennies. Confirms the breakdown and team colors cheaply." style={{ marginLeft: 'auto', background: 'none', border: '1px solid #44443c', borderRadius: 4, color: '#a8d8b0', fontSize: 11, cursor: 'pointer', padding: '4px 10px', fontWeight: 700 }}>
                     Quick Test
                   </button>
                   <button onClick={() => handleAutoDetect(false, 'fast')} title="Quick single-pass re-run." style={{ background: 'none', border: 'none', color: '#7a7a6e', fontSize: 11, cursor: 'pointer' }}>
                     Re-run Fast
                   </button>
-                  <button onClick={() => handleAutoDetect(false, 'deep')} title="Three-pass engine: pre-snap, post-snap, and Opus verify. Richest read, higher confidence, ~3x cost." style={{ background: '#C9A84C', color: '#1c1c1c', border: 'none', borderRadius: 4, padding: '5px 12px', fontSize: 11, fontWeight: 700, cursor: 'pointer', letterSpacing: '0.04em' }}>
+                  <button onClick={() => handleAutoDetect(false, 'deep')} title="Three-pass engine: pre-snap, post-snap, and a final check. Richest read, higher confidence, ~3x cost." style={{ background: '#C9A84C', color: '#1c1c1c', border: 'none', borderRadius: 4, padding: '5px 12px', fontSize: 11, fontWeight: 700, cursor: 'pointer', letterSpacing: '0.04em' }}>
                     DEEP · 3-PASS
                   </button>
                 </div>
@@ -862,7 +862,7 @@ export default function GamePage() {
                   borderRadius: 6, padding: '10px 16px', fontSize: 13,
                 }}>
                   <AlertCircle size={14} style={{ color: '#e07070' }} />
-                  <span style={{ color: '#e07070' }}>Auto-detection failed. Tag plays manually or </span>
+                  <span style={{ color: '#e07070' }}>The film breakdown failed. Tag plays manually or </span>
                   <button onClick={() => handleAutoDetect(false, 'fast')} style={{ background: 'none', border: 'none', color: '#C9A84C', fontSize: 13, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
                     try again (Fast)
                   </button>
@@ -881,14 +881,14 @@ export default function GamePage() {
                 }}>
                   <Zap size={15} style={{ color: '#C9A84C', flexShrink: 0 }} />
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: '#f8f6f0' }}>Auto-detect plays with AI</div>
-                    <div style={{ fontSize: 11, color: '#7a7a6e' }}>Claude Vision scans the film and tags every play. <b style={{ color: '#a8a89a' }}>Fast</b> = quick &amp; economical. <b style={{ color: '#C9A84C' }}>Deep</b> = 3-pass engine (pre-snap, post-snap, verify) — richest read, ~3x the cost.</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#f8f6f0' }}>Break down the film with AI</div>
+                    <div style={{ fontSize: 11, color: '#7a7a6e' }}>Your film assistant watches the film and tags every play. <b style={{ color: '#a8a89a' }}>Fast</b> = quick &amp; economical. <b style={{ color: '#C9A84C' }}>Deep</b> = 3-pass engine (pre-snap, post-snap, check) — richest read, ~3x the cost.</div>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
                     <div style={{ display: 'flex', gap: 6 }}>
                       <button
                         onClick={() => handleAutoDetect(false, 'fast')}
-                        title="Single-pass detection — quick and economical."
+                        title="Single-pass breakdown — quick and economical."
                         style={{
                           background: '#2e2e28', color: '#f0eee6', border: '1px solid #44443c', borderRadius: 4,
                           padding: '8px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer', letterSpacing: '0.06em',
@@ -898,7 +898,7 @@ export default function GamePage() {
                       </button>
                       <button
                         onClick={() => handleAutoDetect(false, 'deep')}
-                        title="Three-pass engine: pre-snap read, post-snap enrichment, and Opus verification. Richest analysis, ~3x cost."
+                        title="Three-pass engine: pre-snap read, post-snap detail, and a final check. Richest breakdown, ~3x cost."
                         style={{
                           background: '#C9A84C', color: '#1c1c1c', border: 'none', borderRadius: 4,
                           padding: '8px 16px', fontSize: 12, fontWeight: 700, cursor: 'pointer', letterSpacing: '0.06em',
@@ -910,17 +910,17 @@ export default function GamePage() {
                     <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                       <button
                         onClick={() => handleAutoDetect(false, 'fast', true)}
-                        title="Quick test: analyzes only the first few minutes of film. Costs pennies. Use it to confirm detection and team colors before a full run."
+                        title="Quick test: breaks down only the first few minutes of film. Costs pennies. Use it to confirm the breakdown and team colors before a full run."
                         style={{ background: 'none', border: '1px solid #44443c', borderRadius: 4, color: '#a8d8b0', fontSize: 10, cursor: 'pointer', padding: '4px 10px', fontWeight: 700 }}
                       >
                         QUICK TEST (first 3 min, ~pennies)
                       </button>
                       <button
                         onClick={() => handleAutoDetect(true)}
-                        title="Run a dry run — the AI analyzes the film and shows what it would tag, without saving anything."
+                        title="Run a preview — the AI breaks down the film and shows what it would tag, without saving anything."
                         style={{ background: 'none', border: 'none', color: '#7a7a6e', fontSize: 10, cursor: 'pointer', padding: 0 }}
                       >
-                        or test run (dry)
+                        or preview (nothing saved)
                       </button>
                     </div>
                   </div>
@@ -932,7 +932,7 @@ export default function GamePage() {
             <div style={{ background: 'rgba(201,168,76,0.06)', border: '1px solid rgba(201,168,76,0.25)', borderRadius: 6, padding: '12px 16px', marginBottom: 12 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: '#f8f6f0', marginBottom: 2 }}>Which team do you want the breakdown on?</div>
               <div style={{ fontSize: 11, color: '#a8a89a', marginBottom: 8 }}>
-                The AI needs to tell the two teams apart. Just type each team's jersey color (10 seconds), then run detection. The first box is the team you'll get the scouting report on.
+                The AI needs to tell the two teams apart. Just type each team's jersey color (10 seconds), then break down the film. The first box is the team you'll get the scouting report on.
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
                 <div style={{ flex: 1, minWidth: 160 }}>
@@ -963,7 +963,7 @@ export default function GamePage() {
                 </div>
                 <div style={{ display: 'flex', gap: 16, marginBottom: 12, flexWrap: 'wrap' }}>
                   <div><div style={{ fontSize: 20, fontWeight: 700, color: '#2d8c40' }}>{scorecard.confident}</div><div style={{ fontSize: 10, color: '#7a7a6e' }}>confident</div></div>
-                  <div><div style={{ fontSize: 20, fontWeight: 700, color: '#e0a050' }}>{scorecard.flagged_for_review}</div><div style={{ fontSize: 10, color: '#7a7a6e' }}>flagged for review</div></div>
+                  <div><div style={{ fontSize: 20, fontWeight: 700, color: '#e0a050' }}>{scorecard.flagged_for_review}</div><div style={{ fontSize: 10, color: '#7a7a6e' }}>need your eyes</div></div>
                   <div><div style={{ fontSize: 20, fontWeight: 700, color: '#f8f6f0' }}>{scorecard.avg_confidence}</div><div style={{ fontSize: 10, color: '#7a7a6e' }}>avg confidence</div></div>
                   <div><div style={{ fontSize: 20, fontWeight: 700, color: '#f8f6f0' }}>{scorecard.side_split?.offense}/{scorecard.side_split?.defense}/{scorecard.side_split?.special_teams}</div><div style={{ fontSize: 10, color: '#7a7a6e' }}>off / def / ST</div></div>
                 </div>
@@ -993,13 +993,13 @@ export default function GamePage() {
                   <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
                     <div style={{ fontSize: 11, color: '#a8a89a', marginBottom: 4 }}>Accuracy vs your tagged plays</div>
                     <div style={{ display: 'flex', gap: 16, fontSize: 12, color: '#f0eee6' }}>
-                      <span><b style={{ color: '#C9A84C' }}>{accuracy.recall_pct}%</b> recall ({accuracy.matched}/{accuracy.truth_plays} real plays caught)</span>
-                      <span><b style={{ color: '#C9A84C' }}>{accuracy.precision_pct}%</b> precision</span>
+                      <span><b style={{ color: '#C9A84C' }}>{accuracy.recall_pct}%</b> plays caught ({accuracy.matched}/{accuracy.truth_plays} real plays caught)</span>
+                      <span><b style={{ color: '#C9A84C' }}>{accuracy.precision_pct}%</b> were right</span>
                     </div>
                   </div>
                 ) : (
                   <div style={{ fontSize: 10, color: '#7a7a6e', marginTop: 10, paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                    Want a true accuracy score? Tag this game's plays manually (ground truth), then re-open this card for recall and precision vs your tags.
+                    Want a true accuracy score? Tag this game's plays yourself (the plays you tag yourself), then re-open this card to see plays caught and how many were right vs your tags.
                   </div>
                 )}
               </div>

@@ -415,12 +415,12 @@ class AiDetectWorker(BaseWorker):
         await log_agent_action(
             game_id=game_id, organization_id=str(org_id), job_id=job_id,
             phase="init", level="info",
-            action=f"{AGENT_NAME} starting film analysis",
+            action=f"{AGENT_NAME} starting to break down the film",
             reason=(
-                f"I am {AGENT_NAME} ({AGENT_ROLE}). I will scan this {sport} film frame by "
-                f"frame, identify every play, and record each with a confidence score. "
-                + ("DRY RUN: I will simulate detection without saving any plays."
-                   if dry_run else "Confident reads are saved; low-confidence reads are flagged for your review, never presented as fact.")
+                f"I am {AGENT_NAME} ({AGENT_ROLE}). I will watch this {sport} film play by "
+                f"play, find every snap, and tag each one with a confidence score. "
+                + ("Preview (nothing saved): I will show what I'd tag without saving any plays."
+                   if dry_run else "Plays I'm sure about get saved; the ones I'm not sure about are marked needs your eyes, never presented as fact.")
             ),
             detail={"sport": sport, "dry_run": dry_run},
         )
@@ -459,8 +459,8 @@ class AiDetectWorker(BaseWorker):
                     await log_agent_action(
                         game_id=game_id, organization_id=str(org_id), job_id=job_id,
                         phase="quick_test", level="info",
-                        action=f"Quick test: analyzing only the first {int(duration//60)}m{int(duration%60)}s of film",
-                        reason="A cheap sample to confirm detection and team attribution before you spend on a full game.",
+                        action=f"Quick test: breaking down only the first {int(duration//60)}m{int(duration%60)}s of film",
+                        reason="A cheap sample to confirm the breakdown and team colors before you spend on a full game.",
                         detail={"test_seconds": int(duration)},
                     )
                 # Denser sampling for recall; lighter in deep mode since each batch is 3 calls.
@@ -475,9 +475,9 @@ class AiDetectWorker(BaseWorker):
                     await log_agent_action(
                         game_id=game_id, organization_id=str(org_id), job_id=job_id,
                         phase="frame_extraction", level="error",
-                        action="No frames could be extracted",
-                        reason="ffmpeg returned zero frames from this film. The file may be unreadable, "
-                               "empty, or in an unsupported format. Detection cannot proceed.",
+                        action="Couldn't pull any frames from the film",
+                        reason="We got zero frames from this film. The file may be unreadable, "
+                               "empty, or in a format we can't open. The breakdown can't go on.",
                     )
                     async with AsyncSessionLocal() as db:
                         await db.execute(update(Game).where(Game.id == game_id).values(status="ready"))
@@ -488,9 +488,9 @@ class AiDetectWorker(BaseWorker):
                 await log_agent_action(
                     game_id=game_id, organization_id=str(org_id), job_id=job_id,
                     phase="frame_extraction", level="info",
-                    action=f"Extracted {len(frame_paths)} frames to analyze",
-                    reason="Sampled the film at scene changes plus a uniform interval grid to catch every "
-                           "snap. Each frame carries its real timestamp.",
+                    action=f"Pulled {len(frame_paths)} frames to break down",
+                    reason="Grabbed snapshots at scene changes plus an even spread across the film to catch every "
+                           "snap. Each frame keeps its real timestamp.",
                     detail={"frame_count": len(frame_paths), "after_cluster": len(frame_paths),
                             **getattr(self, "_extract_diag", {})},
                 )
@@ -511,9 +511,9 @@ class AiDetectWorker(BaseWorker):
                     await log_agent_action(
                         game_id=game_id, organization_id=str(org_id), job_id=job_id,
                         phase="cost_guard", level="info",
-                        action=f"Cost guard: analyzing {len(batches)} of {total_segments} segments (even sampling across the full film)",
-                        reason=f"To stay within budget I sampled the whole game at lower density "
-                               f"(~{len(batches) * calls_per_seg} vision calls). Re-run with Full coverage to analyze every segment.",
+                        action=f"Cost guard: breaking down {len(batches)} of {total_segments} parts of the film (evenly spread across the whole game)",
+                        reason=f"To stay within budget I covered the whole game at lower density "
+                               f"(~{len(batches) * calls_per_seg} AI looks). Re-run with Full coverage to break down every part.",
                         detail={"segments_analyzed": len(batches), "segments_total": total_segments,
                                 "estimated_calls": len(batches) * calls_per_seg},
                     )
@@ -540,9 +540,9 @@ class AiDetectWorker(BaseWorker):
                             await log_agent_action(
                                 game_id=game_id, organization_id=str(org_id), job_id=job_id,
                                 phase="vision_analysis", level="warn",
-                                action=f"Segment {batch_idx+1} could not be read",
-                                reason=f"This segment failed and was skipped so the rest of the film still gets "
-                                       f"analyzed. Cause: {str(e)[:200]}",
+                                action=f"Part {batch_idx+1} of the film could not be read",
+                                reason=f"This clip failed and was skipped so the rest of the film still gets "
+                                       f"broken down. Cause: {str(e)[:200]}",
                                 detail={"batch": batch_idx + 1},
                             )
                             return
@@ -555,9 +555,9 @@ class AiDetectWorker(BaseWorker):
                             await log_agent_action(
                                 game_id=game_id, organization_id=str(org_id), job_id=job_id,
                                 phase="vision_analysis", level="info",
-                                action=f"Analyzed {completed} of {len(batches)} segments — {len(plays)} play(s) in the latest",
-                                reason=f"Reading play development across consecutive frames. "
-                                       f"Segment confidence: {confidence_band(avg_c)}.",
+                                action=f"Broke down {completed} of {len(batches)} parts of the film — {len(plays)} play(s) in the latest",
+                                reason=f"Watching each play unfold across back-to-back frames. "
+                                       f"Confidence on this clip: {confidence_band(avg_c)}.",
                                 confidence=avg_c,
                                 detail={"completed": completed, "total_batches": len(batches),
                                         "plays_in_batch": len(plays)},
@@ -588,9 +588,9 @@ class AiDetectWorker(BaseWorker):
                     await log_agent_action(
                         game_id=game_id, organization_id=str(org_id), job_id=job_id,
                         phase="dry_run", level="success",
-                        action=f"DRY RUN complete — would have saved {len(deduped)} play(s)",
-                        reason=f"Simulation only. No plays were written. {needs_review_count} would be "
-                               f"flagged for review. Overall confidence: {confidence_band(avg_conf)}.",
+                        action=f"Preview complete (nothing saved) — would have saved {len(deduped)} play(s)",
+                        reason=f"Preview only. No plays were saved. {needs_review_count} would be "
+                               f"marked needs your eyes. Overall confidence: {confidence_band(avg_conf)}.",
                         confidence=avg_conf,
                         detail={"would_persist": len(deduped), "would_flag_for_review": needs_review_count,
                                 "failed_batches": failed_batches},
@@ -703,9 +703,9 @@ class AiDetectWorker(BaseWorker):
                     await log_agent_action(
                         game_id=game_id, organization_id=str(org_id), job_id=job_id,
                         phase="escalation", level="escalation",
-                        action=f"{needs_review_count} play(s) flagged for your review",
-                        reason="These reads fell below my confidence threshold. I will not present them "
-                               "as fact. Please verify them in the Play Log before game-planning around them.",
+                        action=f"{needs_review_count} play(s) need your eyes",
+                        reason="I wasn't sure enough about these. I won't present them "
+                               "as fact. Give them a quick check in the Play Log before you game-plan around them.",
                         confidence=avg_conf,
                         detail={"needs_review": needs_review_count, "total_plays": total_plays,
                                 "threshold": ESCALATION_THRESHOLD},
@@ -715,10 +715,10 @@ class AiDetectWorker(BaseWorker):
                 await log_agent_action(
                     game_id=game_id, organization_id=str(org_id), job_id=job_id,
                     phase="complete", level="success",
-                    action=f"Analysis complete — {total_plays} play(s) detected",
+                    action=f"Breakdown complete — {total_plays} play(s) found",
                     reason=f"Overall confidence: {confidence_band(avg_conf)}. "
-                           f"{total_plays - needs_review_count} confident, {needs_review_count} flagged for review."
-                           + (f" {failed_batches} segment(s) were skipped." if failed_batches else ""),
+                           f"{total_plays - needs_review_count} I'm sure about, {needs_review_count} need your eyes."
+                           + (f" {failed_batches} part(s) of the film were skipped." if failed_batches else ""),
                     confidence=avg_conf,
                     detail={"total_plays": total_plays, "needs_review": needs_review_count,
                             "failed_batches": failed_batches},
@@ -730,7 +730,7 @@ class AiDetectWorker(BaseWorker):
             await log_agent_action(
                 game_id=game_id, organization_id=str(org_id), job_id=job_id,
                 phase="error", level="error",
-                action="Detection stopped before completing",
+                action="Film breakdown stopped before finishing",
                 reason=f"I hit an error and stopped rather than guess: {str(e)[:300]}",
             )
             raise
