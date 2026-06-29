@@ -150,6 +150,38 @@ async def rederive_downs(
     }
 
 
+@router.get("/{game_id}/tendencies")
+async def game_tendencies(
+    game_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """The full structured tendency breakdown of a game's plays. Deterministic
+    (no AI / no API spend) — lets a coach see run/pass, formation, down-and-distance
+    and situational tendencies directly from the detected plays."""
+    from backend.services.tendency_engine.engine import run_tendency_engine
+
+    game = (await db.execute(
+        select(Game).where(Game.id == game_id, Game.organization_id == user.organization_id)
+    )).scalar_one_or_none()
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    res = await db.execute(
+        select(Event).where(Event.game_id == game_id, Event.organization_id == user.organization_id)
+    )
+    events = list(res.scalars().all())
+    if not events:
+        return {"ready": False, "reason": "No plays yet. Break down the film first."}
+
+    sport = (game.sport or "football").lower()
+    data = await run_tendency_engine(sport, events)
+    # Flag the team-attribution caveat so the UI can warn honestly.
+    team_set = bool((game.scout_jersey or "").strip())
+    return {"ready": True, "sport": sport, "team_colors_set": team_set,
+            "opponent": game.opponent, "title": game.title, **data}
+
+
 @router.get("/{game_id}/coverage")
 async def coverage_scorecard(
     game_id: str,

@@ -1,10 +1,10 @@
 'use client'
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, Fragment } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Sidebar from '@/components/layout/Sidebar'
 import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
-import { ChevronLeft, Tag, Play, Trash2, Clock, FileText, Loader2, CheckCircle, AlertCircle, Zap, Pencil, Check, X, Activity } from 'lucide-react'
+import { ChevronLeft, Tag, Play, Trash2, Clock, FileText, Loader2, CheckCircle, AlertCircle, Zap, Pencil, Check, X, Activity, TrendingUp } from 'lucide-react'
 import Link from 'next/link'
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -493,6 +493,124 @@ function PlayLog({
 }
 
 // ── Accuracy Panel ─────────────────────────────────────────────────────────
+function TendenciesPanel({ gameId }: { gameId: string }) {
+  const [data, setData] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+  useEffect(() => {
+    setLoading(true)
+    api.get(`/games/${gameId}/tendencies`).then(r => setData(r.data)).catch(() => setData(null)).finally(() => setLoading(false))
+  }, [gameId])
+
+  if (loading) return <div style={{ textAlign: 'center', padding: 24 }}><Loader2 size={20} style={{ color: '#C9A84C', animation: 'spin 1s linear infinite' }} /></div>
+  if (!data || !data.ready) {
+    return <div style={{ fontSize: 12, color: '#7a7a6e', padding: 8 }}>{data?.reason || 'No tendencies yet. Break down the film first.'}</div>
+  }
+
+  const off = data.offense || {}
+  const deff = data.defense || {}
+  const st = data.special_teams || {}
+  const rp = off.run_pass_ratio || {}
+  const totalOff = off.total_plays || 0
+
+  const Bars = ({ obj, total, color = '#C9A84C' }: { obj: any; total: number; color?: string }) => {
+    const entries = Object.entries(obj || {}).slice(0, 6) as [string, number][]
+    if (!entries.length) return <div style={{ fontSize: 11, color: '#7a7a6e' }}>—</div>
+    const max = Math.max(...entries.map(([, v]) => v), 1)
+    return (<div>{entries.map(([k, v]) => (
+      <div key={k} style={{ marginBottom: 5 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#b8b8aa' }}>
+          <span>{k}</span><span>{v}{total ? ` · ${Math.round(v / total * 100)}%` : ''}</span>
+        </div>
+        <div style={{ height: 4, background: 'rgba(255,255,255,0.07)', borderRadius: 2, marginTop: 2 }}>
+          <div style={{ height: 4, width: `${v / max * 100}%`, background: color, borderRadius: 2 }} />
+        </div>
+      </div>
+    ))}</div>)
+  }
+
+  const DOWN_ROWS: [string, string][] = [
+    ['first_down', '1st down'], ['second_short', '2nd & short'], ['second_medium', '2nd & med'], ['second_long', '2nd & long'],
+    ['third_short', '3rd & short'], ['third_medium', '3rd & med'], ['third_long', '3rd & long'], ['fourth_down', '4th down'],
+  ]
+  const downRows = DOWN_ROWS.map(([k, label]) => [label, off[k]] as [string, any]).filter(([, d]) => d && d.count > 0)
+  const Section = ({ title, children }: { title: string; children: any }) => (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: '#C9A84C', letterSpacing: '0.04em', marginBottom: 6 }}>{title}</div>
+      {children}
+    </div>
+  )
+  const stat = (label: string, val: any, suffix = '') => (
+    <div><div style={{ fontSize: 18, fontWeight: 700, color: '#f8f6f0' }}>{val}{suffix}</div><div style={{ fontSize: 10, color: '#7a7a6e' }}>{label}</div></div>
+  )
+
+  return (
+    <div style={{ fontSize: 12, color: '#ede9df' }}>
+      {!data.team_colors_set && (
+        <div style={{ background: 'rgba(224,168,80,0.1)', border: '1px solid rgba(224,168,80,0.3)', borderRadius: 6, padding: '8px 12px', marginBottom: 12, fontSize: 11, color: '#e0c080' }}>
+          Heads up: no team colors set, so these tendencies may mix both teams. Set colors above and re-run for a clean, single-team breakdown.
+        </div>
+      )}
+
+      <Section title={`Offense — ${totalOff} plays`}>
+        <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
+          {stat('run', rp.run_pct ?? 0, '%')}
+          {stat('pass', rp.pass_pct ?? 0, '%')}
+          {stat('success rate', off.overall_success_rate ?? 0, '%')}
+          {stat('yds / play', off.avg_yards_per_play ?? 0)}
+          {stat('yds / run', off.avg_yards_per_run ?? 0)}
+          {stat('yds / pass', off.avg_yards_per_pass ?? 0)}
+        </div>
+      </Section>
+
+      {downRows.length > 0 && (
+        <Section title="Run / pass by down & distance">
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto', gap: '3px 10px', fontSize: 11 }}>
+            <div style={{ color: '#7a7a6e' }}></div><div style={{ color: '#7a7a6e' }}>plays</div><div style={{ color: '#7a7a6e' }}>run/pass</div><div style={{ color: '#7a7a6e' }}>yds</div>
+            {downRows.map(([label, d]) => (
+              <Fragment key={label}>
+                <div style={{ color: '#e8e4d8' }}>{label}</div>
+                <div>{d.count}</div>
+                <div><span style={{ color: '#7fb88a' }}>{d.run_pct}%</span> / <span style={{ color: '#d8a86a' }}>{d.pass_pct}%</span></div>
+                <div>{d.avg_yards}</div>
+              </Fragment>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, minWidth: 150 }}><Section title="Top formations"><Bars obj={off.top_formations} total={totalOff} /></Section></div>
+        <div style={{ flex: 1, minWidth: 150 }}><Section title="Play types"><Bars obj={off.play_type_mix} total={totalOff} color="#7fb88a" /></Section></div>
+      </div>
+
+      {off.red_zone && off.red_zone.total > 0 && (
+        <Section title={`Red zone — ${off.red_zone.total} plays`}>
+          <div style={{ fontSize: 11, color: '#b8b8aa' }}>
+            run <b style={{ color: '#f0eee6' }}>{off.red_zone.run_pct}%</b> / pass <b style={{ color: '#f0eee6' }}>{off.red_zone.pass_pct}%</b>
+            {off.red_zone.scoring_plays != null && <> · {off.red_zone.scoring_plays} scores</>}
+          </div>
+        </Section>
+      )}
+
+      {(deff.total_plays > 0) && (
+        <Section title={`Defense — ${deff.total_plays} plays`}>
+          <Bars obj={deff.fronts || deff.top_fronts} total={deff.total_plays} color="#9aa6c9" />
+        </Section>
+      )}
+
+      {(st.total_plays > 0) && (
+        <Section title={`Special teams — ${st.total_plays} plays`}>
+          <Bars obj={st.units} total={st.total_plays} color="#c99a6a" />
+        </Section>
+      )}
+
+      <div style={{ fontSize: 10, color: '#7a7a6e', marginTop: 6, borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 8 }}>
+        Confidence: {data.data_confidence?.confidence_band || 'unknown'}. These numbers come straight from the detected plays, no AI write-up needed. Tag plays or set team colors to sharpen them.
+      </div>
+    </div>
+  )
+}
+
 function AccuracyPanel({ gameId }: { gameId: string }) {
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
@@ -573,7 +691,7 @@ export default function GamePage() {
   const [events, setEvents] = useState<TaggedEvent[]>([])
   const [currentTime, setCurrentTime] = useState(0)
   const [saving, setSaving] = useState(false)
-  const [tab, setTab] = useState<'tag' | 'log' | 'accuracy'>('tag')
+  const [tab, setTab] = useState<'tag' | 'log' | 'tendencies' | 'accuracy'>('tag')
   const [side, setSide] = useState<'offense' | 'defense' | 'special_teams'>('offense')
   const [reportPending, setReportPending] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
@@ -1053,7 +1171,7 @@ export default function GamePage() {
           }}>
             {/* Tabs */}
             <div style={{ display: 'flex', borderBottom: '1px solid rgba(255,255,255,0.06)', flexShrink: 0 }}>
-              {(['tag', 'log', 'accuracy'] as const).map(t => (
+              {(['tag', 'log', 'tendencies', 'accuracy'] as const).map(t => (
                 <button
                   key={t}
                   onClick={() => setTab(t)}
@@ -1068,6 +1186,7 @@ export default function GamePage() {
                 >
                   {t === 'tag' ? <><Tag size={11} style={{ display: 'inline', marginRight: 4 }} />Tag</>
                     : t === 'log' ? <><FileText size={11} style={{ display: 'inline', marginRight: 4 }} />Log ({events.length})</>
+                    : t === 'tendencies' ? <><TrendingUp size={11} style={{ display: 'inline', marginRight: 4 }} />Tendencies</>
                     : <><Activity size={11} style={{ display: 'inline', marginRight: 4 }} />Accuracy</>}
                 </button>
               ))}
@@ -1079,6 +1198,8 @@ export default function GamePage() {
                 ? <TagForm currentTime={currentTime} onSave={handleSaveTag} saving={saving} side={side} setSide={setSide} opponent={game.opponent} />
                 : tab === 'log'
                 ? <PlayLog events={events} onDelete={handleDelete} onSeek={handleSeek} onUpdate={handleUpdate} />
+                : tab === 'tendencies'
+                ? <TendenciesPanel gameId={id} />
                 : <AccuracyPanel gameId={id} />
               }
             </div>
