@@ -54,12 +54,21 @@ async def accuracy_benchmark(
             "truth_plays": len(truth), "ai_plays": 0,
         }
 
+    # Scope to the time span the coach actually tagged, so tagging a representative
+    # slice (e.g. one quarter) is judged fairly instead of being punished for the AI
+    # plays elsewhere in the game.
+    tmin = min((t.time_seconds or 0) for t in truth)
+    tmax = max((t.time_seconds or 0) for t in truth)
+    w_lo, w_hi = tmin - ACCURACY_MATCH_WINDOW_S, tmax + ACCURACY_MATCH_WINDOW_S
+    pred_window = [p for p in pred if w_lo <= (p.time_seconds or 0) <= w_hi]
+    scoped = len(pred_window) < len(pred)
+
     # Greedy nearest-in-time matching, one prediction per truth play.
     used = set()
     matches = []
     for t in truth:
         best_i, best_d = None, ACCURACY_MATCH_WINDOW_S + 1
-        for i, p in enumerate(pred):
+        for i, p in enumerate(pred_window):
             if i in used:
                 continue
             d = abs((p.time_seconds or 0) - (t.time_seconds or 0))
@@ -67,10 +76,12 @@ async def accuracy_benchmark(
                 best_i, best_d = i, d
         if best_i is not None:
             used.add(best_i)
-            matches.append((t, pred[best_i]))
+            matches.append((t, pred_window[best_i]))
 
     recall = len(matches) / len(truth) if truth else 0
-    precision = len(matches) / len(pred) if pred else 0
+    precision = len(matches) / len(pred_window) if pred_window else 0
+    missed = len(truth) - len(matches)            # real plays the AI did not catch
+    false_pos = len(pred_window) - len(matches)   # AI plays that matched no real play
 
     # Per-attribute agreement on matched pairs (only where the truth has a value).
     fields = ["side", "play_type", "down", "distance", "formation", "defensive_front", "coverage", "result"]
@@ -89,11 +100,16 @@ async def accuracy_benchmark(
     return {
         "ready": True,
         "truth_plays": len(truth),
-        "ai_plays": len(pred),
+        "ai_plays": len(pred_window),
+        "ai_plays_total": len(pred),
         "matched": len(matches),
+        "missed": missed,
+        "false_positives": false_pos,
         "recall_pct": round(recall * 100, 1),       # of real plays, how many AI caught
-        "precision_pct": round(precision * 100, 1),  # of AI plays, how many were real
+        "precision_pct": round(precision * 100, 1),  # of AI plays (in window), how many were real
         "match_window_s": ACCURACY_MATCH_WINDOW_S,
+        "scoped_to_tags": scoped,
+        "window": {"start": int(tmin), "end": int(tmax)},
         "attribute_accuracy": attr,
     }
 

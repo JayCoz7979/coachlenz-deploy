@@ -715,11 +715,16 @@ function AccuracyPanel({ gameId }: { gameId: string }) {
     <div style={{ fontSize: 12, color: '#ede9df', display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ fontWeight: 700, color: '#C9A84C' }}>AI Accuracy vs Your Tags</div>
       <div style={{ display: 'flex', gap: 8 }}>
-        {big('Plays Caught', data.recall_pct, 'plays caught', '#2d8c40')}
-        {big('How Many Right', data.precision_pct, 'tags real', '#C9A84C')}
+        {big('Plays Caught', data.recall_pct, `${data.matched}/${data.truth_plays} of yours`, '#2d8c40')}
+        {big('How Many Right', data.precision_pct, 'AI plays real', '#C9A84C')}
       </div>
-      <div style={{ fontSize: 11, color: '#7a7a6e' }}>
-        Matched {data.matched} of {data.truth_plays} your plays · AI tagged {data.ai_plays} (±{data.match_window_s}s window)
+      <div style={{ fontSize: 11, color: '#7a7a6e', lineHeight: 1.6 }}>
+        Compared against the <b style={{ color: '#ede9df' }}>{data.truth_plays}</b> plays you tagged.
+        AI missed <b style={{ color: data.missed > 0 ? '#e07070' : '#2d8c40' }}>{data.missed}</b> of them
+        and had <b style={{ color: data.false_positives > 0 ? '#e0a050' : '#2d8c40' }}>{data.false_positives}</b> extra plays that matched none of yours
+        {data.scoped_to_tags && data.window && (
+          <> · scored only over the stretch you tagged ({fmtTime(data.window.start)}–{fmtTime(data.window.end)}), so a partial sample is judged fairly</>
+        )}.
       </div>
       <div>
         <div style={{ fontSize: 10, color: '#7a7a6e', letterSpacing: '0.08em', marginBottom: 6 }}>ATTRIBUTE ACCURACY (on matched plays)</div>
