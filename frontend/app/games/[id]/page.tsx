@@ -4,7 +4,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Sidebar from '@/components/layout/Sidebar'
 import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
-import { ChevronLeft, Tag, Play, Trash2, Clock, FileText, Loader2, CheckCircle, AlertCircle, Zap, Pencil, Check, X, Activity, TrendingUp } from 'lucide-react'
+import { ChevronLeft, Tag, Play, Trash2, Clock, FileText, Loader2, CheckCircle, AlertCircle, Zap, Pencil, Check, X, Activity, TrendingUp, Users } from 'lucide-react'
 import Link from 'next/link'
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -493,6 +493,64 @@ function PlayLog({
 }
 
 // ── Accuracy Panel ─────────────────────────────────────────────────────────
+function PlayersPanel({ gameId }: { gameId: string }) {
+  const [data, setData] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+  useEffect(() => {
+    setLoading(true)
+    api.get(`/games/${gameId}/players`).then(r => setData(r.data)).catch(() => setData(null)).finally(() => setLoading(false))
+  }, [gameId])
+
+  if (loading) return <div style={{ textAlign: 'center', padding: 24 }}><Loader2 size={20} style={{ color: '#C9A84C', animation: 'spin 1s linear infinite' }} /></div>
+  if (!data) return <div style={{ fontSize: 12, color: '#7a7a6e', padding: 8 }}>Could not load players.</div>
+
+  const cov = data.coverage || {}
+  const players = data.by_player || []
+
+  if (!data.tracked || !players.length) {
+    return (
+      <div style={{ fontSize: 12, color: '#ede9df', lineHeight: 1.6 }}>
+        <div style={{ fontWeight: 700, color: '#C9A84C', marginBottom: 8 }}>Players by jersey number</div>
+        <p style={{ color: '#7a7a6e' }}>{data.note || 'No readable jersey numbers on this film yet.'}</p>
+        <p style={{ color: '#7a7a6e', fontSize: 11, marginTop: 8 }}>
+          The AI only tags a player when it can actually read the number on the jersey. On a wide press-box angle that is often not possible. Tighter end-zone or sideline film reads far more numbers.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ fontSize: 12, color: '#ede9df' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
+        <span style={{ fontWeight: 700, color: '#C9A84C' }}>Players by jersey number</span>
+        <span style={{ fontSize: 11, color: '#7a7a6e', marginLeft: 'auto' }}>
+          {cov.events_with_players} of {cov.total_events} plays had a readable number ({cov.pct}%)
+        </span>
+      </div>
+      <div>
+        {players.map((p: any) => (
+          <div key={`${p.team}-${p.jersey}`} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+            <div style={{ minWidth: 44, textAlign: 'center' }}>
+              <div style={{ fontSize: 20, fontWeight: 800, color: '#f8f6f0', lineHeight: 1 }}>#{p.jersey}</div>
+              <div style={{ fontSize: 9, color: p.team === 'defense' ? '#9aa6c9' : '#7fb88a', textTransform: 'uppercase', fontWeight: 700 }}>{p.team || ''}</div>
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 11, color: '#b8b8aa' }}>
+                {Object.entries(p.roles || {}).slice(0, 4).map(([r, n]: any) => `${r} ×${n}`).join(' · ') || '—'}
+              </div>
+            </div>
+            <div style={{ textAlign: 'right', flexShrink: 0 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: '#C9A84C' }}>{p.appearances}</div>
+              <div style={{ fontSize: 9, color: '#7a7a6e' }}>plays{p.as_primary ? ` · ${p.as_primary} as main` : ''}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <p style={{ fontSize: 10, color: '#7a7a6e', marginTop: 10 }}>{data.note}</p>
+    </div>
+  )
+}
+
 function TendenciesPanel({ gameId }: { gameId: string }) {
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
@@ -691,7 +749,7 @@ export default function GamePage() {
   const [events, setEvents] = useState<TaggedEvent[]>([])
   const [currentTime, setCurrentTime] = useState(0)
   const [saving, setSaving] = useState(false)
-  const [tab, setTab] = useState<'tag' | 'log' | 'tendencies' | 'accuracy'>('tag')
+  const [tab, setTab] = useState<'tag' | 'log' | 'tendencies' | 'players' | 'accuracy'>('tag')
   const [side, setSide] = useState<'offense' | 'defense' | 'special_teams'>('offense')
   const [reportPending, setReportPending] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
@@ -1171,7 +1229,7 @@ export default function GamePage() {
           }}>
             {/* Tabs */}
             <div style={{ display: 'flex', borderBottom: '1px solid rgba(255,255,255,0.06)', flexShrink: 0 }}>
-              {(['tag', 'log', 'tendencies', 'accuracy'] as const).map(t => (
+              {(['tag', 'log', 'tendencies', 'players', 'accuracy'] as const).map(t => (
                 <button
                   key={t}
                   onClick={() => setTab(t)}
@@ -1187,6 +1245,7 @@ export default function GamePage() {
                   {t === 'tag' ? <><Tag size={11} style={{ display: 'inline', marginRight: 4 }} />Tag</>
                     : t === 'log' ? <><FileText size={11} style={{ display: 'inline', marginRight: 4 }} />Log ({events.length})</>
                     : t === 'tendencies' ? <><TrendingUp size={11} style={{ display: 'inline', marginRight: 4 }} />Tendencies</>
+                    : t === 'players' ? <><Users size={11} style={{ display: 'inline', marginRight: 4 }} />Players</>
                     : <><Activity size={11} style={{ display: 'inline', marginRight: 4 }} />Accuracy</>}
                 </button>
               ))}
@@ -1200,6 +1259,8 @@ export default function GamePage() {
                 ? <PlayLog events={events} onDelete={handleDelete} onSeek={handleSeek} onUpdate={handleUpdate} />
                 : tab === 'tendencies'
                 ? <TendenciesPanel gameId={id} />
+                : tab === 'players'
+                ? <PlayersPanel gameId={id} />
                 : <AccuracyPanel gameId={id} />
               }
             </div>
