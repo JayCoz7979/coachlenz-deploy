@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Fragment } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Sidebar from '@/components/layout/Sidebar'
 import { useAuth } from '@/lib/auth'
@@ -34,6 +34,46 @@ const SECTION_ICONS: Record<string, any> = {
   default: FileText,
 }
 
+// Lightweight rich text: renders **bold**, bullet lists, and paragraphs so a
+// scouting report reads clean instead of showing raw markdown characters.
+function inlineFmt(text: string) {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
+    part.startsWith('**') && part.endsWith('**')
+      ? <strong key={i} style={{ color: '#f8f6f0' }}>{part.slice(2, -2)}</strong>
+      : <Fragment key={i}>{part}</Fragment>
+  )
+}
+
+function RichText({ text }: { text: string }) {
+  const blocks = (text || '').trim().split(/\n\s*\n/)
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {blocks.map((block, bi) => {
+        const lines = block.split('\n').filter(l => l.trim())
+        const isList = lines.length > 0 && lines.every(l => /^\s*[-•*]\s+/.test(l))
+        if (isList) {
+          return (
+            <ul key={bi} style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 5 }}>
+              {lines.map((l, li) => (
+                <li key={li} style={{ fontSize: 13, color: '#ede9df', lineHeight: 1.6 }}>{inlineFmt(l.replace(/^\s*[-•*]\s+/, ''))}</li>
+              ))}
+            </ul>
+          )
+        }
+        const isHeading = lines.length === 1 && /^#{1,3}\s+/.test(lines[0])
+        if (isHeading) {
+          return <div key={bi} style={{ fontSize: 13, fontWeight: 700, color: '#C9A84C' }}>{inlineFmt(lines[0].replace(/^#{1,3}\s+/, ''))}</div>
+        }
+        return (
+          <p key={bi} style={{ fontSize: 13, color: '#ede9df', lineHeight: 1.7, margin: 0 }}>
+            {lines.map((l, li) => <Fragment key={li}>{li > 0 && <br />}{inlineFmt(l)}</Fragment>)}
+          </p>
+        )
+      })}
+    </div>
+  )
+}
+
 function SectionCard({ section }: { section: Section }) {
   const Icon = SECTION_ICONS[section.insight_type ?? 'default'] ?? SECTION_ICONS.default
   return (
@@ -53,9 +93,7 @@ function SectionCard({ section }: { section: Section }) {
           {section.heading}
         </h3>
       </div>
-      <p style={{ fontSize: 13, color: '#ede9df', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
-        {section.body}
-      </p>
+      <RichText text={section.body} />
     </div>
   )
 }
@@ -225,7 +263,7 @@ export default function ReportPage() {
                 PLAYS ANALYZED
               </div>
               {typeof report.summary === 'string'
-                ? <p style={{ fontSize: 14, color: '#ede9df', lineHeight: 1.7 }}>{report.summary}</p>
+                ? <RichText text={report.summary} />
                 : (() => {
                     // Only show scalar count fields; skip nested objects (detailed in sections below).
                     const counts: { label: string; value: any }[] = []
