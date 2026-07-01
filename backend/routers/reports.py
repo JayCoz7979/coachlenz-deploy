@@ -58,6 +58,20 @@ async def get_report(report_id: str, user: User = Depends(get_current_user), db:
             summary = decrypt_json(report.summary_json)
         except Exception:
             pass
+
+    sections = report.prose_sections or []
+    # Recover a report whose sections are a raw-JSON dump (a past parse failure).
+    # Re-parse with the tolerant parser and persist the fix so it's permanent.
+    if len(sections) == 1 and isinstance(sections[0], dict):
+        body = sections[0].get("body") or ""
+        if '"heading"' in body and '"insight_type"' in body:
+            from backend.services.report_writer import _parse_report_sections
+            recovered = _parse_report_sections(body)
+            if len(recovered) > 1 or (recovered and recovered[0].get("heading") != "Tendency Analysis"):
+                sections = recovered
+                report.prose_sections = recovered
+                await db.commit()
+
     return {
         "id": str(report.id),
         "title": report.title,
@@ -65,7 +79,7 @@ async def get_report(report_id: str, user: User = Depends(get_current_user), db:
         "report_type": report.report_type,
         "is_trial": report.is_trial,
         "watermarked": report.watermarked,
-        "sections": report.prose_sections or [],
+        "sections": sections,
         "summary": summary,
         "generated_at": report.generated_at.isoformat() if report.generated_at else None,
     }
