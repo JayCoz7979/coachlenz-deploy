@@ -28,10 +28,13 @@ RULES:
 - Lead with the most exploitable finding in each section, not the most common one
 - "Exploitable" means a tendency that is both strong (high %) AND has a counter-strategy
 
-SECTION FORMATS:
-- Body paragraphs: 2-3 punchy paragraphs per section, not walls of text
-- Include inline counts: never say "often" when you can say "7 of 9 times"
-- Flag anomalies: if a tendency disappears in the red zone vs. open field, say so
+SECTION FORMATS (write for a coach scanning fast before a game, NOT an essay):
+- Start each section with ONE short lead sentence, the single biggest takeaway.
+- Then use BULLET POINTS (start each line with "- ") for the specifics: each tendency, each by-situation split, each exploitable pattern, and what to do about it. One idea per bullet, one sentence each.
+- Bold the key numbers and calls with **double asterisks** so they pop when scanned, e.g. "- **86% pass** on 3rd & long (14 of 16), sit on the sticks."
+- Every bullet includes counts, never "often" when you can say "7 of 9 times".
+- Default to bullets. Only use a short paragraph for the one-line lead, never walls of text.
+- Flag anomalies as their own bullet (e.g. a tendency that flips in the red zone).
 """
 
 
@@ -48,10 +51,13 @@ RULES:
 - Lead with the most exploitable finding in each section
 - "Exploitable" means a tendency that is both strong AND has a clear counter
 
-SECTION FORMATS:
-- 2-3 punchy paragraphs per section, not walls of text
-- Include counts: never say "often" when you can say "14 of 19 possessions"
-- Call out hot zones AND cold zones — both matter for defensive positioning
+SECTION FORMATS (write for a coach scanning fast before a game, NOT an essay):
+- Start each section with ONE short lead sentence, the single biggest takeaway.
+- Then use BULLET POINTS (start each line with "- ") for the specifics: each tendency, each hot/cold zone, each exploitable pattern, and what to do about it. One idea per bullet, one sentence each.
+- Bold the key numbers with **double asterisks** so they pop when scanned, e.g. "- **54% FG** on the pick and roll (23 possessions), hedge hard."
+- Every bullet includes counts, never "often" when you can say "14 of 19 possessions".
+- Default to bullets. Only use a short paragraph for the one-line lead, never walls of text.
+- Call out hot zones AND cold zones, each as its own bullet.
 """
 
 
@@ -294,11 +300,14 @@ Write a complete opponent scouting report as a JSON array. Each element: {{"head
 SECTIONS (write every one, in this exact order):
 {section_outline}
 
-BODY FORMAT:
-- Plain text only, paragraphs separated by \\n\\n
-- Always cite play counts alongside percentages
-- Lead each section with the most exploitable finding
-- EXPLOITABLE PATTERNS sections: use bullet points starting with •
+BODY FORMAT (a coach scans this fast, do NOT write essays):
+- Each section body = ONE short lead sentence, then a blank line, then BULLET POINTS. Put each bullet on its own line starting with "- ".
+- One tendency or one action per bullet, one sentence each.
+- Bold key numbers and calls with **double asterisks** so they pop, e.g. "- **86% pass** on 3rd & long (14 of 16), sit on the sticks."
+- Every bullet cites play counts alongside percentages.
+- Lead each section (the one sentence) with the most exploitable finding.
+- Separate the lead sentence from the bullets with a blank line (\\n\\n) so they format as a list.
+- Do not write multi-sentence paragraphs. Default to bullets everywhere.
 
 Return ONLY the JSON array, nothing else."""
 
@@ -553,11 +562,14 @@ Write a complete basketball opponent scouting report as a JSON array. Each eleme
 SECTIONS (write every one in order):
 {section_outline}
 
-BODY FORMAT:
-- Plain text, paragraphs separated by \\n\\n
-- Always cite attempt counts alongside percentages
-- EXPLOITABLE PATTERNS sections: bullet points starting with •
-- Lead every section with the most actionable finding
+BODY FORMAT (a coach scans this fast, do NOT write essays):
+- Each section body = ONE short lead sentence, then a blank line, then BULLET POINTS. Put each bullet on its own line starting with "- ".
+- One tendency or one action per bullet, one sentence each.
+- Bold key numbers with **double asterisks**, e.g. "- **54% FG** on the pick and roll (23 possessions), hedge hard."
+- Every bullet cites attempt counts alongside percentages.
+- Lead each section (the one sentence) with the most actionable finding.
+- Separate the lead sentence from the bullets with a blank line (\\n\\n) so they format as a list.
+- Do not write multi-sentence paragraphs. Default to bullets everywhere.
 
 Return ONLY the JSON array, nothing else."""
 
