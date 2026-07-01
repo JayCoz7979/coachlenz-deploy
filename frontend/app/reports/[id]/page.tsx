@@ -49,9 +49,11 @@ function RichText({ text }: { text: string }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       {blocks.map((block, bi) => {
-        const lines = block.split('\n').filter(l => l.trim())
-        const isList = lines.length > 0 && lines.every(l => /^\s*[-•*]\s+/.test(l))
-        if (isList) {
+        const lines = block.split('\n').map(l => l.trim()).filter(Boolean)
+        if (!lines.length) return null
+        // A block with multiple lines is a list of points — render as real bullets,
+        // whether or not the writer prefixed them with a dash.
+        if (lines.length >= 2) {
           return (
             <ul key={bi} style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 5 }}>
               {lines.map((l, li) => (
@@ -60,13 +62,13 @@ function RichText({ text }: { text: string }) {
             </ul>
           )
         }
-        const isHeading = lines.length === 1 && /^#{1,3}\s+/.test(lines[0])
-        if (isHeading) {
-          return <div key={bi} style={{ fontSize: 13, fontWeight: 700, color: '#C9A84C' }}>{inlineFmt(lines[0].replace(/^#{1,3}\s+/, ''))}</div>
+        const one = lines[0]
+        if (/^#{1,3}\s+/.test(one)) {
+          return <div key={bi} style={{ fontSize: 13, fontWeight: 700, color: '#C9A84C' }}>{inlineFmt(one.replace(/^#{1,3}\s+/, ''))}</div>
         }
         return (
           <p key={bi} style={{ fontSize: 13, color: '#ede9df', lineHeight: 1.7, margin: 0 }}>
-            {lines.map((l, li) => <Fragment key={li}>{li > 0 && <br />}{inlineFmt(l)}</Fragment>)}
+            {inlineFmt(one.replace(/^\s*[-•*]\s+/, ''))}
           </p>
         )
       })}
