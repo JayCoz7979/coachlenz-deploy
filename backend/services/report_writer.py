@@ -8,6 +8,39 @@ client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
 MODEL = "claude-sonnet-4-6"
 
 
+def _parse_report_sections(raw: str) -> List[Dict[str, Any]]:
+    """Parse the model's JSON array of sections robustly. Bullet bodies contain
+    literal newlines (which strict JSON rejects), and the model sometimes wraps the
+    array in a markdown fence or stray prose, so handle all of that before falling
+    back to a raw dump."""
+    text = (raw or "").strip()
+    if "```" in text:
+        parts = text.split("```")
+        if len(parts) > 1:
+            text = parts[1]
+        text = text.lstrip()
+        if text.startswith("json"):
+            text = text[4:]
+        text = text.strip()
+    if "[" in text and "]" in text:
+        text = text[text.index("["): text.rindex("]") + 1]
+    try:
+        parsed = json.loads(text, strict=False)  # strict=False: allow newlines in bullet bodies
+        sections = [
+            {
+                "heading": s.get("heading", "Analysis"),
+                "insight_type": s.get("insight_type", "tendency"),
+                "body": s.get("body", ""),
+            }
+            for s in parsed if isinstance(s, dict)
+        ]
+        if sections:
+            return sections
+    except Exception:
+        pass
+    return [{"heading": "Tendency Analysis", "insight_type": "tendency", "body": raw}]
+
+
 def _total_plays(tendency_summary: Dict[str, Any]) -> int:
     try:
         return int(tendency_summary.get("total_plays", 0) or 0)
@@ -318,26 +351,7 @@ Return ONLY the JSON array, nothing else."""
         messages=[{"role": "user", "content": prompt}],
     )
     raw = message.content[0].text.strip()
-    if "```" in raw:
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-        raw = raw.strip()
-
-    try:
-        parsed = json.loads(raw)
-        sections = [
-            {
-                "heading": s.get("heading", "Analysis"),
-                "insight_type": s.get("insight_type", "tendency"),
-                "body": s.get("body", ""),
-            }
-            for s in parsed if isinstance(s, dict)
-        ]
-        if not sections:
-            raise ValueError("empty")
-    except Exception:
-        sections = [{"heading": "Tendency Analysis", "insight_type": "tendency", "body": raw}]
+    sections = _parse_report_sections(raw)
 
     if is_trial:
         sections.append({
@@ -580,26 +594,7 @@ Return ONLY the JSON array, nothing else."""
         messages=[{"role": "user", "content": prompt}],
     )
     raw = message.content[0].text.strip()
-    if "```" in raw:
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-        raw = raw.strip()
-
-    try:
-        parsed = json.loads(raw)
-        sections = [
-            {
-                "heading": s.get("heading", "Analysis"),
-                "insight_type": s.get("insight_type", "tendency"),
-                "body": s.get("body", ""),
-            }
-            for s in parsed if isinstance(s, dict)
-        ]
-        if not sections:
-            raise ValueError("empty")
-    except Exception:
-        sections = [{"heading": "Basketball Analysis", "insight_type": "tendency", "body": raw}]
+    sections = _parse_report_sections(raw)
 
     if is_trial:
         sections.append({

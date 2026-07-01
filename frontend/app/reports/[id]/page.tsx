@@ -98,6 +98,38 @@ function SectionCard({ section }: { section: Section }) {
   )
 }
 
+// Recovery: if a report body is actually the raw JSON array (a past generation
+// where the server couldn't parse it), parse it client-side into real sections.
+function lenientJsonParse(text: string): any {
+  try { return JSON.parse(text) } catch {}
+  let out = '', inStr = false, esc = false
+  for (const ch of text) {
+    if (esc) { out += ch; esc = false; continue }
+    if (ch === '\\') { out += ch; esc = true; continue }
+    if (ch === '"') { inStr = !inStr; out += ch; continue }
+    if (inStr && ch === '\n') { out += '\\n'; continue }
+    if (inStr && ch === '\r') { out += '\\r'; continue }
+    if (inStr && ch === '\t') { out += '\\t'; continue }
+    out += ch
+  }
+  try { return JSON.parse(out) } catch { return null }
+}
+
+function recoverSections(sections: Section[]): Section[] {
+  if (sections && sections.length === 1) {
+    let t = (sections[0].body || '').trim()
+    if ((t.startsWith('[') || t.startsWith('```')) && t.includes('"heading"')) {
+      if (t.includes('```')) { const p = t.split('```'); t = (p[1] || t).replace(/^json/, '').trim() }
+      if (t.includes('[') && t.includes(']')) t = t.slice(t.indexOf('['), t.lastIndexOf(']') + 1)
+      const parsed = lenientJsonParse(t)
+      if (Array.isArray(parsed) && parsed.length && parsed[0] && parsed[0].heading) {
+        return parsed.map((p: any) => ({ heading: p.heading || 'Analysis', insight_type: p.insight_type || 'tendency', body: p.body || '' }))
+      }
+    }
+  }
+  return sections
+}
+
 export default function ReportPage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
@@ -311,14 +343,17 @@ export default function ReportPage() {
           )}
 
           {/* Sections */}
-          {report.sections && report.sections.length > 0 ? (
+          {report.sections && report.sections.length > 0 ? (() => {
+            const displaySections = recoverSections(report.sections)
+            return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
               <div style={{ fontSize: 11, letterSpacing: '0.15em', color: '#7a7a6e', marginBottom: 4, fontWeight: 700 }}>
-                TENDENCY ANALYSIS — {report.sections.length} SECTION{report.sections.length !== 1 ? 'S' : ''}
+                TENDENCY ANALYSIS — {displaySections.length} SECTION{displaySections.length !== 1 ? 'S' : ''}
               </div>
-              {report.sections.map((s, i) => <SectionCard key={i} section={s} />)}
+              {displaySections.map((s, i) => <SectionCard key={i} section={s} />)}
             </div>
-          ) : !isProcessing ? (
+            )
+          })() : !isProcessing ? (
             <div style={{ textAlign: 'center', color: '#7a7a6e', padding: '48px 0' }}>
               <FileText size={40} style={{ margin: '0 auto 12px', display: 'block', opacity: 0.3 }} />
               <div>No report content generated. The AI worker may still be starting up.</div>
