@@ -1,4 +1,5 @@
 import json
+import re
 import anthropic
 from typing import List, Dict, Any
 from backend.config import settings
@@ -8,36 +9,63 @@ client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
 MODEL = "claude-sonnet-4-6"
 
 
+def _unescape(s: str) -> str:
+    return (s.replace('\\n', '\n').replace('\\t', '\t')
+             .replace('\\"', '"').replace('\\/', '/').replace('\\\\', '\\')).strip()
+
+
+def _regex_extract_sections(text: str) -> List[Dict[str, Any]]:
+    """Pull heading/insight_type/body out of a (possibly broken) JSON-ish array by
+    splitting on each "heading" key. Tolerates unescaped quotes and raw newlines in
+    the body that would break a real JSON parser."""
+    out: List[Dict[str, Any]] = []
+    for chunk in re.split(r'"heading"\s*:', text)[1:]:
+        hm = re.match(r'\s*"(.*?)"', chunk, re.DOTALL)
+        heading = _unescape(hm.group(1)) if hm else "Analysis"
+        it = re.search(r'"insight_type"\s*:\s*"(.*?)"', chunk, re.DOTALL)
+        insight = _unescape(it.group(1)) if it else "tendency"
+        # Body: from "body": " to the LAST '"}' in this object's chunk (greedy).
+        bm = re.search(r'"body"\s*:\s*"(.*)"\s*\}', chunk, re.DOTALL)
+        if not bm:
+            bm = re.search(r'"body"\s*:\s*"(.*)$', chunk, re.DOTALL)
+        body = _unescape(bm.group(1)) if bm else ""
+        if heading or body:
+            out.append({"heading": heading or "Analysis", "insight_type": insight, "body": body})
+    return out
+
+
 def _parse_report_sections(raw: str) -> List[Dict[str, Any]]:
-    """Parse the model's JSON array of sections robustly. Bullet bodies contain
-    literal newlines (which strict JSON rejects), and the model sometimes wraps the
-    array in a markdown fence or stray prose, so handle all of that before falling
-    back to a raw dump."""
+    """Turn the model's output into sections, tolerating malformed JSON. Tries real
+    JSON (strict=False for literal newlines), then a regex extraction that survives
+    unescaped quotes and other breakage from the model's own writing."""
     text = (raw or "").strip()
+    # Strip a markdown fence if present.
     if "```" in text:
-        parts = text.split("```")
-        if len(parts) > 1:
-            text = parts[1]
-        text = text.lstrip()
+        m = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
+        text = (m.group(1) if m else text.split("```", 1)[-1]).strip()
         if text.startswith("json"):
-            text = text[4:]
-        text = text.strip()
+            text = text[4:].strip()
+    # Narrow to the JSON array if there's stray prose around it.
     if "[" in text and "]" in text:
         text = text[text.index("["): text.rindex("]") + 1]
+
     try:
-        parsed = json.loads(text, strict=False)  # strict=False: allow newlines in bullet bodies
+        parsed = json.loads(text, strict=False)
         sections = [
-            {
-                "heading": s.get("heading", "Analysis"),
-                "insight_type": s.get("insight_type", "tendency"),
-                "body": s.get("body", ""),
-            }
+            {"heading": s.get("heading", "Analysis"),
+             "insight_type": s.get("insight_type", "tendency"),
+             "body": s.get("body", "")}
             for s in parsed if isinstance(s, dict)
         ]
         if sections:
             return sections
     except Exception:
         pass
+
+    sections = _regex_extract_sections(text)
+    if sections:
+        return sections
+
     return [{"heading": "Tendency Analysis", "insight_type": "tendency", "body": raw}]
 
 
