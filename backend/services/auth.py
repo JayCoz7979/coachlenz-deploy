@@ -74,6 +74,23 @@ def require_role(*roles):
         return user
     return checker
 
+
+# ── Scouting RBAC ────────────────────────────────────────────────────────────
+# Role definitions live in scout_roles (no framework import) so they are testable
+# without the web stack; re-exported here for callers that import from auth.
+from backend.services.scout_roles import (  # noqa: E402
+    SCOUT_REVIEWER_ROLES, SCOUT_ASSIGNABLE_ROLES, can_review_scout,
+)
+
+
+def require_scout_reviewer(user: User = Depends(get_current_user)) -> User:
+    if not can_review_scout(user):
+        raise HTTPException(
+            status_code=403,
+            detail="Review authority required. Only a head coach, coordinator, reviewer, or owner can sign off a scouting report.",
+        )
+    return user
+
 def require_coach_tenure(org: Organization = Depends(get_current_org)):
     if not org.has_coach_tenure_access:
         raise HTTPException(status_code=403, detail="Not found")

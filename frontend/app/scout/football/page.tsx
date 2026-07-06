@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState, type CSSProperties } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import Sidebar from '@/components/layout/Sidebar'
 import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
@@ -44,8 +45,6 @@ export default function ScoutFootballPage() {
   const [season, setSeason] = useState('')
   const [week, setWeek] = useState('')
   const [site, setSite] = useState('')
-  const [analyst, setAnalyst] = useState('')
-  const [reviewer, setReviewer] = useState('')
   const [gamesScouted, setGamesScouted] = useState('')
   const [injuryNote, setInjuryNote] = useState('')
 
@@ -70,7 +69,7 @@ export default function ScoutFootballPage() {
   const totalPlanned = filledPlays.length + (csvText.trim() ? csvText.trim().split('\n').length - 1 : 0)
   if (totalPlanned > 0 && totalPlanned < 60) warnings.push(`~${totalPlanned} plays entered - under the 60-play line, the report will be PRELIMINARY (Gate 1).`)
   if (gamesScouted && Number(gamesScouted) < 3) warnings.push('Fewer than 3 games scouted reduces data confidence (Gate 1).')
-  if (!reviewer.trim()) warnings.push('No second-analyst reviewer - the report cannot be marked FINAL (Gate 2).')
+  warnings.push('You are the primary analyst. A second review-authorized user must sign off before the report can be FINAL (Gate 2).')
 
   async function createSession(): Promise<string> {
     const res = await api.post('/scout/football/session', {
@@ -79,8 +78,6 @@ export default function ScoutFootballPage() {
       season: season || null,
       week: asInt(week),
       site: site || null,
-      analyst: analyst.trim() || null,
-      reviewer: reviewer.trim() || null,
       games_scouted: asInt(gamesScouted),
       injury_flags: injuryNote.trim() ? [injuryNote.trim()] : [],
     })
@@ -134,9 +131,12 @@ export default function ScoutFootballPage() {
       <Sidebar />
       <main className="flex-1 overflow-y-auto p-8">
         <div style={{ maxWidth: 1200, margin: '0 auto' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-            <ClipboardList size={22} style={{ color: 'var(--gold)' }} />
-            <h2 className="text-2xl font-bold" style={{ margin: 0 }}>Scout a Football Opponent</h2>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <ClipboardList size={22} style={{ color: 'var(--gold)' }} />
+              <h2 className="text-2xl font-bold" style={{ margin: 0 }}>Scout a Football Opponent</h2>
+            </div>
+            <Link href="/scout/football/sessions" style={{ fontSize: 13, color: 'var(--green3)' }}>Sessions &amp; review queue</Link>
           </div>
           <p style={{ color: 'var(--text3)', fontSize: 13, marginBottom: 20 }}>
             Log the play-by-play (or paste a Hudl export). CoachLenz runs seven validation gates and returns an installable,
@@ -161,10 +161,10 @@ export default function ScoutFootballPage() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12, marginTop: 12 }}>
               <div><label className="label">Season</label>
                 <input className="input" value={season} onChange={e => setSeason(e.target.value)} placeholder="2025-26" /></div>
-              <div><label className="label">Analyst</label>
-                <input className="input" value={analyst} onChange={e => setAnalyst(e.target.value)} placeholder="you" /></div>
-              <div><label className="label">Reviewer (dual review)</label>
-                <input className="input" value={reviewer} onChange={e => setReviewer(e.target.value)} placeholder="required for FINAL" /></div>
+              <div><label className="label">Primary Analyst</label>
+                <input className="input" value={user?.name ? `${user.name} (you)` : 'you'} disabled style={{ opacity: 0.7 }} /></div>
+              <div><label className="label">Reviewer</label>
+                <input className="input" value="set at sign-off" disabled style={{ opacity: 0.7 }} /></div>
               <div><label className="label">Games Scouted</label>
                 <input className="input" type="number" value={gamesScouted} onChange={e => setGamesScouted(e.target.value)} placeholder="3+" /></div>
             </div>
