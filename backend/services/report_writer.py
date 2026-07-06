@@ -6,7 +6,9 @@ from backend.config import settings
 
 client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
 
-MODEL = "claude-sonnet-4-6"
+# Single source of truth: the report model comes from config (env-overridable),
+# not a hardcode. Keeps config.ANTHROPIC_MODEL honest instead of drifting from it.
+MODEL = settings.ANTHROPIC_MODEL
 
 
 def _unescape(s: str) -> str:

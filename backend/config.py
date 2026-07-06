@@ -22,7 +22,9 @@ class Settings(BaseSettings):
 
     # Anthropic
     ANTHROPIC_API_KEY: str = ""
-    ANTHROPIC_MODEL: str = "claude-sonnet-4-5"
+    # Matches the model the report writer + AI-detect actually run in prod.
+    # Override via env (ANTHROPIC_MODEL) to change the report model in one place.
+    ANTHROPIC_MODEL: str = "claude-sonnet-4-6"
 
     # Stripe
     STRIPE_SECRET_KEY: str = ""
