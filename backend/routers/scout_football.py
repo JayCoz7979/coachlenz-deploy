@@ -35,7 +35,10 @@ from backend.models.game import Game
 from backend.models.event import Event
 from backend.models.job import Job
 from backend.models.report import TendencyReport
-from backend.services.auth import get_current_user, get_current_org
+from backend.services.auth import (
+    get_current_user, get_current_org, can_review_scout,
+    require_scout_reviewer, SCOUT_ASSIGNABLE_ROLES,
+)
 from backend.services.agent_log import log_agent_action
 from backend.services.tendency_engine import run_tendency_engine
 
@@ -58,6 +61,41 @@ async def _load_session(db: AsyncSession, session_id: str, org_id) -> Game:
     return game
 
 
+async def _load_meta_event(db: AsyncSession, game_id) -> Optional[Event]:
+    """The single side='meta' event that holds the Module-1 intake + review state."""
+    result = await db.execute(
+        select(Event).where(Event.game_id == game_id, Event.event_type == "scout_meta")
+    )
+    return result.scalar_one_or_none()
+
+
+async def _authorized_session(db: AsyncSession, session_id: str, user: User,
+                              write: bool = False) -> Game:
+    """Load a session and enforce scouting RLS:
+
+    • The primary analyst (session creator) may read AND write their own session.
+    • Any reviewer-authorized user (head coach / coordinator / reviewer / owner)
+      may read every session in the org, and may write.
+    • A different plain analyst/member may NOT touch someone else's session.
+
+    This is what gives Gate 2 teeth: identity is the token, not a form field.
+    """
+    game = await _load_session(db, session_id, user.organization_id)
+    meta = await _load_meta_event(db, game.id)
+    analyst_id = (meta.extra_data or {}).get("analyst_id") if meta else None
+
+    is_analyst = analyst_id is not None and str(analyst_id) == str(user.id)
+    if is_analyst or can_review_scout(user):
+        return game
+    # Legacy/film-only sessions with no recorded analyst: fall back to org-scope.
+    if analyst_id is None:
+        return game
+    raise HTTPException(
+        status_code=403,
+        detail="This scouting session belongs to another analyst. Ask a reviewer or the session owner.",
+    )
+
+
 # ── session intake (Module 1) ────────────────────────────────────────────────
 class SessionCreate(BaseModel):
     opponent: str
@@ -70,9 +108,8 @@ class SessionCreate(BaseModel):
     title: Optional[str] = None
 
     # Module 1 intelligence brief (all optional — the gates read what is present).
-    analyst: Optional[str] = None
-    reviewer: Optional[str] = None                # required for Gate 2 (dual review)
-    status: Optional[str] = "draft"              # draft|reviewed|final
+    # NOTE: analyst identity is NOT taken from the client — it is set server-side
+    # from the authenticated user so Gate 2 (dual review) cannot be spoofed.
     games_scouted: Optional[int] = None
     head_coach: Optional[str] = None
     offensive_coordinator: Optional[str] = None
@@ -125,11 +162,12 @@ async def create_session(
             "season": body.season,
             "week": body.week,
             "site": body.site,
-            "analyst_id": body.analyst,
-            "analyst": body.analyst,
-            "reviewer_id": body.reviewer,
-            "reviewer": body.reviewer,
-            "status": body.status or "draft",
+            # Identity is server-set from the authenticated user (anti-spoof).
+            "analyst_id": str(user.id),
+            "analyst": user.name,
+            "reviewer_id": None,          # set only by a real /review sign-off
+            "reviewer": None,
+            "status": "draft",            # only /review can advance this
             "games_scouted": body.games_scouted,
             "head_coach": body.head_coach,
             "offensive_coordinator": body.offensive_coordinator,
@@ -149,11 +187,13 @@ async def create_session(
     warnings = []
     if body.games_scouted is not None and body.games_scouted < 3:
         warnings.append("Fewer than 3 games scouted; data confidence is reduced (Gate 1).")
-    if not body.reviewer:
-        warnings.append("No second-analyst reviewer assigned; report cannot be marked FINAL (Gate 2).")
+    warnings.append(
+        "Draft created. A second, review-authorized user (head coach / coordinator / reviewer / owner) "
+        "must sign off via /scout/football/{id}/review before the report can be FINAL (Gate 2)."
+    )
 
     return {"session_id": str(game.id), "opponent": game.opponent, "sport": "football",
-            "warnings": warnings}
+            "analyst": user.name, "status": "draft", "warnings": warnings}
 
 
 # ── rapid play-by-play entry (Module 2) ──────────────────────────────────────
@@ -270,7 +310,7 @@ async def enter_plays(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    game = await _load_session(db, body.session_id, user.organization_id)
+    game = await _authorized_session(db, body.session_id, user, write=True)
 
     if body.replace:
         existing = await db.execute(
@@ -361,7 +401,7 @@ async def csv_import(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    game = await _load_session(db, body.session_id, user.organization_id)
+    game = await _authorized_session(db, body.session_id, user, write=True)
 
     reader = csv.DictReader(io.StringIO(body.csv_text))
     if not reader.fieldnames:
@@ -443,7 +483,7 @@ async def analyze(
     org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db),
 ):
-    game = await _load_session(db, body.session_id, org.id)
+    game = await _authorized_session(db, body.session_id, user, write=True)
 
     ev = await db.execute(
         select(Event).where(Event.game_id == game.id, Event.event_type == "play")
@@ -503,7 +543,7 @@ async def football_analysis(
 
     Distinct from /analyze, which queues the combined coach-facing prose report.
     """
-    game = await _load_session(db, session_id, user.organization_id)
+    game = await _authorized_session(db, session_id, user, write=False)
 
     ev = await db.execute(select(Event).where(Event.game_id == game.id))
     events = ev.scalars().all()
@@ -544,3 +584,136 @@ async def football_analysis(
         "personnel_flagged": scouting.get("personnel_flagged", False),
         "blocks": selected,
     }
+
+
+# ── dual-analyst review sign-off (Gate 2 teeth) ──────────────────────────────
+class ReviewRequest(BaseModel):
+    session_id: str
+    decision: str = "reviewed"                     # "reviewed" | "final" | "changes_requested"
+    notes: Optional[str] = None
+    disputed_tendencies: Optional[List[str]] = None
+
+
+@router.post("/review")
+async def review_session(
+    body: ReviewRequest,
+    user: User = Depends(require_scout_reviewer),   # must hold review authority
+    db: AsyncSession = Depends(get_db),
+):
+    """Second-analyst sign-off. This is what makes Gate 2 real: only an
+    authenticated, review-authorized user who is NOT the primary analyst can
+    advance a session to reviewed/final. Identity is the token, not a form field.
+    """
+    game = await _load_session(db, body.session_id, user.organization_id)
+    meta = await _load_meta_event(db, game.id)
+    if not meta:
+        raise HTTPException(status_code=422, detail="Session has no intake metadata to review.")
+
+    data = dict(meta.extra_data or {})
+    analyst_id = data.get("analyst_id")
+    if analyst_id and str(analyst_id) == str(user.id):
+        raise HTTPException(
+            status_code=403,
+            detail="You are the primary analyst on this session. Dual review requires a different reviewer.",
+        )
+
+    decision = (body.decision or "reviewed").lower()
+    if decision not in ("reviewed", "final", "changes_requested"):
+        raise HTTPException(status_code=422, detail="decision must be reviewed, final, or changes_requested")
+
+    if decision == "changes_requested":
+        data["status"] = "draft"
+    else:
+        data["reviewer_id"] = str(user.id)
+        data["reviewer"] = user.name
+        data["status"] = decision
+    data["review_notes"] = body.notes
+    data["disputed_tendencies"] = body.disputed_tendencies or []
+    meta.extra_data = data
+    # JSONB in-place mutation needs an explicit flag for SQLAlchemy to persist it.
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(meta, "extra_data")
+    await db.commit()
+
+    await log_agent_action(
+        action="scout_review_signoff",
+        game_id=str(game.id),
+        organization_id=str(user.organization_id),
+        phase="scout",
+        reason=f"{user.name} ({user.role}) set review status to '{data['status']}' on {game.opponent} scout.",
+        level="success",
+        detail={"reviewer_id": str(user.id), "decision": decision,
+                "disputed": len(body.disputed_tendencies or [])},
+    )
+    return {"session_id": str(game.id), "status": data["status"],
+            "reviewer": user.name, "gate2_passed": data["status"] in ("reviewed", "final")}
+
+
+# ── sessions list (RLS: analysts see own, reviewers see the whole org) ────────
+@router.get("/sessions")
+async def list_sessions(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Game).where(Game.organization_id == user.organization_id,
+                           Game.sport == "football", Game.status == "manual")
+        .order_by(Game.created_at.desc()).limit(200)
+    )
+    games = result.scalars().all()
+    reviewer = can_review_scout(user)
+
+    out = []
+    for g in games:
+        meta = await _load_meta_event(db, g.id)
+        data = (meta.extra_data if meta else {}) or {}
+        analyst_id = data.get("analyst_id")
+        # RLS: a plain analyst only sees sessions they own; reviewers see all.
+        if not reviewer and analyst_id and str(analyst_id) != str(user.id):
+            continue
+        out.append({
+            "session_id": str(g.id),
+            "opponent": g.opponent,
+            "game_date": g.game_date.isoformat() if g.game_date else None,
+            "analyst": data.get("analyst"),
+            "reviewer": data.get("reviewer"),
+            "status": data.get("status", "draft"),
+            "is_mine": analyst_id is not None and str(analyst_id) == str(user.id),
+            "can_review": reviewer and (not analyst_id or str(analyst_id) != str(user.id)),
+        })
+    return {"sessions": out, "you_can_review": reviewer}
+
+
+# ── owner assigns scouting roles to staff ────────────────────────────────────
+class RoleAssign(BaseModel):
+    user_id: str
+    role: str                                      # member|analyst|coordinator|head_coach|reviewer
+
+
+@router.patch("/team/role")
+async def assign_role(
+    body: RoleAssign,
+    owner: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Owner (or head coach) grants a staff member scouting authority. Roles are
+    scoped to the caller's org; you cannot escalate someone in another org, and
+    only owner/head_coach may assign."""
+    if owner.role not in ("owner", "head_coach"):
+        raise HTTPException(status_code=403, detail="Only an owner or head coach can assign scouting roles.")
+    if body.role not in SCOUT_ASSIGNABLE_ROLES:
+        raise HTTPException(status_code=422,
+                            detail=f"role must be one of: {', '.join(sorted(SCOUT_ASSIGNABLE_ROLES))}")
+
+    result = await db.execute(
+        select(User).where(User.id == body.user_id, User.organization_id == owner.organization_id)
+    )
+    target = result.scalar_one_or_none()
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found in your organization.")
+    if target.role == "owner":
+        raise HTTPException(status_code=403, detail="Cannot change the owner's role.")
+
+    target.role = body.role
+    await db.commit()
+    return {"user_id": str(target.id), "name": target.name, "role": target.role}
