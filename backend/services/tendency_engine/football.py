@@ -562,10 +562,12 @@ def _run_direction_analysis(plays) -> Dict[str, Any]:
         cp = [e for e in runs if _x(e, "run_concept") == concept]
         yards = [e.yards_gained for e in cp if e.yards_gained is not None]
         successes = [e for e in cp if _is_success(e)]
+        explosives = [e for e in cp if _is_explosive(e)]
         concept_detail[concept] = {
             "count": count,
             "avg_yards": round(sum(yards) / len(yards), 1) if yards else 0,
             "success_rate": round(len(successes) / len(cp) * 100, 1) if cp else 0,
+            "explosive_count": len(explosives),
         }
 
     inside = [e for e in runs if "Inside" in (_x(e, "run_direction") or "")]

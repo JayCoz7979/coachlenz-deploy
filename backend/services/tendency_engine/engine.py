@@ -74,7 +74,7 @@ async def run_tendency_engine(sport: str, events: List[Event]) -> Dict[str, Any]
         off = analyze_flag_football(offense) if sport == "flag_football" else analyze_football(offense)
         deff = analyze_football_defense(defense)
         st = analyze_football_special(special)
-        return {
+        result = {
             "total_plays": off.get("total_plays", 0) + deff.get("total_plays", 0) + st.get("total_plays", 0),
             "offense_plays": off.get("total_plays", 0),
             "defense_plays": deff.get("total_plays", 0),
@@ -85,6 +85,13 @@ async def run_tendency_engine(sport: str, events: List[Event]) -> Dict[str, Any]
             "data_confidence": _coverage_report(events),
             "player_tendencies": analyze_players(events, sport),
         }
+        # Coordinator layer: validation gates (Module 7), situational tendency
+        # statements (Module 3 summary), and the installable game plan (Module 8).
+        # Same pattern as basketball's `scouting` block — 11-man football only.
+        if sport == "football":
+            from .football_scout import build_football_scouting_report
+            result["scouting"] = build_football_scouting_report(events, off, deff, st)
+        return result
 
     elif sport == "basketball":
         result = analyze_basketball(events)
