@@ -136,7 +136,10 @@ export default function ScoutFootballPage() {
               <ClipboardList size={22} style={{ color: 'var(--gold)' }} />
               <h2 className="text-2xl font-bold" style={{ margin: 0 }}>Scout a Football Opponent</h2>
             </div>
-            <Link href="/scout/football/sessions" style={{ fontSize: 13, color: 'var(--green3)' }}>Sessions &amp; review queue</Link>
+            <div style={{ display: 'flex', gap: 16 }}>
+              <Link href="/scout/football/log" style={{ fontSize: 13, color: 'var(--gold)', fontWeight: 700 }}>⚡ Live logger</Link>
+              <Link href="/scout/football/sessions" style={{ fontSize: 13, color: 'var(--green3)' }}>Sessions &amp; review queue</Link>
+            </div>
           </div>
           <p style={{ color: 'var(--text3)', fontSize: 13, marginBottom: 20 }}>
             Log the play-by-play (or paste a Hudl export). CoachLenz runs seven validation gates and returns an installable,
