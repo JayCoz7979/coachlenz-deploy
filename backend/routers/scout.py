@@ -30,6 +30,19 @@ from backend.models.job import Job
 from backend.models.report import TendencyReport
 from backend.services.auth import get_current_user, get_current_org
 from backend.services.agent_log import log_agent_action
+from backend.services.tendency_engine.basketball_scout import build_scouting_report
+
+# The six scouting categories in strict priority order (Category 1 heaviest).
+# Maps the engine's internal keys to a clean, self-describing label so each
+# category can be consumed on its own, in parallel, with no risk of confusion.
+SCOUT_CATEGORIES = [
+    (1, "time_of_possession", "Time of Possession (Player)", "category_1_time_of_possession"),
+    (2, "turnovers", "Turnovers", "category_2_turnovers"),
+    (3, "deflections", "Deflections", "category_3_deflections"),
+    (4, "shot_ratio", "2PT vs 3PT Shot Ratio", "category_4_shot_ratio"),
+    (5, "pace", "Pace of Play", "category_5_pace"),
+    (6, "scoring_areas", "Scoring Areas (eFG% by Zone)", "category_6_scoring_areas"),
+]
 
 router = APIRouter(prefix="/scout", tags=["scout"])
 
@@ -453,3 +466,53 @@ async def analyze(
     )
 
     return {"report_id": str(report.id), "session_id": str(game.id), "status": "queued", "events": n_events}
+
+
+# ── parallel structured retrieval — the six categories, each on its own ───────
+@router.get("/{session_id}/analysis")
+async def scouting_analysis(
+    session_id: str,
+    category: Optional[str] = None,   # optional: return just one category by key
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the six scouting categories as discrete, priority-ordered, labeled
+    blocks computed fresh from this session's events. This is the PARALLEL view:
+    each category is retrievable on its own (pass ?category=turnovers), fully
+    self-describing (sport + opponent), so there is no chance of confusing one
+    sport's data with another's or one category with another.
+
+    Distinct from /analyze, which queues the combined coach-facing prose report.
+    """
+    game = await _load_session(db, session_id, user.organization_id)
+
+    ev_result = await db.execute(select(Event).where(Event.game_id == game.id))
+    events = ev_result.scalars().all()
+
+    scouting = build_scouting_report(events)
+    categories = [
+        {
+            "priority": pri,
+            "key": key,
+            "name": name,
+            "data": scouting.get(engine_key, {}),
+        }
+        for (pri, key, name, engine_key) in SCOUT_CATEGORIES
+    ]
+
+    if category:
+        match = next((c for c in categories if c["key"] == category), None)
+        if not match:
+            valid = ", ".join(c["key"] for c in categories)
+            raise HTTPException(status_code=404, detail=f"Unknown category '{category}'. Valid: {valid}")
+        categories = [match]
+
+    return {
+        "session_id": str(game.id),
+        "sport": game.sport,                 # always the discriminator, echoed back
+        "opponent": game.opponent,
+        "total_events": len(events),
+        "available": scouting.get("available", False),
+        "categories": categories,            # the six, in parallel, priority-ordered
+        "game_plan_priorities": scouting.get("game_plan_priorities", []),
+    }
