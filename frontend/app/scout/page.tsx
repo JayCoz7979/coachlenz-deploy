@@ -60,8 +60,29 @@ export default function ScoutPage() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
+  // Sport-aware entry: opponent scouting must stay tied to the sport the client
+  // chose for their team/film - never bleed basketball UI (Shot Log, court zones)
+  // into a football program. Resolve the org's sport from its teams; football
+  // routes to the football scout, basketball renders here, mixed/none picks.
+  const [sportMode, setSportMode] = useState<'loading' | 'basketball' | 'choose'>('loading')
+
   useEffect(() => { fetchMe() }, [])
   useEffect(() => { if (!isLoading && !user) router.push('/login') }, [isLoading, user])
+
+  useEffect(() => {
+    if (!user) return
+    let cancelled = false
+    api.get('/teams').then(res => {
+      if (cancelled) return
+      const sports: string[] = (res.data || []).map((t: any) => t.sport)
+      const hasFootball = sports.some(s => s === 'football' || s === 'flag_football')
+      const hasBasketball = sports.includes('basketball')
+      if (hasFootball && !hasBasketball) router.replace('/scout/football')
+      else if (hasBasketball && !hasFootball) setSportMode('basketball')
+      else setSportMode('choose')  // both sports, or no teams yet
+    }).catch(() => setSportMode('choose'))
+    return () => { cancelled = true }
+  }, [user, router])
 
   const setP = (i: number, key: keyof PlayerRow, val: any) =>
     setPlayers(ps => ps.map((p, idx) => (idx === i ? { ...p, [key]: val } : p)))
@@ -122,6 +143,51 @@ export default function ScoutPage() {
 
   const th: CSSProperties = { textAlign: 'left', fontSize: 11, color: 'var(--text3)', fontWeight: 700, padding: '0 6px 8px', whiteSpace: 'nowrap' }
 
+  // While resolving sport (or redirecting football orgs), never render the
+  // basketball UI - that is what caused Shot Log to bleed into football.
+  if (sportMode === 'loading') {
+    return (
+      <div className="flex h-screen overflow-hidden">
+        <Sidebar />
+        <main className="flex-1 flex items-center justify-center">
+          <Loader2 size={22} style={{ color: 'var(--gold)' }} className="animate-spin" />
+        </main>
+      </div>
+    )
+  }
+
+  if (sportMode === 'choose') {
+    return (
+      <div className="flex h-screen overflow-hidden">
+        <Sidebar />
+        <main className="flex-1 overflow-y-auto p-8">
+          <div style={{ maxWidth: 640, margin: '0 auto' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+              <Target size={22} style={{ color: 'var(--gold)' }} />
+              <h2 className="text-2xl font-bold" style={{ margin: 0 }}>Scout an Opponent</h2>
+            </div>
+            <p style={{ color: 'var(--text3)', fontSize: 13, marginBottom: 20 }}>
+              Pick the sport you are scouting. Everything (fields, tendencies, report) stays tied to that sport.
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+              <button onClick={() => router.push('/scout/football')} className="card" style={{ textAlign: 'left', cursor: 'pointer', border: '1px solid var(--border2)' }}>
+                <div style={{ fontWeight: 800, fontSize: 16, color: 'var(--gold)' }}>🏈 Football</div>
+                <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 6 }}>Play-by-play, gates, game plan, live logger, position &amp; player exports.</div>
+              </button>
+              <button onClick={() => setSportMode('basketball')} className="card" style={{ textAlign: 'left', cursor: 'pointer', border: '1px solid var(--border2)' }}>
+                <div style={{ fontWeight: 800, fontSize: 16, color: 'var(--green3)' }}>🏀 Basketball</div>
+                <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 6 }}>Six-category scout: possession, turnovers, deflections, shot ratio, pace, zones.</div>
+              </button>
+            </div>
+            <p style={{ fontSize: 12, color: 'var(--text3)', marginTop: 16 }}>
+              Scouting is available for football and basketball. Set a team&apos;s sport under <span style={{ color: 'var(--green3)' }}>Teams</span> and it will route you automatically next time.
+            </p>
+          </div>
+        </main>
+      </div>
+    )
+  }
+
   return (
     <div className="flex h-screen overflow-hidden">
       <Sidebar />
@@ -129,7 +195,7 @@ export default function ScoutPage() {
         <div style={{ maxWidth: 1100, margin: '0 auto' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
             <Target size={22} style={{ color: 'var(--gold)' }} />
-            <h2 className="text-2xl font-bold" style={{ margin: 0 }}>Scout an Opponent</h2>
+            <h2 className="text-2xl font-bold" style={{ margin: 0 }}>Scout a Basketball Opponent</h2>
           </div>
           <p style={{ color: 'var(--text3)', fontSize: 13, marginBottom: 20 }}>
             Enter what you charted, in order of importance. CoachLenz turns it into a prioritized, coach-ready scouting brief.
@@ -153,7 +219,7 @@ export default function ScoutPage() {
             </div>
           </div>
 
-          {/* Player table — columns ordered by scouting priority */}
+          {/* Player table - columns ordered by scouting priority */}
           <div className="card" style={{ marginBottom: 18, overflowX: 'auto' }}>
             <div style={{ fontWeight: 700, marginBottom: 10 }}>Player Stats <span style={{ color: 'var(--text3)', fontWeight: 400, fontSize: 12 }}>(one row per opponent player)</span></div>
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
@@ -200,7 +266,7 @@ export default function ScoutPage() {
           {/* Optional: detailed shot log for the scoring-zone map (Category 6) */}
           <div className="card" style={{ marginBottom: 18 }}>
             <button onClick={() => setShotsOpen(o => !o)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, padding: 0 }}>
-              {shotsOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />} Shot Log by Zone <span style={{ color: 'var(--text3)', fontWeight: 400, fontSize: 12 }}>(optional — powers the eFG% scoring-zone map)</span>
+              {shotsOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />} Shot Log by Zone <span style={{ color: 'var(--text3)', fontWeight: 400, fontSize: 12 }}>(optional - powers the eFG% scoring-zone map)</span>
             </button>
             {shotsOpen && (
               <div style={{ marginTop: 12, overflowX: 'auto' }}>
@@ -241,7 +307,7 @@ export default function ScoutPage() {
           {/* Optional: CSV box-score paste */}
           <div className="card" style={{ marginBottom: 18 }}>
             <button onClick={() => setCsvOpen(o => !o)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, padding: 0 }}>
-              {csvOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />} <ClipboardPaste size={15} /> Import CSV Box Score <span style={{ color: 'var(--text3)', fontWeight: 400, fontSize: 12 }}>(optional — paste a standard box score, columns auto-mapped)</span>
+              {csvOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />} <ClipboardPaste size={15} /> Import CSV Box Score <span style={{ color: 'var(--text3)', fontWeight: 400, fontSize: 12 }}>(optional - paste a standard box score, columns auto-mapped)</span>
             </button>
             {csvOpen && (
               <div style={{ marginTop: 12 }}>
