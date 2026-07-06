@@ -145,11 +145,48 @@ def _basketball_player(primary_events, roles) -> Dict[str, Any]:
     threes = [e for e in shots if _is_three(e)]
     threes_made = [e for e in threes if _made(e)]
     tos = [e for e in primary_events if e.event_type == "turnover"]
+
+    # Category 1 — possession time per player (seconds held, avg per touch, role).
+    poss_secs = 0.0
+    for e in primary_events:
+        s = _x(e, "possession_seconds")
+        if isinstance(s, (int, float)):
+            poss_secs += float(s)
+    touches = len(primary_events)
+    avg_per_touch = round(poss_secs / touches, 2) if touches else 0.0
+    if touches >= 4 and avg_per_touch < 1.0:
+        role = "ghost"
+    elif avg_per_touch >= 3.0 and touches >= 4:
+        role = "initiator"
+    else:
+        role = "role_player"
+
+    # Category 4 — personal shot tendency classification.
+    paint = [e for e in shots if (_x(e, "shot_zone") or "") in ("Restricted Area", "Paint Non-RA")]
+    mid = [e for e in shots if "Mid" in (_x(e, "shot_zone") or "") or "Elbow" in (_x(e, "shot_zone") or "")]
+    three_rate = round(len(threes) / len(shots) * 100, 1) if shots else 0
+    paint_rate = round(len(paint) / len(shots) * 100, 1) if shots else 0
+    mid_rate = round(len(mid) / len(shots) * 100, 1) if shots else 0
+    if three_rate > 40:
+        tendency = "perimeter"
+    elif paint_rate >= 50:
+        tendency = "paint_attacker"
+    elif mid_rate >= max(three_rate, paint_rate):
+        tendency = "mid_range"
+    else:
+        tendency = "balanced"
+
     return {
+        "possession_seconds": round(poss_secs, 1),
+        "avg_seconds_per_touch": avg_per_touch,
+        "possession_role": role,
         "shot_attempts": len(shots),
         "fg_pct": round(len(makes) / len(shots) * 100, 1) if shots else 0,
         "three_attempts": len(threes),
         "three_pct": round(len(threes_made) / len(threes) * 100, 1) if threes else 0,
+        "three_pt_rate": three_rate,
+        "shot_tendency": tendency,
+        "perimeter_dependency_flag": three_rate > 40 and len(shots) >= 4,
         "turnovers": len(tos),
         "by_zone": dict(Counter(_x(e, "shot_zone") for e in shots if _x(e, "shot_zone")).most_common(6)),
         "by_action": dict(Counter(_x(e, "play_action") for e in primary_events if _x(e, "play_action")).most_common(6)),
@@ -158,6 +195,7 @@ def _basketball_player(primary_events, roles) -> Dict[str, Any]:
         "rebounds": roles.get("rebounder", 0),
         "steals": roles.get("stealer", 0),
         "blocks": roles.get("blocker", 0),
+        "deflections": roles.get("deflector", 0),
     }
 
 

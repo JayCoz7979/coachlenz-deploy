@@ -14,7 +14,7 @@ from .routers import (
     auth, teams, games, clips, events, reports, upload, jobs,
     billing, referrals, teams_of_month, coaches, admin, threads,
     playlists, assignments, packages, notifications, me, files, ingest, ai_detect,
-    connections,
+    connections, scout,
 )
 from .workers.worker_ai_detect import AiDetectWorker
 from .workers.worker_analysis import AnalysisWorker
@@ -92,6 +92,7 @@ app.include_router(files.router)
 app.include_router(ingest.router)
 app.include_router(ai_detect.router)
 app.include_router(connections.router)
+app.include_router(scout.router)
 
 
 @app.get("/health")

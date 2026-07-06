@@ -8,6 +8,7 @@ from backend.models.event import Event
 from backend.services.tendency_engine import run_tendency_engine
 from backend.services.report_writer import generate_prose_sections
 from backend.services.encryption import encrypt_json
+from backend.services.agent_log import log_agent_action, confidence_band
 from sqlalchemy import select, update, or_
 from sqlalchemy.dialects.postgresql import array
 
@@ -37,6 +38,25 @@ class ReportsWorker(BaseWorker):
             is_trial=report.is_trial,
         )
         encrypted = encrypt_json(tendency_summary)
+
+        # UATP: log the scouting agent's action with its data-confidence band so
+        # coaches can audit how strongly to trust this report (identity + reason +
+        # confidence). Best-effort; never blocks report generation.
+        conf = (tendency_summary.get("data_confidence") or {}).get("avg_confidence")
+        gp = ((tendency_summary.get("scouting") or {}).get("game_plan_priorities")) or []
+        await log_agent_action(
+            action="generate_scouting_report",
+            organization_id=str(report.organization_id),
+            phase="scout",
+            reason=(
+                f"Generated {len(prose_sections)}-section {report.sport} scouting report from "
+                f"{len(events)} events. Confidence band: {confidence_band(conf)}. "
+                f"Top game-plan priority: {gp[0]['adjustment'] if gp else 'n/a'}"
+            ),
+            confidence=conf,
+            level="success",
+            detail={"report_id": str(report_id), "sections": len(prose_sections), "events": len(events)},
+        )
 
         async with AsyncSessionLocal() as db:
             await db.execute(update(TendencyReport).where(TendencyReport.id == report_id).values(

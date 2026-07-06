@@ -1,5 +1,6 @@
 from typing import List, Dict, Any
 from collections import Counter, defaultdict
+from .basketball_scout import build_scouting_report
 
 
 def _x(e, key, default=None):
@@ -47,6 +48,9 @@ def analyze_basketball(events) -> Dict[str, Any]:
         "total_plays": len(events),
         "offense_plays": len(offense_events),
         "defense_plays": len(defense_events),
+        # Six-category opponent scouting brief, in strict order of importance
+        # (Category 1 weighted heaviest). Drives the coach-facing report sections.
+        "scouting": build_scouting_report(events),
         "shooting_overview": _shooting_overview(shots),
         "shot_zone_map": _shot_zone_map(shots),
         "shot_creation": _shot_creation(shots),

@@ -390,6 +390,175 @@ Return ONLY the JSON array, nothing else."""
     return sections
 
 
+def _scout_priority_sections(scouting):
+    """The six scouting categories in STRICT priority order (Category 1 heaviest),
+    then the auto-generated Game Plan Priorities. Each section is fed by the
+    already-computed tendency_summary["scouting"] block, so the writer only has to
+    turn real numbers into coach language."""
+    return [
+        {
+            "heading": "Executive Summary",
+            "insight_type": "tendency",
+            "instructions": (
+                "3-4 tight sentences on this opponent's identity across the six scouting categories. "
+                "Lead with Category 1: name the primary_ball_handler and their possession_share_pct, and if "
+                "isolation_dependency_flag is true say plainly they are isolation-dependent (>35% of possession in one player). "
+                "Then one line each on their biggest turnover risk, their shot-selection lean (2PT vs 3PT), and their pace_rating. "
+                "End with the single most important thing the staff must know, drawn from game_plan_priorities[0]."
+            ),
+        },
+        {
+            "heading": "Section 1 - Possession Control (Player Time of Possession)",
+            "insight_type": "tendency",
+            "instructions": (
+                "THE HIGHEST-PRIORITY SECTION. Use scouting.category_1_time_of_possession. "
+                "Open with one lead sentence naming the primary_ball_handler, their possession_share_pct and role. "
+                "Then bullets: rank the top players by possession_seconds with their role (initiator / role_player / ghost), "
+                "possession_share_pct, touches, and avg_seconds_per_touch. "
+                "If isolation_dependency_flag is true, make it the headline bullet: one player over the 35% possession line is an "
+                "isolation dependency to attack by denying/trapping that player. "
+                "Name secondary_initiators (who else creates), ghost_players (players who never really handle it), and "
+                "dead_zone_players (catch-and-immediately-pass, avg under 1s/touch). "
+                "Close with the defensive call: who to deny/trap on the catch, and who to sag off."
+            ),
+        },
+        {
+            "heading": "Section 2 - Turnover Profile",
+            "insight_type": "tendency",
+            "instructions": (
+                "Use scouting.category_2_turnovers. Lead with the team_rate_per_possession and team_rate_per_10_min. "
+                "Bullets, ranked most dangerous to least: by_type (which turnover types they commit), by_situation "
+                "(half-court / transition / press / late-game), and the per-player list with counts. "
+                "Flag any player with a pattern_flags entry (2+ turnovers of the SAME type) as a repeatable weakness. "
+                "Note most_dangerous_defender and generated_by_defender if present (which of their defenders forces turnovers, "
+                "so OUR offense can avoid them). Close with which players to pressure and in which situation."
+            ),
+        },
+        {
+            "heading": "Section 3 - Deflection Vulnerability",
+            "insight_type": "defense",
+            "instructions": (
+                "Use scouting.category_3_deflections. Lead with neutralize_first_defender (their best deflection defender). "
+                "Bullets: per-defender deflections with conversion_pct (how often a deflection flips possession), "
+                "the passing_lane_vulnerability chart and most_vulnerable_lane (which lane they attack passes in). "
+                "Advise OUR offense: attack away from their best deflector and stop feeding the most_vulnerable_lane. "
+                "If total is 0, say deflection data was not tagged for this game and skip the rest."
+            ),
+        },
+        {
+            "heading": "Section 4 - Shot Selection Tendencies (2PT vs 3PT)",
+            "insight_type": "tendency",
+            "instructions": (
+                "Use scouting.category_4_shot_ratio. Lead with the overall 2PT vs 3PT split: attempts_2pt, attempts_3pt, "
+                "three_pt_rate_pct, and ratio_2pt_to_3pt. "
+                "Bullets: by_half (first vs second), by_possession_origin (pnr / transition / set / broken), and the "
+                "fourth_quarter / when_trailing behavior with late_game_shift (do they go small and jack threes, or attack the paint?). "
+                "Flag every player in perimeter_dependent_players (3PA over 40% of their shots) and give each player's tendency "
+                "(paint_attacker / mid_range / perimeter / balanced). Close with what shot to take away."
+            ),
+        },
+        {
+            "heading": "Section 5 - Pace Profile",
+            "insight_type": "tendency",
+            "instructions": (
+                "Use scouting.category_5_pace. Lead with pace_rating (slow/moderate/fast) and the avg_offensive_possession_seconds. "
+                "Bullets: avg offensive vs defensive possession seconds, transition_frequency_pct (share of possessions starting "
+                "within 5 seconds of a change), situational_pace (do they speed up or slow down when trailing vs leading), and "
+                "pace_control (coach_controlled = consistent, player_driven = variable). "
+                "Close with the tempo plan: speed them up or slow them down, and when. "
+                "If tracked is false, say possession-timing was not tagged and skip."
+            ),
+        },
+        {
+            "heading": "Section 6 - Scoring Zone Map",
+            "insight_type": "red_zone",
+            "instructions": (
+                "Use scouting.category_6_scoring_areas. Lead with team_efg_pct and the single top scoring zone. "
+                "Bullets: top_scoring_zones (comfort zones - high attempt AND high eFG%) each with eFG% and attempts, then "
+                "avoid_zones (low eFG%). "
+                "Put defensive_priority_zones in their OWN bullet flagged as MUST TAKE AWAY - these are zones over 55% eFG. "
+                "Name the per-player eFG leaders from players[]. Close with the exact zones our defense funnels them away from."
+            ),
+        },
+        {
+            "heading": "Game Plan Priorities - Top Defensive Adjustments",
+            "insight_type": "red_zone",
+            "instructions": (
+                "Use scouting.game_plan_priorities, which is ALREADY ranked (Category 1 weighted heaviest). "
+                "Present those items VERBATIM as a numbered list in the given order - do not reorder or drop them. "
+                "Format each: '1. [CATEGORY]: [adjustment]'. "
+                "After the computed items, you may add up to 2 more supporting adjustments ONLY if clearly backed by the data. "
+                "This is the coach's tear-away sheet: specific, actionable, tied to a real number in every line."
+            ),
+        },
+    ]
+
+
+def _bball_sections(scouting, tendency_summary):
+    """Assemble the basketball report: six priority sections + game plan, then any
+    film-depth sections whose data actually exists, then the Scout's Note. Keeps a
+    manual box-score report clean while a full-film report keeps its depth."""
+    spec = _scout_priority_sections(scouting)
+
+    def has(block, key="total", minv=0):
+        b = tendency_summary.get(block) or {}
+        try:
+            return int(b.get(key, 0) or 0) > minv
+        except Exception:
+            return False
+
+    # Film-depth candidates: (condition, section). Only emitted when data present.
+    if has("pick_and_roll", "total_pnr") or has("isolation", "total_iso") or has("transition", "total"):
+        spec.append({
+            "heading": "Film Depth - Offensive System",
+            "insight_type": "tendency",
+            "instructions": (
+                "Only from real data. Use pick_and_roll (roll vs pop, preferred_position, fg_pct), isolation, post_up, and "
+                "transition to describe their primary half-court and early-offense actions. Cite counts and FG%. "
+                "Advise the scheme that stops their main action."
+            ),
+        })
+    if has("inbound_plays"):
+        spec.append({
+            "heading": "Film Depth - Inbound Plays (BLOB / SLOB)",
+            "insight_type": "tendency",
+            "instructions": (
+                "Only if inbound_plays.total > 0. Use inbound_plays.blob and .slob: most_used_set, best_set, primary action, "
+                "hottest_zone, after-timeout tendencies. Advise exactly how to take away their best BLOB and SLOB."
+            ),
+        })
+    if has("ball_screen_defense"):
+        spec.append({
+            "heading": "Film Depth - Ball Screen Defense Attack Plan",
+            "insight_type": "defense",
+            "instructions": (
+                "Only if ball_screen_defense.total > 0. Use primary_hedge and hedge_distribution to say how THEY guard ball "
+                "screens (Drop / Switch / Hedge / ICE / Blitz) and what each leaves open for OUR offense to attack."
+            ),
+        })
+    if has("defensive_scheme"):
+        spec.append({
+            "heading": "Film Depth - Defensive Scheme",
+            "insight_type": "defense",
+            "instructions": (
+                "Only if defensive_scheme.total > 0. Use primary_scheme, man_pct, zone_pct, press_count and by_scheme "
+                "(quarters_used) to describe their base defense and any changeups. Advise how to break the primary scheme."
+            ),
+        })
+
+    spec.append({
+        "heading": "Scout's Note - Single-Camera Coverage & Confidence",
+        "insight_type": "tendency",
+        "instructions": (
+            "Use the data_confidence block (UATP transparency, not a sales pitch). State confidence_band (high/medium/low) and "
+            "avg_confidence and what it means for how hard to lean on this report. If low_confidence_pct is meaningful, say those "
+            "reads should be verified on film first. List top_blind_spots verbatim so the coach knows what the fixed single-camera "
+            "angle could NOT see. If blind_spot_count is 0 and confidence is high, say so in one sentence. Never overstate certainty."
+        ),
+    })
+    return spec
+
+
 async def _generate_basketball_sections(
     tendency_summary: Dict[str, Any],
     report_type: str,
@@ -411,181 +580,11 @@ async def _generate_basketball_sections(
 
     off = tendency_summary.get("offense_plays", 0)
     def_plays = tendency_summary.get("defense_plays", 0)
+    scouting = tendency_summary.get("scouting", {}) or {}
 
-    sections_spec = [
-        {
-            "heading": "Executive Summary",
-            "insight_type": "tendency",
-            "instructions": (
-                "2-3 paragraph overview of this team's identity on both ends. "
-                "Lead with their offensive system (PnR-heavy? Iso? Motion? Transition-first?), "
-                "then their defensive scheme and what makes them hard to score against. "
-                "End with the single most important thing the staff needs to know going into game week."
-            ),
-        },
-        {
-            "heading": "Shot Chart Intelligence",
-            "insight_type": "tendency",
-            "instructions": (
-                "Use shot_zone_map.zones to build a complete shooting profile. "
-                "Name every zone with data: attempts, FG%, and pct_of_all_shots. "
-                "Identify: hottest_zone (where they score most efficiently) AND most_frequent_zone (where they attack most). "
-                "Use field side distribution — do they favor left or right? Do they hunt corner 3s? "
-                "Call out COLD zones (high attempt rate, low FG%) — these are traps to force them into. "
-                "Use shooting_overview: overall split between paint, mid-range, and 3PT with FG% on each. "
-                "Advise: where should our defense funnel them? What area must we take away?"
-            ),
-        },
-        {
-            "heading": "Offensive System Breakdown",
-            "insight_type": "tendency",
-            "instructions": (
-                "Use shot_creation.by_play_action and pick_and_roll to identify their primary offensive system. "
-                "PnR: cite total possessions, roll vs pop split, preferred screen position, FG%, turnovers. "
-                "Isolation: cite frequency, zones they iso from, FG%. "
-                "Post up: if post_up has data, cite FG% and kick-out frequency. "
-                "Use screen_usage: what screens do they run most and how effective are they? "
-                "Use transition: how often do they push pace? Primary break FG%? "
-                "Use inbound_plays: do they score off BLOB/SLOB sets? Cite most used set and action. "
-                "Advise: what scheme stops their primary action? How do we disrupt their sets?"
-            ),
-        },
-        {
-            "heading": "Inbound Play Intelligence — Offense (BLOB & SLOB)",
-            "insight_type": "tendency",
-            "instructions": (
-                "This is one of the most exploitable areas in basketball — teams run the same inbound sets repeatedly. "
-                "Use inbound_plays.blob and inbound_plays.slob for full detail. "
-                "BLOB (Baseline Out of Bounds): most used set (most_used_set), best FG% set (best_set). "
-                "Most used primary action (most_used_action) and how it creates a shot. "
-                "Where do they score from? (hottest_zone, most_targeted_zone). "
-                "How many late-game and after-timeout BLOBs? "
-                "What defense coverage have they faced, and which leaves them open? "
-                "SLOB (Sideline Out of Bounds): same depth — most used set, primary action, scoring zone. "
-                "Preferred inbound_side (left or right sideline). "
-                "After-timeout SLOBs — what play do they call coming out of a timeout? "
-                "Most dangerous play overall: the set + action combo with highest made shot rate. "
-                "Advise defense: exactly how to take away their best BLOB and best SLOB. "
-                "Only include BLOB/SLOB sections if inbound_plays.blob.total > 0 or slob.total > 0."
-            ),
-        },
-        {
-            "heading": "Inbound Defense — How They Defend BOB/SLOB",
-            "insight_type": "defense",
-            "instructions": (
-                "Use inbound_defense to understand how OUR offense attacks their inbound defense. "
-                "Primary coverage (Man Switch, Man No Switch, Zone, etc.). "
-                "Coverage distribution — are they consistent or mixed? "
-                "FG% they allow on inbound plays (fg_pct_allowed). "
-                "Zones they surrender (zones_surrendered + most_vulnerable_zone). "
-                "Advise OC: design specific BLOB and SLOB sets that attack their coverage. "
-                "For example: 'They Man No Switch on BLOBs — run Box set with cross screen. They will NOT switch, so the mismatch exists every time.' "
-                "Only include if inbound_defense.total > 0."
-            ),
-        },
-        {
-            "heading": "Drive, Paint, and Kick-Out Patterns",
-            "insight_type": "tendency",
-            "instructions": (
-                "Use paint_and_drive: how many paint touches per game? Kick-out rate? Drive-and-kick count? Paint FG%? "
-                "This tells you: do they use paint touches to score or to create kick-out 3s? "
-                "If high kick_out_count relative to paint_touch_count, their best offense is drive-kick — "
-                "advise closing out hard on perimeter after any drive. "
-                "If high paint FG%, they finish — advise sending help on every drive. "
-                "Use shot_clock: do they get easy early-clock paint looks or grind to late-clock situations? "
-                "Advise specifically: contest at rim or help and recover?"
-            ),
-        },
-        {
-            "heading": "Ball Screen Defense Attack Plan",
-            "insight_type": "defense",
-            "instructions": (
-                "Use ball_screen_defense to understand how THEY defend ball screens — this is how OUR offense attacks them. "
-                "Primary hedge style: Hard Hedge, Drop, Switch, ICE, or Blitz? "
-                "What does each hedge style leave open? "
-                "Hard Hedge → screener slips or roll early, ball handler pull-up off the hedge. "
-                "Drop Coverage → ball handler can pull up at foul line, mid-range. "
-                "Switch → attack mismatches, post the smaller defender. "
-                "ICE/Push → middle of the floor opens, reverse the pick. "
-                "Blitz/Double → kick out to open 3s, skip pass. "
-                "Use hedge_distribution to show if they are consistent or mixed. "
-                "Advise OC: design 3 specific plays that attack their primary hedge style."
-            ),
-        },
-        {
-            "heading": "Defensive Scheme & Tendencies",
-            "insight_type": "defense",
-            "instructions": (
-                "Use defensive_scheme: primary scheme (Man, Zone 2-3, etc.), man vs zone pct, press count. "
-                "Do they change scheme by quarter? (cite quarters_used for each scheme). "
-                "Use ball_screen_defense.help_defense and deny_style: how do they handle off-ball? "
-                "Full denial tells us to back-cut. Open/Sag tells us to spot up. Collapsing help tells us to kick out. "
-                "press_triggers: if they press, when? After made baskets? Always? "
-                "Advise: what offensive actions, formations, and concepts break their primary defensive scheme?"
-            ),
-        },
-        {
-            "heading": "Situational Intelligence",
-            "insight_type": "tendency",
-            "instructions": (
-                "Use quarter_breakdown: which quarter do they shoot best/worst? When do turnovers spike? "
-                "Use shot_clock: are they disciplined (mostly early/mid clock) or chaotic (high late-clock %)? "
-                "Late-clock FG% vs early-clock FG% — does shot clock pressure hurt them? "
-                "Use game_script: do their tendencies change when leading vs trailing? "
-                "If they jack up 3s when trailing, deny the 3-point line in late-game situations. "
-                "If they become turnover-prone when losing, apply pressure late. "
-                "Only cite game_script if data covers 2+ margin situations."
-            ),
-        },
-        {
-            "heading": "EXPLOITABLE PATTERNS — Offense",
-            "insight_type": "tendency",
-            "instructions": (
-                "Bullet-point intelligence brief for the defensive game plan. "
-                "List 5-7 specific, exploitable offensive tendencies with the defensive counter. Format:\n"
-                "• [TENDENCY]: [what they do and how often] → [COUNTER]: [specific defensive adjustment]\n"
-                "Examples:\n"
-                "• CORNER 3 HUNTING: 34% of shots come from corner 3 zones (Left: 18%, Right: 16%), 44% FG — they run baseline drift after every PnR → Shade help defender to corner, contest all corner catches\n"
-                "• LATE SHOT CLOCK: 28% of possessions end in late shot clock shots (14 of 50), only 31% FG — they don't have a bailout play → Play disciplined defense, no reach fouls, force late clock\n"
-                "Only include tendencies with 5+ instances. This is the most important section."
-            ),
-        },
-        {
-            "heading": "EXPLOITABLE PATTERNS — Defense",
-            "insight_type": "tendency",
-            "instructions": (
-                "Bullet-point intelligence brief for the offensive game plan. "
-                "List 4-6 specific vulnerabilities in their defense with the offensive attack. Format:\n"
-                "• [VULNERABILITY]: [what they do and why it's exploitable] → [ATTACK]: [specific action]\n"
-                "Examples:\n"
-                "• DROP COVERAGE: They drop on all ball screens (18/22 PnR coverages) → Ball handler pull-up at foul line, shoot over the drop\n"
-                "• ZONE WEAKNESS: Their 2-3 zone gives up elbow mid-range and high post consistently → Run Horns sets, attack the elbow before the zone sets\n"
-                "Only include vulnerabilities with enough film evidence."
-            ),
-        },
-        {
-            "heading": "Game Plan Priorities",
-            "insight_type": "tendency",
-            "instructions": (
-                "Numbered priority list — the 6-8 most important game-plan items for this opponent. "
-                "Specific and actionable, not generic. Number them by priority. "
-                "Format: 1. [O/D]: [specific action tied directly to a tendency from the data]"
-            ),
-        },
-        {
-            "heading": "Scout's Note: Single-Camera Coverage & Confidence",
-            "insight_type": "tendency",
-            "instructions": (
-                "Use the data_confidence block. This is a transparency note, not a sales pitch — coaches trust honesty. "
-                "State the overall confidence_band (high / medium / low) and avg_confidence, and what it means for how to use this report. "
-                "If low_confidence_pct is meaningful, say plainly that those reads should be verified on film first. "
-                "List the top_blind_spots verbatim so the coach knows exactly what the fixed single-camera angle could NOT see "
-                "(e.g. weak-side action off-screen, shot clock not visible, defender assignment unclear). "
-                "If blind_spot_count is 0 and confidence is high, say so in one sentence. "
-                "Never overstate certainty."
-            ),
-        },
-    ]
+    # Six priority categories (Category 1 heaviest) + auto game-plan, then
+    # film-depth sections that are appended ONLY when their data exists.
+    sections_spec = _bball_sections(scouting, tendency_summary)
 
     section_outline = "\n".join(
         f"{i+1}. \"{s['heading']}\" (insight_type: \"{s['insight_type']}\")\n   Instructions: {s['instructions']}"

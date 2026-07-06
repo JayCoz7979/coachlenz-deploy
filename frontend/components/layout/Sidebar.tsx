@@ -4,7 +4,7 @@ import { usePathname } from 'next/navigation'
 import { useAuth } from '@/lib/auth'
 import {
   LayoutDashboard, Users, Film, FileText, Settings,
-  Trophy, UserCircle, Share2, ShieldCheck, LogOut, Upload, Link2,
+  Trophy, UserCircle, Share2, ShieldCheck, LogOut, Upload, Link2, Target,
 } from 'lucide-react'
 
 const NAV_SECTIONS = [
@@ -14,6 +14,7 @@ const NAV_SECTIONS = [
       { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
       { href: '/games', label: 'Film Library', icon: Film },
       { href: '/games/upload?tab=url', label: 'Import Film', icon: Upload },
+      { href: '/scout', label: 'Scout Opponent', icon: Target },
       { href: '/reports', label: 'Reports', icon: FileText },
     ],
   },
