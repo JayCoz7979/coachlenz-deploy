@@ -175,6 +175,7 @@ def _player_stat_event(org_id, game_id, p: PlayerStat) -> Event:
         game_id=game_id,
         event_type="player_stat",
         side="offense",
+        player=str(p.jersey_number),
         extra_data={
             "primary_player_jersey": str(p.jersey_number),
             "player_name": p.player_name,
@@ -217,6 +218,7 @@ async def manual_entry(
             side="offense",
             result="made" if s.made else "missed",
             time_seconds=None,
+            player=str(s.jersey_number),
             extra_data={
                 "primary_player_jersey": str(s.jersey_number),
                 "shot_zone": s.court_zone,
@@ -235,6 +237,7 @@ async def manual_entry(
             game_id=game.id,
             event_type="turnover",
             side="offense",
+            player=str(t.jersey_number),
             extra_data={
                 "primary_player_jersey": str(t.jersey_number),
                 "turnover_type": t.turnover_type,
@@ -252,6 +255,7 @@ async def manual_entry(
             event_type="deflection",
             side="defense",
             result="possession_change" if d.resulted_in_possession_change else None,
+            player=str(d.jersey_number),
             extra_data={
                 "primary_player_jersey": str(d.jersey_number),
                 "deflection_type": d.deflection_type,
@@ -268,6 +272,7 @@ async def manual_entry(
             game_id=game.id,
             event_type="possession",
             side=pos.side,
+            player=str(pos.jersey_number) if pos.jersey_number else None,
             extra_data={
                 "primary_player_jersey": str(pos.jersey_number) if pos.jersey_number else None,
                 "possession_seconds": pos.possession_seconds,

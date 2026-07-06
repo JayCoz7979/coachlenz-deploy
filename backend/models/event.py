@@ -28,6 +28,10 @@ class Event(Base):
     yards_gained = Column(Integer)
     personnel = Column(String)
     motion = Column(Boolean, default=False)
+    # First-class primary actor of the play (ball carrier / passer / target /
+    # shooter / tackler jersey). Mirrors extra_data.primary_player_jersey, which is
+    # still read as a fallback for older rows. See migration 013.
+    player = Column(String)
     extra_data = Column(JSONB, default=dict)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
 

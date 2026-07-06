@@ -91,7 +91,8 @@ def _x(e, key, default=None):
 
 
 def _jersey(e) -> Optional[str]:
-    j = _x(e, "primary_player_jersey")
+    # Prefer the first-class column (migration 013); fall back to extra_data.
+    j = getattr(e, "player", None) or _x(e, "primary_player_jersey")
     return str(j) if j not in (None, "") else None
 
 

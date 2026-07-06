@@ -17,14 +17,14 @@ type PlayRow = {
   formation: string; personnel: string; play_type: string
   run_concept: string; pass_concept: string
   yards_gained: string; result: string
-  coverage: string; blitz: string; motion: boolean
+  coverage: string; blitz: string; motion: boolean; player: string
   game_number: string
 }
 
 const blankPlay = (side: typeof SIDES[number] = 'offense'): PlayRow => ({
   side, down: '', distance: '', field_position: '', formation: '', personnel: '',
   play_type: '', run_concept: '', pass_concept: '', yards_gained: '', result: '',
-  coverage: '', blitz: '', motion: false, game_number: '1',
+  coverage: '', blitz: '', motion: false, player: '', game_number: '1',
 })
 
 const asInt = (v: string) => (v.trim() === '' ? null : Number(v))
@@ -114,6 +114,7 @@ export default function ScoutFootballPage() {
             run_concept: p.run_concept || null, pass_concept: p.pass_concept || null,
             yards_gained: asInt(p.yards_gained), result: p.result || null,
             coverage: p.coverage || null, blitz: p.blitz || null, motion: p.motion,
+            primary_player_jersey: p.player || null,
           })),
         })
       }
@@ -185,7 +186,7 @@ export default function ScoutFootballPage() {
                 <th style={th}>Side</th><th style={th}>Gm</th><th style={th}>Dn</th><th style={th}>Dist</th>
                 <th style={th}>Ball On</th><th style={th}>Formation</th><th style={th}>Pers</th><th style={th}>Play</th>
                 <th style={th}>Run Concept</th><th style={th}>Pass Concept</th><th style={th}>Yds</th><th style={th}>Result</th>
-                <th style={th}>Coverage</th><th style={th}>Blitz</th><th style={th}>Mot</th><th style={th}></th>
+                <th style={th}>BC#</th><th style={th}>Coverage</th><th style={th}>Blitz</th><th style={th}>Mot</th><th style={th}></th>
               </tr></thead>
               <tbody>
                 {plays.map((p, i) => (
@@ -207,6 +208,7 @@ export default function ScoutFootballPage() {
                     <td style={{ padding: 4, minWidth: 120 }}><input style={cellStyle} value={p.pass_concept} onChange={e => setPlay(i, 'pass_concept', e.target.value)} placeholder="Four Verticals" /></td>
                     <td style={{ padding: 4, width: 52 }}><input style={cellStyle} value={p.yards_gained} onChange={e => setPlay(i, 'yards_gained', e.target.value)} /></td>
                     <td style={{ padding: 4, width: 100 }}><input style={cellStyle} value={p.result} onChange={e => setPlay(i, 'result', e.target.value)} placeholder="gain / TD" /></td>
+                    <td style={{ padding: 4, width: 52 }}><input style={cellStyle} value={p.player} onChange={e => setPlay(i, 'player', e.target.value)} placeholder="#" /></td>
                     <td style={{ padding: 4, minWidth: 100 }}><input style={cellStyle} value={p.coverage} onChange={e => setPlay(i, 'coverage', e.target.value)} placeholder="Cover 3" /></td>
                     <td style={{ padding: 4, minWidth: 90 }}><input style={cellStyle} value={p.blitz} onChange={e => setPlay(i, 'blitz', e.target.value)} placeholder="Edge L" /></td>
                     <td style={{ padding: 4, width: 40, textAlign: 'center' }}><input type="checkbox" checked={p.motion} onChange={e => setPlay(i, 'motion', e.target.checked)} /></td>

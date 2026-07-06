@@ -30,6 +30,7 @@ class EventCreate(BaseModel):
     yards_gained: Optional[int] = None
     personnel: Optional[str] = None
     motion: Optional[bool] = False
+    player: Optional[str] = None
     extra_data: Optional[Dict[str, Any]] = None
 
 @router.get("")
@@ -41,7 +42,7 @@ async def list_events(game_id: str, user: User = Depends(get_current_user), db: 
         "down": e.down, "distance": e.distance, "formation": e.formation, "play_type": e.play_type,
         "defensive_front": e.defensive_front, "coverage": e.coverage, "blitz": e.blitz,
         "result": e.result, "yards_gained": e.yards_gained, "personnel": e.personnel,
-        "motion": e.motion, "time_seconds": e.time_seconds, "extra_data": e.extra_data,
+        "motion": e.motion, "time_seconds": e.time_seconds, "player": e.player, "extra_data": e.extra_data,
     } for e in events]
 
 @router.post("")
@@ -78,6 +79,7 @@ class EventUpdate(BaseModel):
     personnel: Optional[str] = None
     motion: Optional[bool] = None
     time_seconds: Optional[float] = None
+    player: Optional[str] = None
 
 @router.patch("/{event_id}")
 async def update_event(event_id: str, body: EventUpdate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
@@ -96,7 +98,7 @@ async def update_event(event_id: str, body: EventUpdate, user: User = Depends(ge
         "down": event.down, "distance": event.distance, "formation": event.formation, "play_type": event.play_type,
         "defensive_front": event.defensive_front, "coverage": event.coverage, "blitz": event.blitz,
         "result": event.result, "yards_gained": event.yards_gained, "personnel": event.personnel,
-        "motion": event.motion, "time_seconds": event.time_seconds, "extra_data": event.extra_data,
+        "motion": event.motion, "time_seconds": event.time_seconds, "player": event.player, "extra_data": event.extra_data,
     }
 
 @router.delete("/{event_id}")
