@@ -1,11 +1,11 @@
 'use client'
-import { useEffect, useState, Fragment } from 'react'
+import { useEffect, useState, Fragment, type CSSProperties } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Sidebar from '@/components/layout/Sidebar'
 import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
 import Link from 'next/link'
-import { ChevronLeft, Loader2, FileText, AlertTriangle, TrendingUp, Shield, Zap, Target, Printer } from 'lucide-react'
+import { ChevronLeft, Loader2, FileText, AlertTriangle, TrendingUp, Shield, Zap, Target, Printer, Download, ChevronDown } from 'lucide-react'
 
 interface Section {
   heading: string
@@ -23,6 +23,16 @@ interface Report {
   sections: Section[]
   summary: any
   generated_at: string | null
+}
+
+const menuItem: CSSProperties = {
+  display: 'block', width: '100%', textAlign: 'left', background: 'transparent', border: 'none',
+  color: '#ede9df', padding: '8px 8px', fontSize: 13, cursor: 'pointer', borderRadius: 6,
+}
+const menuHint: CSSProperties = { color: '#7a7a6e', fontSize: 11, marginLeft: 6 }
+const unitChip: CSSProperties = {
+  background: 'rgba(201,168,76,0.1)', border: '1px solid rgba(201,168,76,0.25)', color: '#C9A84C',
+  borderRadius: 6, padding: '4px 9px', fontSize: 12, fontWeight: 700, cursor: 'pointer',
 }
 
 const SECTION_ICONS: Record<string, any> = {
@@ -164,51 +174,91 @@ export default function ReportPage() {
     return () => clearInterval(t)
   }, [polling, id])
 
-  const handlePrint = () => {
-    if (!report) return
+  // Render a report body (markdown-ish: **bold** + bullet lines) into print HTML.
+  const bodyToHtml = (esc: (s: string) => string, body: string) =>
+    (body || '').trim().split(/\n\s*\n/).map(block => {
+      const lines = block.split('\n').map(l => l.trim()).filter(Boolean)
+      const fmt = (l: string) => esc(l).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      if (lines.length >= 2) {
+        return `<ul>${lines.map(l => `<li>${fmt(l.replace(/^\s*[-•*]\s+/, ''))}</li>`).join('')}</ul>`
+      }
+      return `<p>${fmt(lines[0] || '').replace(/^\s*[-•*]\s+/, '')}</p>`
+    }).join('')
+
+  // One branded print/PDF renderer for every format. Blocks are {heading, body}.
+  const printDoc = (opts: {
+    title: string; subtitle: string; blocks: Section[]; watermarked: boolean
+    counts?: [string, any][]; hint?: string
+  }) => {
     const esc = (s: string) => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    const s: any = report.summary || {}
-    const counts = [
-      ['Total Plays', s.total_plays], ['Offense', s.offense_plays],
-      ['Defense', s.defense_plays], ['Special Teams', s.special_teams_plays],
-    ].filter(([, v]) => typeof v === 'number')
-    const sectionsHtml = (report.sections || []).map(sec => `
-      <section>
-        <h2>${esc(sec.heading)}</h2>
-        ${esc(sec.body).split('\n\n').map(p => `<p>${p.replace(/\n/g, '<br/>')}</p>`).join('')}
-      </section>`).join('')
-    const date = report.generated_at ? new Date(report.generated_at).toLocaleDateString() : ''
+    const date = report?.generated_at ? new Date(report.generated_at).toLocaleDateString() : ''
+    const sectionsHtml = (opts.blocks || []).map(sec => `
+      <section><h2>${esc(sec.heading)}</h2>${bodyToHtml(esc, sec.body)}</section>`).join('')
+    const counts = (opts.counts || []).filter(([, v]) => typeof v === 'number')
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/>
-      <title>${esc(report.title)}</title>
+      <title>${esc(opts.title)} — ${esc(opts.subtitle)}</title>
       <style>
         @page { margin: 0.75in; }
         body { font-family: Georgia, 'Times New Roman', serif; color: #1c1c1c; line-height: 1.55; max-width: 800px; margin: 0 auto; padding: 24px; }
         .brand { font-size: 12px; letter-spacing: 0.15em; color: #1a5c2a; font-weight: bold; text-transform: uppercase; }
         h1 { font-size: 24px; margin: 4px 0 2px; }
+        .sub { font-size: 13px; color: #1a5c2a; font-weight: bold; margin-bottom: 2px; }
         .meta { color: #666; font-size: 12px; margin-bottom: 18px; }
+        .hint { font-size: 12px; color: #555; font-style: italic; margin-bottom: 14px; }
         .counts { display: flex; gap: 28px; border: 1px solid #1a5c2a; border-radius: 8px; padding: 14px 18px; margin-bottom: 22px; }
         .count .n { font-size: 22px; font-weight: bold; } .count .l { font-size: 11px; color: #666; text-transform: uppercase; }
         section { margin-bottom: 18px; page-break-inside: avoid; }
         h2 { font-size: 15px; color: #1a5c2a; border-bottom: 2px solid #C9A84C; padding-bottom: 4px; margin-bottom: 8px; }
-        p { font-size: 13px; margin: 0 0 8px; }
+        p { font-size: 13px; margin: 0 0 8px; } ul { margin: 0 0 8px; padding-left: 20px; } li { font-size: 13px; margin: 0 0 4px; }
+        strong { color: #111; }
         .footer { margin-top: 24px; border-top: 1px solid #ccc; padding-top: 10px; font-size: 10px; color: #999; text-align: center; }
         .wm { color: #C9A84C; font-size: 11px; border: 1px dashed #C9A84C; padding: 6px 10px; border-radius: 6px; margin-bottom: 16px; }
       </style></head><body>
       <div class="brand">CoachLenz — AI Film Analyst</div>
-      <h1>${esc(report.title)}</h1>
-      <div class="meta">${esc(report.sport)} · Opponent Scouting Report${date ? ' · ' + date : ''}</div>
-      ${report.watermarked ? '<div class="wm">TRIAL REPORT — Upgrade at coachlenz.com to remove watermark</div>' : ''}
-      <div class="counts">${counts.map(([l, v]) => `<div class="count"><div class="n">${v}</div><div class="l">${l}</div></div>`).join('')}</div>
+      <h1>${esc(opts.title)}</h1>
+      <div class="sub">${esc(opts.subtitle)}</div>
+      <div class="meta">${esc(report?.sport || '')} · Opponent Scouting${date ? ' · ' + date : ''}</div>
+      ${opts.hint ? `<div class="hint">${esc(opts.hint)}</div>` : ''}
+      ${opts.watermarked ? '<div class="wm">TRIAL REPORT — Upgrade at coachlenz.com to remove watermark</div>' : ''}
+      ${counts.length ? `<div class="counts">${counts.map(([l, v]) => `<div class="count"><div class="n">${v}</div><div class="l">${esc(l)}</div></div>`).join('')}</div>` : ''}
       ${sectionsHtml}
       <div class="footer">Generated by CoachLenz · Powered by Cosby AI Solutions</div>
       </body></html>`
     const w = window.open('', '_blank', 'width=900,height=1000')
     if (!w) { alert('Please allow pop-ups to print or save the report as PDF.'); return }
-    w.document.write(html)
-    w.document.close()
-    w.focus()
+    w.document.write(html); w.document.close(); w.focus()
     setTimeout(() => w.print(), 400)
   }
+
+  const handlePrint = () => {
+    if (!report) return
+    const s: any = report.summary || {}
+    printDoc({
+      title: report.title, subtitle: 'Coordinator Report', watermarked: report.watermarked,
+      blocks: report.sections || [],
+      counts: [['Total Plays', s.total_plays], ['Offense', s.offense_plays],
+               ['Defense', s.defense_plays], ['Special Teams', s.special_teams_plays]],
+    })
+  }
+
+  const [exporting, setExporting] = useState('')
+  const [menuOpen, setMenuOpen] = useState(false)
+  const exportFormat = async (format: string, unit?: string, player?: string) => {
+    if (!report) return
+    setMenuOpen(false); setExporting(format + (unit || '') + (player || ''))
+    try {
+      const params = new URLSearchParams({ format })
+      if (unit) params.set('unit', unit)
+      if (player) params.set('player', player)
+      const res = await api.get(`/reports/${report.id}/export?${params.toString()}`)
+      const p = res.data
+      printDoc({ title: p.title, subtitle: p.subtitle, blocks: p.blocks || [],
+                 watermarked: p.watermarked, hint: p.unit_hint })
+    } catch {
+      alert('Could not build that export.')
+    } finally { setExporting('') }
+  }
+  const POSITION_UNITS = ['OL', 'DL', 'WR', 'DB', 'QB', 'LB', 'RB', 'ST']
 
   if (!report) {
     return (
@@ -254,17 +304,50 @@ export default function ReportPage() {
               </span>
             )}
             {report.generated_at && (report.sections?.length ?? 0) > 0 && (
-              <button
-                onClick={handlePrint}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 6, background: '#C9A84C', color: '#1c1c1c',
-                  border: 'none', borderRadius: 4, padding: '7px 14px', fontSize: 12, fontWeight: 700,
-                  cursor: 'pointer', letterSpacing: '0.04em',
-                }}
-                title="Opens a printable version in a new window — print or Save as PDF"
-              >
-                <Printer size={14} /> Print / Save PDF
-              </button>
+              <>
+                <button
+                  onClick={handlePrint}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 6, background: '#C9A84C', color: '#1c1c1c',
+                    border: 'none', borderRadius: 4, padding: '7px 14px', fontSize: 12, fontWeight: 700,
+                    cursor: 'pointer', letterSpacing: '0.04em',
+                  }}
+                  title="Opens a printable full report — print or Save as PDF"
+                >
+                  <Printer size={14} /> Print / Save PDF
+                </button>
+                <div style={{ position: 'relative' }}>
+                  <button
+                    onClick={() => setMenuOpen(o => !o)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 6, background: 'transparent', color: '#C9A84C',
+                      border: '1px solid rgba(201,168,76,0.4)', borderRadius: 4, padding: '7px 12px', fontSize: 12,
+                      fontWeight: 700, cursor: 'pointer', letterSpacing: '0.04em',
+                    }}
+                    title="Export a specific report format"
+                  >
+                    {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                    Export <ChevronDown size={13} />
+                  </button>
+                  {menuOpen && (
+                    <div style={{
+                      position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 20,
+                      background: '#232323', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8,
+                      padding: 8, width: 260, boxShadow: '0 10px 30px rgba(0,0,0,0.4)',
+                    }}>
+                      <button onClick={() => exportFormat('coordinator')} style={menuItem}>Coordinator Report <span style={menuHint}>full detail</span></button>
+                      <button onClick={() => exportFormat('head_coach')} style={menuItem}>Head Coach Summary <span style={menuHint}>one page</span></button>
+                      <button onClick={() => exportFormat('player')} style={menuItem}>Player Bulletins <span style={menuHint}>per player</span></button>
+                      <div style={{ fontSize: 10, color: '#7a7a6e', letterSpacing: '0.1em', padding: '8px 8px 4px' }}>POSITION COACH BRIEF</div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: '0 4px 4px' }}>
+                        {POSITION_UNITS.map(u => (
+                          <button key={u} onClick={() => exportFormat('position', u)} style={unitChip}>{u}</button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </>
             )}
           </div>
         </div>

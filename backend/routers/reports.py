@@ -84,6 +84,53 @@ async def get_report(report_id: str, user: User = Depends(get_current_user), db:
         "generated_at": report.generated_at.isoformat() if report.generated_at else None,
     }
 
+@router.get("/{report_id}/export")
+async def export_report(
+    report_id: str,
+    format: str = "coordinator",         # coordinator|position|head_coach|player
+    unit: Optional[str] = None,          # position format: OL|DL|WR|DB|QB|LB|RB|ST
+    player: Optional[str] = None,        # player format: a jersey number
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reshape a generated report into one of the four Module-9 formats, returned
+    as normalized blocks the frontend renders and prints (Save as PDF)."""
+    from backend.services.report_export import build_export, EXPORT_FORMATS
+
+    if format not in EXPORT_FORMATS:
+        raise HTTPException(status_code=422,
+                            detail=f"format must be one of: {', '.join(EXPORT_FORMATS)}")
+
+    result = await db.execute(select(TendencyReport).where(
+        TendencyReport.id == report_id, TendencyReport.organization_id == user.organization_id))
+    report = result.scalar_one_or_none()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    if not report.generated_at:
+        raise HTTPException(status_code=409, detail="Report is still generating.")
+
+    summary = None
+    if report.summary_json:
+        try:
+            summary = decrypt_json(report.summary_json)
+        except Exception:
+            summary = None
+
+    payload = build_export(
+        {
+            "title": report.title,
+            "sport": report.sport,
+            "report_type": report.report_type,
+            "sections": report.prose_sections or [],
+            "summary": summary,
+            "watermarked": report.watermarked,
+            "generated_at": report.generated_at.isoformat() if report.generated_at else None,
+        },
+        fmt=format, unit=unit, player=player,
+    )
+    return payload
+
+
 @router.delete("/{report_id}")
 async def delete_report(report_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(TendencyReport).where(TendencyReport.id == report_id, TendencyReport.organization_id == user.organization_id))
