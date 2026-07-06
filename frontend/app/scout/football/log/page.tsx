@@ -12,7 +12,7 @@ type Play = {
   side: Side; game_number: string; quarter: string; down: string; distance: string
   field_position: string; formation: string; personnel: string; play_type: string
   run_concept: string; pass_concept: string; yards_gained: string; result: string
-  coverage: string; blitz: string; motion: boolean
+  coverage: string; blitz: string; motion: boolean; player: string
   _saved?: boolean
 }
 type Session = { session_id: string; opponent: string; status: string }
@@ -22,7 +22,7 @@ const blank = (carry?: Partial<Play>): Play => ({
   quarter: carry?.quarter || '1', down: carry?.down || '1', distance: carry?.distance || '10',
   field_position: carry?.field_position || '', formation: carry?.formation || '',
   personnel: carry?.personnel || '', play_type: '', run_concept: '', pass_concept: '',
-  yards_gained: '', result: '', coverage: '', blitz: '', motion: false,
+  yards_gained: '', result: '', coverage: '', blitz: '', motion: false, player: '',
 })
 
 // Field position as an absolute 0-100 yardline (own goal 0 -> opp goal 100).
@@ -95,6 +95,7 @@ export default function LiveLoggerPage() {
           run_concept: p.run_concept || null, pass_concept: p.pass_concept || null,
           yards_gained: p.yards_gained === '' ? null : Number(p.yards_gained),
           result: p.result || null, coverage: p.coverage || null, blitz: p.blitz || null, motion: p.motion,
+          primary_player_jersey: p.player || null,
         })),
       })
       setPlays(ps => ps.map(p => ({ ...p, _saved: true })))
@@ -293,6 +294,10 @@ export default function LiveLoggerPage() {
               </div>
             )}
             <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 12 }}>
+              <label style={{ fontSize: 12, color: 'var(--text2)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ color: 'var(--text3)', fontWeight: 700 }}>BC / Tgt #</span>
+                <input style={{ ...cell, width: 70, padding: '6px 8px' }} value={cur.player} onChange={e => set('player', e.target.value)} placeholder="#" inputMode="numeric" />
+              </label>
               <label style={{ fontSize: 13, color: 'var(--text2)', display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
                 <input type="checkbox" checked={cur.motion} onChange={e => set('motion', e.target.checked)} /> Motion
               </label>

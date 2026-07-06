@@ -294,6 +294,7 @@ def _play_to_event(org_id, game_id, p: PlayEntry) -> Event:
         defensive_front=p.defensive_front,
         coverage=p.coverage,
         blitz=p.blitz,
+        player=str(p.primary_player_jersey) if p.primary_player_jersey else None,
         extra_data={k: v for k, v in extra.items() if v is not None},
     )
 
@@ -352,6 +353,7 @@ CSV_FIELD_ALIASES: Dict[str, List[str]] = {
     "run_concept": ["runconcept", "runscheme"],
     "pass_concept": ["passconcept", "concept", "route"],
     "motion": ["motion", "mot"],
+    "primary_player_jersey": ["ballcarrier", "bc", "player", "jersey", "carrier", "target", "actor", "rusher"],
 }
 
 
@@ -456,6 +458,7 @@ async def csv_import(
             run_concept=cell(row, "run_concept") or None,
             pass_concept=cell(row, "pass_concept") or None,
             motion=(cell(row, "motion").lower() in ("y", "yes", "true", "1")) if cell(row, "motion") else False,
+            primary_player_jersey=cell(row, "primary_player_jersey") or None,
         )
         # Skip fully empty rows.
         if not any([play.down, play.play_type, play.formation, play.result,

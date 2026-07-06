@@ -15,7 +15,9 @@ def _players_of(e) -> list:
 
 
 def _primary_jersey(e):
-    j = _x(e, "primary_player_jersey")
+    # Prefer the first-class column (migration 013); fall back to extra_data for
+    # older rows written before the column existed.
+    j = getattr(e, "player", None) or _x(e, "primary_player_jersey")
     return str(j) if j not in (None, "") else None
 
 

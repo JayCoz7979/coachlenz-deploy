@@ -683,6 +683,9 @@ class AiDetectWorker(BaseWorker):
                                 yards_gained=p.get("yards_gained"),
                                 personnel=p.get("personnel"),
                                 motion=p.get("motion", False),
+                                # First-class player column (migration 013), still
+                                # mirrored in extra_data for backward compatibility.
+                                player=p.get("primary_player_jersey") or p.get("ball_carrier_jersey"),
                                 extra_data={
                                     "auto_detected": True,
                                     "confidence": p.get("confidence", 0.8),
