@@ -153,6 +153,7 @@ async def generate_prose_sections(
     off_plays = int(tendency_summary.get("offense_plays", 0) or 0)
     def_plays = int(tendency_summary.get("defense_plays", 0) or 0)
     st_plays = int(tendency_summary.get("special_teams_plays", 0) or 0)
+    scouting = tendency_summary.get("scouting") or {}
 
     # Build sections based on available data
     sections_spec = [
@@ -163,9 +164,32 @@ async def generate_prose_sections(
                 "2-3 paragraph overview of the opponent's identity. "
                 "Lead with their offensive philosophy (run-first? spread? power?), then defensive identity, then special teams threat level. "
                 "End with the single most important tendency the staff needs to know going into game week."
+                + (
+                    f" This report's validation status is {scouting.get('report_status', 'PRELIMINARY')} "
+                    f"({scouting.get('total_plays', 0)} plays across {scouting.get('games_scouted', 1)} game(s)); "
+                    "state it in one sentence and, if PRELIMINARY, note the sample is below the 60-play line so "
+                    "reads should be verified on film before game-planning around them."
+                    if scouting else ""
+                )
             ),
         }
     ]
+
+    # Checks & Balances (Module 7): surface the gate results up top so the staff
+    # knows exactly how much to trust this report before reading tendencies.
+    if scouting.get("validation_gates"):
+        sections_spec.append({
+            "heading": "Report Validation — Checks & Balances",
+            "insight_type": "tendency",
+            "instructions": (
+                "Use scouting.validation_gates and scouting.report_status. This is a trust/integrity note. "
+                "State the report_status (FINAL / PRELIMINARY) and why in one lead sentence. "
+                "Then one bullet per gate that did NOT pass or that carries a caveat: cite the gate name and its note verbatim. "
+                "If scouting.personnel_flagged is true, state plainly that affected tendencies dropped one confidence tier and carry an asterisk (Gate 7). "
+                "If a gate surfaced Watch Items (Gate 3) or explosive TAKE-AWAY alerts (Gate 6), name them. "
+                "Keep it tight — a coach needs to know in 20 seconds how hard to lean on this report."
+            ),
+        })
 
     if off_plays >= 5:
         sections_spec.append({
@@ -320,16 +344,52 @@ async def generate_prose_sections(
                 "Keep this section tight — 1-2 paragraphs focused on the most actionable game-script intelligence."
             ),
         })
-    sections_spec.append({
-        "heading": "Game Plan Priorities",
-        "insight_type": "red_zone",
-        "instructions": (
-            "Numbered priority list — the 5-7 most important game-plan items across offense, defense, and special teams. "
-            "Each item should be specific and actionable, not generic. "
-            "Number them in priority order. "
-            "Format: 1. [PHASE — O/D/ST]: [specific game plan item tied to a specific tendency from the data]"
-        ),
-    })
+    if scouting.get("game_plan"):
+        # Module 8: present the ALREADY-computed, evidence-backed game plan. Each
+        # item carries a sample size and confidence tier; recommendations (10+ reps)
+        # outrank watch items (Gate 3). The writer turns real numbers into calls.
+        sections_spec.append({
+            "heading": "Situational Tendency Report",
+            "insight_type": "tendency",
+            "instructions": (
+                "Use scouting.situational_tendencies — a pre-computed list of coordinator statements, each with a "
+                "sample size and confidence tier (HIGH/MEDIUM/LOW). Present them VERBATIM as bullets, HIGH confidence first. "
+                "Each bullet is one statement followed by its (sample, confidence). Do not invent numbers. "
+                "An asterisk on a statement means a personnel/injury flag applied (Gate 7) — keep the asterisk and note it once."
+            ),
+        })
+        sections_spec.append({
+            "heading": "Coordinator Game Plan — Installable Calls",
+            "insight_type": "red_zone",
+            "instructions": (
+                "Use scouting.game_plan (defensive_plan, offensive_plan, special_teams_plan) — ALREADY computed and ranked. "
+                "Present three short subsections (DEFENSE, OFFENSE, SPECIAL TEAMS). Under each, bullet the items in the given order: "
+                "'- [call] — [evidence] (sample N, CONFIDENCE)'. Present recommendations first, then watch items labeled '(WATCH ITEM — thin sample)'. "
+                "Do NOT reorder within a phase and do NOT invent items. Every call already ties to a real number in its evidence field. "
+                "This is the tear-away install sheet: a coordinator should be able to install it Tuesday and call it Friday."
+            ),
+        })
+        sections_spec.append({
+            "heading": "Head Coach Summary — Top Priorities",
+            "insight_type": "tendency",
+            "instructions": (
+                "Use scouting.head_coach_priorities — the flat, priority-ordered digest across all phases. "
+                "Present as a numbered list VERBATIM in the given order: '1. [PHASE]: [call] (CONFIDENCE)'. "
+                "One page, coach-ready language, no sample sizes on this list — just the call and the confidence rating. "
+                "This is the head coach's one-pager."
+            ),
+        })
+    else:
+        sections_spec.append({
+            "heading": "Game Plan Priorities",
+            "insight_type": "red_zone",
+            "instructions": (
+                "Numbered priority list — the 5-7 most important game-plan items across offense, defense, and special teams. "
+                "Each item should be specific and actionable, not generic. "
+                "Number them in priority order. "
+                "Format: 1. [PHASE — O/D/ST]: [specific game plan item tied to a specific tendency from the data]"
+            ),
+        })
 
     sections_spec.append({
         "heading": "Scout's Note: Single-Camera Coverage & Confidence",

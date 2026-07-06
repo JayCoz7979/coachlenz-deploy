@@ -43,7 +43,17 @@ class ReportsWorker(BaseWorker):
         # coaches can audit how strongly to trust this report (identity + reason +
         # confidence). Best-effort; never blocks report generation.
         conf = (tendency_summary.get("data_confidence") or {}).get("avg_confidence")
-        gp = ((tendency_summary.get("scouting") or {}).get("game_plan_priorities")) or []
+        scouting = tendency_summary.get("scouting") or {}
+        # Basketball uses game_plan_priorities[].adjustment; football uses
+        # head_coach_priorities[].call. Support both shapes for the audit line.
+        bball_gp = scouting.get("game_plan_priorities") or []
+        fball_gp = scouting.get("head_coach_priorities") or []
+        if bball_gp:
+            top_priority = bball_gp[0].get("adjustment", "n/a")
+        elif fball_gp:
+            top_priority = fball_gp[0].get("call", "n/a")
+        else:
+            top_priority = "n/a"
         await log_agent_action(
             action="generate_scouting_report",
             organization_id=str(report.organization_id),
@@ -51,7 +61,7 @@ class ReportsWorker(BaseWorker):
             reason=(
                 f"Generated {len(prose_sections)}-section {report.sport} scouting report from "
                 f"{len(events)} events. Confidence band: {confidence_band(conf)}. "
-                f"Top game-plan priority: {gp[0]['adjustment'] if gp else 'n/a'}"
+                f"Top game-plan priority: {top_priority}"
             ),
             confidence=conf,
             level="success",
