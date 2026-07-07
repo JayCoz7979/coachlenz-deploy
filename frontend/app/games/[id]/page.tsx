@@ -340,6 +340,202 @@ function TagForm({
   )
 }
 
+// ── Basketball Tagging Form ─────────────────────────────────────────────────
+// Basketball has NO special teams. Sides are Offense / Defense / Special
+// Situations (inbounds, press break, last-second). Every tag writes an event the
+// scout engine already reads: shots (zone/type/result/origin), turnovers,
+// deflections, and special_situation rows.
+const BB_ZONES = [
+  'Restricted Area', 'Paint Non-RA', 'Mid-Range Left', 'Mid-Range Right', 'Mid-Range Center',
+  'Left Corner 3', 'Right Corner 3', 'Above-the-Break 3 Left', 'Above-the-Break 3 Right', 'Above-the-Break 3 Center',
+]
+const BB_THREE = new Set(['Left Corner 3', 'Right Corner 3', 'Above-the-Break 3 Left', 'Above-the-Break 3 Right', 'Above-the-Break 3 Center'])
+const BB_ORIGINS = ['half_court', 'transition', 'set', 'pnr', 'broken']
+const BB_TURNOVERS = ['bad_pass', 'live_ball_steal', 'travel', 'shot_clock', 'out_of_bounds', 'charge', 'double_dribble', 'offensive_foul']
+const BB_DEFL = ['tipped_pass', 'contested_catch', 'redirected_dribble']
+const BB_SITUATIONS = ['BLOB', 'SLOB', 'press_break', 'last_second', 'end_of_quarter']
+const BB_SIT_RESULTS = ['made', 'missed', 'reset', 'turnover']
+// Legal HS jersey numbers use only digits 0-5 (refs signal them by hand).
+const bbLegalJersey = (n: string) => { const s = (n || '').trim(); return s !== '' && /^[0-5]{1,2}$/.test(s) }
+
+function BasketballTagForm({ currentTime, onSave, saving, opponent }: {
+  currentTime: number
+  onSave: (data: any) => Promise<void>
+  saving: boolean
+  opponent: string | null
+}) {
+  const [bside, setBside] = useState<'offense' | 'defense' | 'special'>('offense')
+  const [jersey, setJersey] = useState('')
+  const [quarter, setQuarter] = useState<number | ''>('')
+  // offense
+  const [offAction, setOffAction] = useState<'shot' | 'turnover'>('shot')
+  const [zone, setZone] = useState('Restricted Area')
+  const [made, setMade] = useState(false)
+  const [origin, setOrigin] = useState('half_court')
+  const [toType, setToType] = useState('')
+  // defense
+  const [defAction, setDefAction] = useState<'deflection' | 'steal' | 'block' | 'rebound'>('deflection')
+  const [deflType, setDeflType] = useState('')
+  const [possChange, setPossChange] = useState(false)
+  // special situations
+  const [sitType, setSitType] = useState('BLOB')
+  const [formation, setFormation] = useState('')
+  const [action, setAction] = useState('')
+  const [target, setTarget] = useState('')
+  const [sitResult, setSitResult] = useState('made')
+  const [lateClose, setLateClose] = useState(false)
+
+  const reset = () => {
+    setJersey(''); setMade(false); setToType(''); setDeflType(''); setPossChange(false)
+    setFormation(''); setAction(''); setTarget(''); setLateClose(false)
+  }
+
+  const jerseyBad = jersey.trim() !== '' && !bbLegalJersey(jersey)
+
+  const handleSave = async () => {
+    const q = quarter === '' ? undefined : Number(quarter)
+    const j = jersey.trim() || undefined
+    let data: any
+    if (bside === 'offense') {
+      if (offAction === 'shot') {
+        data = { event_type: 'shot', side: 'offense', time_seconds: currentTime, result: made ? 'made' : 'missed', player: j,
+          extra_data: { primary_player_jersey: j, shot_zone: zone, shot_type: BB_THREE.has(zone) ? '3pt' : '2pt', possession_origin: origin, quarter: q } }
+      } else {
+        data = { event_type: 'turnover', side: 'offense', time_seconds: currentTime, player: j,
+          extra_data: { primary_player_jersey: j, turnover_type: toType || undefined, quarter: q } }
+      }
+    } else if (bside === 'defense') {
+      if (defAction === 'deflection') {
+        data = { event_type: 'deflection', side: 'defense', time_seconds: currentTime, result: possChange ? 'possession_change' : undefined, player: j,
+          extra_data: { primary_player_jersey: j, deflection_type: deflType || undefined, resulted_in_possession_change: possChange, quarter: q } }
+      } else {
+        data = { event_type: defAction, side: 'defense', time_seconds: currentTime, player: j,
+          extra_data: { primary_player_jersey: j, quarter: q } }
+      }
+    } else {
+      data = { event_type: 'special_situation', side: 'offense', time_seconds: currentTime, result: sitResult, player: target.trim() || undefined,
+        extra_data: { situation_type: sitType, formation: formation || undefined, primary_action: action || undefined, target: target.trim() || undefined, result: sitResult, late_and_close: lateClose, quarter: q } }
+    }
+    await onSave(data)
+    reset()
+  }
+
+  const lbl = (t: string) => <div style={{ fontSize: 10, color: '#7a7a6e', marginBottom: 4, letterSpacing: '0.08em' }}>{t}</div>
+  const sel = (val: string, set: (v: string) => void, options: string[], placeholder = '—') => (
+    <select value={val} onChange={e => set(e.target.value)} className="input" style={{ fontSize: 12, padding: '6px 10px', height: 36 }}>
+      <option value="">{placeholder}</option>
+      {options.map(o => <option key={o} value={o}>{o}</option>)}
+    </select>
+  )
+  const pill = (active: boolean, label: string, onClick: () => void, color = '#C9A84C') => (
+    <button onClick={onClick} style={{ flex: 1, padding: '7px 0', fontSize: 12, fontWeight: 700, cursor: 'pointer', borderRadius: 4,
+      border: active ? 'none' : '1px solid rgba(255,255,255,0.1)', background: active ? color : 'transparent', color: active ? '#1c1c1c' : '#f8f6f0' }}>{label}</button>
+  )
+
+  const SIDE_META = { offense: { bg: '#C9A84C', fg: '#1c1c1c' }, defense: { bg: '#1a5c2a', fg: '#f8f6f0' }, special: { bg: '#7a5c1e', fg: '#f8f6f0' } } as const
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {opponent && (
+        <div style={{ fontSize: 11, color: '#7a7a6e' }}>
+          Scouting <span style={{ color: '#f8f6f0', fontWeight: 600 }}>{opponent}</span> — tag shots, turnovers, deflections, and their inbound / press / last-second sets.
+        </div>
+      )}
+
+      {/* Offense / Defense / Special Situations toggle (NO special teams in basketball) */}
+      <div style={{ display: 'flex', background: 'rgba(255,255,255,0.05)', borderRadius: 6, padding: 3, gap: 2 }}>
+        {([
+          { k: 'offense', label: 'Offense', bg: '#C9A84C', fg: '#1c1c1c' },
+          { k: 'defense', label: 'Defense', bg: '#1a5c2a', fg: '#f8f6f0' },
+          { k: 'special', label: 'Special Sit.', bg: '#7a5c1e', fg: '#f8f6f0' },
+        ] as const).map(s => (
+          <button key={s.k} onClick={() => setBside(s.k)}
+            style={{ flex: 1, padding: '8px 0', fontSize: 11, fontWeight: 700, cursor: 'pointer', borderRadius: 4, border: 'none',
+              textTransform: 'uppercase', letterSpacing: '0.03em', background: bside === s.k ? s.bg : 'transparent', color: bside === s.k ? s.fg : '#7a7a6e' }}>
+            {s.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Timestamp */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.2)', borderRadius: 4, padding: '6px 12px' }}>
+        <Clock size={13} style={{ color: '#C9A84C' }} />
+        <span style={{ fontFamily: 'var(--font-dm-mono)', fontSize: 13, color: '#C9A84C' }}>{fmtTime(currentTime)}</span>
+        <span style={{ fontSize: 11, color: '#7a7a6e', marginLeft: 4 }}>current timestamp</span>
+      </div>
+
+      {/* Jersey (# 0-5 rule) + Quarter — common to offense & defense */}
+      {bside !== 'special' && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 90px', gap: 8 }}>
+          <div>
+            {lbl('JERSEY #')}
+            <input value={jersey} onChange={e => setJersey(e.target.value)} placeholder="0-5 only"
+              className="input" style={{ fontSize: 13, padding: '6px 10px', height: 36, width: '100%', border: jerseyBad ? '1px solid #b45c5c' : undefined }} />
+            {jerseyBad && <div style={{ fontSize: 10, color: '#e07070', marginTop: 3 }}>Not a legal HS number (digits 0-5 only).</div>}
+          </div>
+          <div>{lbl('QTR')}<input type="number" min={1} max={8} value={quarter} onChange={e => setQuarter(e.target.value === '' ? '' : Number(e.target.value))} className="input" style={{ fontSize: 13, padding: '6px 10px', height: 36, width: '100%' }} /></div>
+        </div>
+      )}
+
+      {bside === 'offense' ? (
+        <>
+          <div style={{ display: 'flex', gap: 6 }}>{pill(offAction === 'shot', 'Shot', () => setOffAction('shot'))}{pill(offAction === 'turnover', 'Turnover', () => setOffAction('turnover'), '#b45c5c')}</div>
+          {offAction === 'shot' ? (
+            <>
+              <div>{lbl('SHOT ZONE')}{sel(zone, setZone, BB_ZONES)}<div style={{ fontSize: 10, color: '#7a7a6e', marginTop: 3 }}>{BB_THREE.has(zone) ? '3-point' : '2-point'}</div></div>
+              <div>{lbl('ORIGIN')}{sel(origin, setOrigin, BB_ORIGINS)}</div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
+                <input type="checkbox" checked={made} onChange={e => setMade(e.target.checked)} /><span style={{ color: made ? '#2d8c40' : '#7a7a6e', fontWeight: 600 }}>{made ? 'MADE' : 'Missed'}</span>
+              </label>
+            </>
+          ) : (
+            <div>{lbl('TURNOVER TYPE')}{sel(toType, setToType, BB_TURNOVERS)}</div>
+          )}
+        </>
+      ) : bside === 'defense' ? (
+        <>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {(['deflection', 'steal', 'block', 'rebound'] as const).map(a => (
+              <button key={a} onClick={() => setDefAction(a)} style={{ flex: '1 0 45%', padding: '6px 0', fontSize: 12, fontWeight: 700, cursor: 'pointer', borderRadius: 4,
+                border: defAction === a ? 'none' : '1px solid rgba(255,255,255,0.1)', background: defAction === a ? '#1a5c2a' : 'transparent', color: defAction === a ? '#f8f6f0' : '#7a7a6e', textTransform: 'capitalize' }}>{a}</button>
+            ))}
+          </div>
+          {defAction === 'deflection' && (
+            <>
+              <div>{lbl('DEFLECTION TYPE')}{sel(deflType, setDeflType, BB_DEFL)}</div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
+                <input type="checkbox" checked={possChange} onChange={e => setPossChange(e.target.checked)} /><span style={{ color: possChange ? '#2d8c40' : '#7a7a6e' }}>Flipped possession</span>
+              </label>
+            </>
+          )}
+        </>
+      ) : (
+        <>
+          <div>{lbl('SITUATION')}{sel(sitType, setSitType, BB_SITUATIONS)}</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 90px', gap: 8 }}>
+            <div>{lbl('FORMATION')}<input value={formation} onChange={e => setFormation(e.target.value)} placeholder="e.g. Box, Stack" className="input" style={{ fontSize: 13, padding: '6px 10px', height: 36, width: '100%' }} /></div>
+            <div>{lbl('QTR')}<input type="number" min={1} max={8} value={quarter} onChange={e => setQuarter(e.target.value === '' ? '' : Number(e.target.value))} className="input" style={{ fontSize: 13, padding: '6px 10px', height: 36, width: '100%' }} /></div>
+          </div>
+          <div>{lbl('PRIMARY ACTION')}<input value={action} onChange={e => setAction(e.target.value)} placeholder="e.g. screen the screener" className="input" style={{ fontSize: 13, padding: '6px 10px', height: 36, width: '100%' }} /></div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <div>{lbl('TARGET #')}<input value={target} onChange={e => setTarget(e.target.value)} placeholder="#" className="input" style={{ fontSize: 13, padding: '6px 10px', height: 36, width: '100%' }} /></div>
+            <div>{lbl('RESULT')}{sel(sitResult, setSitResult, BB_SIT_RESULTS)}</div>
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
+            <input type="checkbox" checked={lateClose} onChange={e => setLateClose(e.target.checked)} /><span style={{ color: lateClose ? '#C9A84C' : '#7a7a6e' }}>Late &amp; close (final 30s, within 3)</span>
+          </label>
+        </>
+      )}
+
+      <button onClick={handleSave} disabled={saving} className="btn-primary"
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 4, background: SIDE_META[bside].bg, color: SIDE_META[bside].fg }}>
+        {saving ? <><Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> Saving...</>
+          : <><Tag size={14} /> TAG {bside === 'offense' ? (offAction === 'shot' ? 'SHOT' : 'TURNOVER') : bside === 'defense' ? defAction.toUpperCase() : 'SPECIAL SITUATION'}</>}
+      </button>
+    </div>
+  )
+}
+
 // ── Play Log ──────────────────────────────────────────────────────────────
 function PlayLog({
   events,
@@ -1259,7 +1455,9 @@ export default function GamePage() {
             {/* Tab content */}
             <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
               {tab === 'tag'
-                ? <TagForm currentTime={currentTime} onSave={handleSaveTag} saving={saving} side={side} setSide={setSide} opponent={game.opponent} />
+                ? (game.sport === 'basketball'
+                    ? <BasketballTagForm currentTime={currentTime} onSave={handleSaveTag} saving={saving} opponent={game.opponent} />
+                    : <TagForm currentTime={currentTime} onSave={handleSaveTag} saving={saving} side={side} setSide={setSide} opponent={game.opponent} />)
                 : tab === 'log'
                 ? <PlayLog events={events} onDelete={handleDelete} onSeek={handleSeek} onUpdate={handleUpdate} />
                 : tab === 'tendencies'
