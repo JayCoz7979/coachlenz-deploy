@@ -364,8 +364,9 @@ These fields are CRITICAL for coaching — extract as precisely as possible from
   (use this when side=defense and the opponent is running an inbound play)
 
 ── PLAYER IDENTIFICATION (single-camera, best-effort — NEVER guess a number) ──
-- players: array of players whose JERSEY NUMBER you can actually READ on this event. Only include legible numbers — never guess. Each: {"jersey": "<number as string>", "team": "offense" or "defense", "role": "<role>", "confidence": 0.0-1.0}. Basketball roles: "shooter", "ball_handler", "passer", "screener", "roll_man", "cutter", "defender", "rebounder", "fouler", "fouled", "assister", "stealer", "blocker". Use [] if no jersey is legible.
-- primary_player_jersey: jersey number (string) of the MAIN actor (shooter / ball handler), or null if not legible.
+- LEGAL JERSEY NUMBERS (hard rule): high school basketball numbers use ONLY the digits 0-5. Every legal number is one or two digits where BOTH digits are 0-5: 0, 00, 1, 2, 3, 4, 5, 10-15, 20-25, 30-35, 40-45, 50-55. A number containing 6, 7, 8, or 9 is IMPOSSIBLE — it cannot exist on the floor. If you think you read a 6/7/8/9 (or a two-digit number like 7, 27, 68), you MISREAD it: re-read the digits, correct to the nearest legal number if you are confident, otherwise DROP that player. Never emit an illegal number.
+- players: array of players whose JERSEY NUMBER you can actually READ on this event. Only include legible, LEGAL numbers — never guess. Each: {"jersey": "<number as string>", "team": "offense" or "defense", "role": "<role>", "confidence": 0.0-1.0}. Basketball roles: "shooter", "ball_handler", "passer", "screener", "roll_man", "cutter", "defender", "rebounder", "fouler", "fouled", "assister", "stealer", "blocker". Use [] if no jersey is legible.
+- primary_player_jersey: jersey number (string) of the MAIN actor (shooter / ball handler), or null if not legible. Must be a LEGAL number (digits 0-5 only).
 
 ── EVERY EVENT ──
 - play_description: ONE sharp sentence describing the possession/action. Specific enough to reconstruct without film. For inbounds: name the set, the action, and what happened. Examples: "BLOB right baseline: Box set, back screen frees cutter at restricted area, lob over zone for layup (made)." | "SLOB left sideline after timeout: Stack set, cross screen action, shooter pops to left wing 3 (missed, long)." | "PG drives baseline, draws hard hedge from center on ball screen at elbow, kicks to corner shooter for open 3 (missed)."
@@ -663,6 +664,22 @@ class AiDetectWorker(BaseWorker):
                             "confidence_presnap", "confidence_postsnap",
                             "verified", "verdict", "verify_note",
                         )
+
+                        # LEGAL JERSEY GUARD (basketball): HS numbers use only the
+                        # digits 0-5 (0/00, 1-5, 10-15, 20-25, 30-35, 40-45, 50-55).
+                        # A detected 6/7/8/9 is a misread — scrub it so an illegal
+                        # number never reaches the play log or the scout engine.
+                        if sport == "basketball":
+                            def _legal_bb(n):
+                                s = str(n or "").strip().lstrip("#")
+                                return s.isdigit() and 1 <= len(s) <= 2 and all(c in "012345" for c in s)
+                            for _p in deduped:
+                                for _k in ("primary_player_jersey", "ball_carrier_jersey"):
+                                    if _p.get(_k) is not None and not _legal_bb(_p[_k]):
+                                        _p[_k] = None
+                                _pl = _p.get("players")
+                                if isinstance(_pl, list):
+                                    _p["players"] = [pp for pp in _pl if _legal_bb(pp.get("jersey"))]
 
                         events = [
                             Event(
