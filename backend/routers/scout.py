@@ -32,6 +32,7 @@ from backend.services.auth import (
     get_current_user, get_current_org, can_review_scout, require_scout_reviewer,
 )
 from backend.services.agent_log import log_agent_action
+from backend.services.sports import assert_sport_allowed
 from backend.services.tendency_engine import run_tendency_engine
 from backend.services.tendency_engine.basketball_scout import build_scouting_report
 
@@ -141,6 +142,7 @@ async def create_session(
     org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db),
 ):
+    assert_sport_allowed(org, "basketball")
     gd = None
     if body.game_date:
         try:

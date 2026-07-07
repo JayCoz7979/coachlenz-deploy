@@ -11,6 +11,7 @@ from backend.models.game import Game
 from backend.models.job import Job
 from backend.services.auth import get_current_user, get_current_org
 from backend.services.trial import can_upload_game, is_trial_active
+from backend.services.sports import assert_sport_allowed
 
 router = APIRouter(prefix="/ingest", tags=["ingest"])
 
@@ -68,6 +69,10 @@ async def ingest_from_url(
 ):
     if not can_upload_game(org):
         raise HTTPException(status_code=403, detail="Trial game limit reached. Upgrade to upload more games.")
+
+    # Sport lock: a client can only analyze film for the sport(s) their plan
+    # includes (chosen at onboarding). Warns instead of silently mis-analyzing.
+    assert_sport_allowed(org, body.sport)
 
     source_type = detect_source_type(body.url)
 
