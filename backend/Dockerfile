@@ -8,6 +8,13 @@ WORKDIR /app
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+# YouTube rotates its player/signature format every few weeks and yt-dlp ships
+# fixes just as often; a pinned version rots into "Requested format is not
+# available" errors on the ingest worker. Force the latest at build time so every
+# rebuild is current (harmless for the services that never call yt-dlp). This is
+# the image ALL services build from — the ingest worker overrides the start
+# command to run backend.workers.worker_ingest.
+RUN pip install --no-cache-dir --upgrade "yt-dlp[default]"
 
 # Browsers are already installed in the base image at $PLAYWRIGHT_BROWSERS_PATH.
 
