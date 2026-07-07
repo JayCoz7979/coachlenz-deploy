@@ -9,7 +9,8 @@ from backend.models.organization import Organization
 from backend.services.auth import hash_password, verify_password, create_access_token, create_refresh_token, decode_token, get_current_user
 from backend.services.abuse_prevention import get_risk_score, fingerprint_request, flag_risk
 from backend.services.trial import TRIAL_DAYS
-from backend.services.email_service import send_welcome_email, send_password_reset_email
+from backend.services.email_service import send_welcome_email, send_password_reset_email, send_email_verification_code
+from backend.services import twilio_verify
 import uuid
 import secrets
 import hashlib
@@ -192,3 +193,75 @@ async def change_password(
     await db.execute(update(User).where(User.id == user.id).values(hashed_password=hash_password(body.new_password)))
     await db.commit()
     return {"ok": True, "message": "Password updated."}
+
+
+# ── Onboarding identity verification (email + phone, chargeback protection) ───
+class VerifyEmailRequest(BaseModel):
+    code: str
+
+
+class SendPhoneRequest(BaseModel):
+    phone: str
+
+
+class VerifyPhoneRequest(BaseModel):
+    code: str
+
+
+@router.post("/send-email-code")
+async def send_email_code(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    if user.email_verified:
+        return {"ok": True, "already_verified": True}
+    code = f"{secrets.randbelow(1000000):06d}"
+    await db.execute(update(User).where(User.id == user.id).values(
+        email_verify_code_hash=_sha256(code),
+        email_verify_expires=datetime.utcnow() + timedelta(minutes=15),
+    ))
+    await db.commit()
+    try:
+        await send_email_verification_code(user.email, user.name, code)
+    except Exception:
+        raise HTTPException(status_code=502, detail="Could not send the verification email. Try again in a moment.")
+    return {"ok": True, "message": f"We sent a 6-digit code to {user.email}."}
+
+
+@router.post("/verify-email")
+async def verify_email(body: VerifyEmailRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    if user.email_verified:
+        return {"ok": True, "email_verified": True}
+    code = (body.code or "").strip()
+    result = await db.execute(select(User).where(
+        User.id == user.id,
+        User.email_verify_code_hash == _sha256(code),
+        User.email_verify_expires > func.now(),
+    ))
+    u = result.scalar_one_or_none()
+    if not u:
+        raise HTTPException(status_code=400, detail="That code is incorrect or has expired. Request a new one.")
+    u.email_verified = True
+    u.email_verify_code_hash = None
+    u.email_verify_expires = None
+    await db.commit()
+    return {"ok": True, "email_verified": True}
+
+
+@router.post("/send-phone-code")
+async def send_phone_code(body: SendPhoneRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    phone = twilio_verify.normalize_phone(body.phone)
+    if len(phone) < 11:
+        raise HTTPException(status_code=422, detail="Enter a valid phone number.")
+    await db.execute(update(User).where(User.id == user.id).values(phone=phone, phone_verified=False))
+    await db.commit()
+    twilio_verify.send_sms_code(phone)  # raises 503/400 on config/number issues
+    return {"ok": True, "message": "We texted you a 6-digit code."}
+
+
+@router.post("/verify-phone")
+async def verify_phone(body: VerifyPhoneRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    if not user.phone:
+        raise HTTPException(status_code=400, detail="Add your phone number first.")
+    if not twilio_verify.check_sms_code(user.phone, (body.code or "").strip()):
+        raise HTTPException(status_code=400, detail="That code is incorrect or has expired.")
+    await db.execute(update(User).where(User.id == user.id).values(phone_verified=True))
+    await db.commit()
+    return {"ok": True, "phone_verified": True}

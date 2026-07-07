@@ -28,6 +28,22 @@ async def send_report_ready_email(to: str, name: str, report_title: str, report_
         "html": f"<p>Hi {name},</p><p>Your tendency report <strong>{report_title}</strong> is ready.</p><p><a href='{report_url}'>View Report</a></p><p>Powered by <a href='https://cosbyaisolutions.com'>Cosby AI Solutions</a></p>",
     })
 
+async def send_email_verification_code(to: str, name: str, code: str):
+    resend.Emails.send({
+        "from": FROM,
+        "to": to,
+        "subject": f"Your CoachLenz verification code: {code}",
+        "html": (
+            f"<p>Hi {name},</p>"
+            f"<p>Enter this code to verify your email and continue setting up CoachLenz:</p>"
+            f"<p style='font-size:30px;font-weight:800;letter-spacing:6px;margin:16px 0'>{code}</p>"
+            f"<p style='color:#666;font-size:13px'>This code expires in 15 minutes. If you didn't start a "
+            f"CoachLenz sign-up, you can ignore this email.</p>"
+            f"<p>Powered by <a href='https://cosbyaisolutions.com'>Cosby AI Solutions</a></p>"
+        ),
+    })
+
+
 async def send_password_reset_email(to: str, name: str, reset_url: str):
     resend.Emails.send({
         "from": FROM,

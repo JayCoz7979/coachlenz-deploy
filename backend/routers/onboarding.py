@@ -73,6 +73,12 @@ async def choose_sports(
     if user.role != "owner":
         raise HTTPException(status_code=403, detail="Only the account owner can choose the plan's sport(s).")
 
+    # Identity must be verified first (chargeback protection): email then phone.
+    if not user.email_verified:
+        raise HTTPException(status_code=403, detail="Verify your email before choosing your sport.")
+    if not user.phone_verified:
+        raise HTTPException(status_code=403, detail="Verify your phone number before choosing your sport.")
+
     if org.onboarding_completed and chosen_sports(org):
         raise HTTPException(
             status_code=409,
