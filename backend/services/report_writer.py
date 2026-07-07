@@ -562,6 +562,93 @@ def _bball_sections(scouting, tendency_summary):
     manual box-score report clean while a full-film report keeps its depth."""
     spec = _scout_priority_sections(scouting)
 
+    # ── Coordinator layer (Modules 8-12): only when the coordinator data exists,
+    # so a thin manual box-score report doesn't sprout empty sections. These are
+    # inserted right after the six priority sections — they ARE the game prep. ──
+    if scouting.get("validation_gates"):
+        spec.append({
+            "heading": "Report Integrity - Eight Validation Gates",
+            "insight_type": "tendency",
+            "instructions": (
+                "Use scouting.report_status, scouting.validation_gates (eight gates), scouting.personnel_flagged, and "
+                "scouting.camera_confidence. Open with the report_status (FINAL or PRELIMINARY) and total_possessions across "
+                "games_scouted. Then one tight bullet per gate: name, passed (true/false), and the first note. "
+                "If personnel_flagged is true, state plainly that affected tendencies dropped one confidence tier and carry an "
+                "asterisk (Gate 8). Fold in camera_confidence.disclosure verbatim as the integrity note. This is a trust/integrity "
+                "section, not a sales pitch - the coach must know exactly how hard to lean on this report."
+            ),
+        })
+    if scouting.get("situational_tendencies"):
+        spec.append({
+            "heading": "Situational Tendencies - Coordinator Statements",
+            "insight_type": "tendency",
+            "instructions": (
+                "Use scouting.situational_tendencies - a pre-computed list of coordinator statements, each already carrying its "
+                "sample size and a confidence tier (HIGH / MEDIUM / LOW). Present them as a bulleted list in the given order, each "
+                "line ending with its confidence and sample, e.g. '... [HIGH, n=25]'. Do not invent numbers - every statement is "
+                "already evidence-backed. A trailing asterisk means the tendency was drawn from a game with a missing starter."
+            ),
+        })
+    _gp = scouting.get("game_plan") or {}
+    if any(_gp.get(k) for k in ("defensive_plan", "offensive_plan", "special_situations_plan")):
+        spec.append({
+            "heading": "Installable Game Plan - Offense / Defense / Special Situations",
+            "insight_type": "red_zone",
+            "instructions": (
+                "Use scouting.game_plan (defensive_plan, offensive_plan, special_situations_plan) - ALREADY computed and ranked. "
+                "Present three labeled subsections. Within each, list items in order; featured items lead. Format each call: "
+                "'CALL - evidence [CONFIDENCE, n=SAMPLE]'. Mark items whose class is 'watch_item' as (watch item) - they are below "
+                "the 10-rep recommendation line and must NOT be presented as hard recommendations. The defensive_plan is the meat "
+                "(how we guard THEIR offense); include the late-game denial, strategic foul target, and never-foul players if present."
+            ),
+        })
+    lg = scouting.get("late_game_profile") or {}
+    if lg.get("tracked"):
+        spec.append({
+            "heading": "Late-Game Profile - Final Four Minutes, One Possession",
+            "insight_type": "red_zone",
+            "instructions": (
+                "Use scouting.late_game_profile. Lead with primary_threat if primary_threat_alert is true - the player who takes "
+                "over 40% of shots in the final four minutes of a one-possession game gets a dedicated defensive assignment. Bullets: "
+                "late_shots, late_fg_pct, late_three_rate_pct, late_turnovers, and the shot_takers list with share_pct. Close with the "
+                "final-four-minute defensive call. This is the single highest-priority read for a head coach."
+            ),
+        })
+    ft = scouting.get("free_throw_profile") or {}
+    if ft.get("tracked"):
+        spec.append({
+            "heading": "Free Throws - Strategic Foul Targets & Box-Outs",
+            "insight_type": "defense",
+            "instructions": (
+                "Use scouting.free_throw_profile. Lead with team_ft_pct. Put strategic_foul_targets in their OWN bullet flagged "
+                "FOUL LATE (players under 60% with a real sample) and never_foul_players flagged DO NOT FOUL LATE (over 90%). "
+                "List per-player ft_pct and clutch_ft_pct where present, and note shooter_tempo for strategic foul timing. "
+                "Summarize offensive_boxout_formations and defensive_boxout_formations if logged."
+            ),
+        })
+    ss = scouting.get("special_situations") or {}
+    if ss.get("tracked"):
+        spec.append({
+            "heading": "Special Situations - Trusted Sets (BLOB / SLOB / Press / Late)",
+            "insight_type": "tendency",
+            "instructions": (
+                "Use scouting.special_situations.by_type. For each situation type present (BLOB, SLOB, press_break, last_second, "
+                "end_of_quarter), name the trusted sets (reps >= 2) with their formation/action, reps, and scores. Flag every entry "
+                "in trusted_late_sets as a MUST-DEFEND - a set they run more than once late and close is their most trusted call. "
+                "Advise the exact coverage for each."
+            ),
+        })
+    if scouting.get("head_coach_priorities"):
+        spec.append({
+            "heading": "Head Coach One-Sheet - Top Priorities",
+            "insight_type": "red_zone",
+            "instructions": (
+                "Use scouting.head_coach_priorities - the flat, priority-ordered digest across offense, defense, and special "
+                "situations. Present VERBATIM as a numbered list in the given order: 'N. [PHASE] call (CONFIDENCE)'. Do not reorder "
+                "or drop items. This is the tear-away sheet the head coach carries onto the floor."
+            ),
+        })
+
     def has(block, key="total", minv=0):
         b = tendency_summary.get(block) or {}
         try:

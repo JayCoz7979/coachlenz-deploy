@@ -28,8 +28,11 @@ from backend.models.game import Game
 from backend.models.event import Event
 from backend.models.job import Job
 from backend.models.report import TendencyReport
-from backend.services.auth import get_current_user, get_current_org
+from backend.services.auth import (
+    get_current_user, get_current_org, can_review_scout, require_scout_reviewer,
+)
 from backend.services.agent_log import log_agent_action
+from backend.services.tendency_engine import run_tendency_engine
 from backend.services.tendency_engine.basketball_scout import build_scouting_report
 
 # The six scouting categories in strict priority order (Category 1 heaviest).
@@ -69,7 +72,40 @@ async def _load_session(db: AsyncSession, session_id: str, org_id) -> Game:
     return game
 
 
-# ── session ─────────────────────────────────────────────────────────────────
+async def _load_meta_event(db: AsyncSession, game_id) -> Optional[Event]:
+    """The single side='meta' event that holds the Module-1 intake + review state."""
+    result = await db.execute(
+        select(Event).where(Event.game_id == game_id, Event.event_type == "scout_meta")
+    )
+    return result.scalar_one_or_none()
+
+
+async def _authorized_session(db: AsyncSession, session_id: str, user: User,
+                              write: bool = False) -> Game:
+    """Load a session and enforce scouting RLS (mirrors the football scout):
+
+    • The primary analyst (session creator) may read AND write their own session.
+    • Any reviewer-authorized user (head coach / coordinator / reviewer / owner)
+      may read every session in the org, and may write.
+    • A different plain analyst/member may NOT touch someone else's session.
+
+    This is what gives Gate 2 teeth: identity is the token, not a form field.
+    Legacy/film-only sessions with no recorded analyst fall back to org-scope.
+    """
+    game = await _load_session(db, session_id, user.organization_id)
+    meta = await _load_meta_event(db, game.id)
+    analyst_id = (meta.extra_data or {}).get("analyst_id") if meta else None
+
+    is_analyst = analyst_id is not None and str(analyst_id) == str(user.id)
+    if is_analyst or can_review_scout(user) or analyst_id is None:
+        return game
+    raise HTTPException(
+        status_code=403,
+        detail="This scouting session belongs to another analyst. Ask a reviewer or the session owner.",
+    )
+
+
+# ── session intake (Module 1 + single-camera calibration) ────────────────────
 class SessionCreate(BaseModel):
     opponent: str
     team_name: Optional[str] = None          # our team preparing the scout
@@ -77,6 +113,25 @@ class SessionCreate(BaseModel):
     season: Optional[str] = None
     team_id: Optional[str] = None
     title: Optional[str] = None
+
+    # Module 1 intelligence brief (all optional — the gates read what is present).
+    # NOTE: analyst identity is NOT taken from the client — it is set server-side
+    # from the authenticated user so Gate 2 (dual review) cannot be spoofed.
+    games_scouted: Optional[int] = None
+    head_coach: Optional[str] = None
+    offensive_system: Optional[str] = None
+    defensive_system: Optional[str] = None
+    weak_schedule: Optional[bool] = None          # strength-of-schedule confidence flag
+    injury_flags: Optional[List[str]] = None
+    games_with_missing_starter: Optional[List[Any]] = None
+    notes: Optional[str] = None
+
+    # Single-camera calibration note (required per the charter for every game;
+    # optional at the API boundary so a film-only session still works).
+    camera_angle: Optional[str] = None            # high-wide | sideline | end-zone
+    camera_quality: Optional[str] = None          # clear | standard | poor
+    visibility_rating: Optional[str] = None       # FULL | PARTIAL | LIMITED
+    off_ball_visibility_pct: Optional[float] = None  # % of possessions all 5 visible
 
 
 @router.post("/session")
@@ -104,9 +159,56 @@ async def create_session(
         is_trial_game=getattr(org, "is_trial", False),
     )
     db.add(game)
+    await db.flush()
+
+    # Stash the Module-1 intake + camera calibration on a single meta event (no new
+    # table). The six-category engine ignores side='meta'; the validation gates and
+    # the camera-confidence summary read it.
+    meta_event = Event(
+        organization_id=org.id,
+        game_id=game.id,
+        event_type="scout_meta",
+        side="meta",
+        extra_data={
+            "opponent": body.opponent,
+            "team_name": body.team_name,
+            "season": body.season,
+            # Identity is server-set from the authenticated user (anti-spoof).
+            "analyst_id": str(user.id),
+            "analyst": user.name,
+            "reviewer_id": None,          # set only by a real /review sign-off
+            "reviewer": None,
+            "status": "draft",            # only /review can advance this
+            "games_scouted": body.games_scouted,
+            "head_coach": body.head_coach,
+            "offensive_system": body.offensive_system,
+            "defensive_system": body.defensive_system,
+            "weak_schedule": body.weak_schedule,
+            "injury_flags": body.injury_flags or [],
+            "games_with_missing_starter": body.games_with_missing_starter or [],
+            "notes": body.notes,
+            "camera_angle": body.camera_angle,
+            "camera_quality": body.camera_quality,
+            "visibility_rating": body.visibility_rating,
+            "off_ball_visibility_pct": body.off_ball_visibility_pct,
+        },
+    )
+    db.add(meta_event)
     await db.commit()
     await db.refresh(game)
-    return {"session_id": str(game.id), "opponent": game.opponent, "sport": "basketball"}
+
+    warnings = []
+    if body.games_scouted is not None and body.games_scouted < 3:
+        warnings.append("Fewer than 3 games scouted; data confidence is reduced (Gate 1).")
+    if (body.camera_quality or "").lower() == "poor":
+        warnings.append("Poor camera quality: every individual technique grade drops one tier (flagged ESTIMATE).")
+    warnings.append(
+        "Draft created. A second, review-authorized user (head coach / coordinator / reviewer / owner) "
+        "must sign off via /scout/review before the report can be FINAL (Gate 2)."
+    )
+
+    return {"session_id": str(game.id), "opponent": game.opponent, "sport": "basketball",
+            "analyst": user.name, "status": "draft", "warnings": warnings}
 
 
 # ── manual entry ─────────────────────────────────────────────────────────────
@@ -159,6 +261,43 @@ class PossessionEntry(BaseModel):
     jersey_number: Optional[str] = None          # initiator
 
 
+class FreeThrowEntry(BaseModel):
+    jersey_number: str                           # the shooter
+    attempts: int = 2
+    makes: int = 0
+    pressure_situation: bool = False             # final 2 min / close game
+    shooter_tempo: Optional[str] = None          # quick|routine|slow (strategic-foul timing)
+    box_out_formation_offense: Optional[str] = None
+    box_out_formation_defense: Optional[str] = None
+    quarter: Optional[int] = None
+    game_number: Optional[int] = None
+
+
+class SpecialSituationEntry(BaseModel):
+    situation_type: str                          # BLOB|SLOB|press_break|last_second|end_of_quarter
+    formation: Optional[str] = None
+    primary_action: Optional[str] = None
+    target: Optional[str] = None                 # primary target jersey
+    result: Optional[str] = None                 # made|missed|reset|turnover
+    late_and_close: bool = False                 # final 30s within 3 (highest-trust set)
+    quarter: Optional[int] = None
+    game_number: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class PlayerProfileEntry(BaseModel):
+    """Module-5 analyst grade card. Free-form 1-5 grade fields are tolerated so the
+    guard/forward/big card schemas can all flow through one endpoint."""
+    jersey: str
+    position: Optional[str] = None
+    handedness: Optional[str] = None             # left|right|ambidextrous
+    role: Optional[str] = None
+    visible_examples: int = 0                    # clean single-camera looks (Gate 5)
+
+    class Config:
+        extra = "allow"                          # tolerate any 1-5 grade field
+
+
 class ManualEntry(BaseModel):
     session_id: str
     players: List[PlayerStat] = []
@@ -166,6 +305,9 @@ class ManualEntry(BaseModel):
     turnovers: List[TurnoverEntry] = []
     deflections: List[DeflectionEntry] = []
     possessions: List[PossessionEntry] = []
+    free_throws: List[FreeThrowEntry] = []
+    special_situations: List[SpecialSituationEntry] = []
+    player_profiles: List[PlayerProfileEntry] = []
     replace: bool = False                        # wipe prior events for this session first
 
 
@@ -198,10 +340,13 @@ async def manual_entry(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    game = await _load_session(db, body.session_id, user.organization_id)
+    game = await _authorized_session(db, body.session_id, user, write=True)
 
     if body.replace:
-        existing = await db.execute(select(Event).where(Event.game_id == game.id))
+        # Wipe prior DATA events but keep the scout_meta intake (Module 1) intact.
+        existing = await db.execute(
+            select(Event).where(Event.game_id == game.id, Event.event_type != "scout_meta")
+        )
         for e in existing.scalars().all():
             await db.delete(e)
 
@@ -282,6 +427,61 @@ async def manual_entry(
             },
         ))
 
+    for ft in body.free_throws:
+        objs.append(Event(
+            organization_id=user.organization_id,
+            game_id=game.id,
+            event_type="free_throw",
+            side="offense",
+            result="made" if ft.makes >= ft.attempts and ft.attempts else None,
+            player=str(ft.jersey_number),
+            extra_data={
+                "primary_player_jersey": str(ft.jersey_number),
+                "shooter": str(ft.jersey_number),
+                "attempts": ft.attempts,
+                "makes": ft.makes,
+                "pressure_situation": ft.pressure_situation,
+                "shooter_tempo": ft.shooter_tempo,
+                "box_out_formation_offense": ft.box_out_formation_offense,
+                "box_out_formation_defense": ft.box_out_formation_defense,
+                "quarter": ft.quarter,
+                "game_number": ft.game_number,
+            },
+        ))
+
+    for ss in body.special_situations:
+        objs.append(Event(
+            organization_id=user.organization_id,
+            game_id=game.id,
+            event_type="special_situation",
+            side="offense",
+            result=ss.result,
+            player=str(ss.target) if ss.target else None,
+            extra_data={
+                "situation_type": ss.situation_type,
+                "formation": ss.formation,
+                "primary_action": ss.primary_action,
+                "target": ss.target,
+                "result": ss.result,
+                "late_and_close": ss.late_and_close,
+                "quarter": ss.quarter,
+                "game_number": ss.game_number,
+                "notes": ss.notes,
+            },
+        ))
+
+    for pp in body.player_profiles:
+        # side='meta' so the tendency engine ignores it; the coordinator layer
+        # reads it as a Module-5 grade card and runs the Gate 5 visibility audit.
+        objs.append(Event(
+            organization_id=user.organization_id,
+            game_id=game.id,
+            event_type="player_profile",
+            side="meta",
+            player=str(pp.jersey),
+            extra_data={**pp.model_dump(), "primary_player_jersey": str(pp.jersey)},
+        ))
+
     db.add_all(objs)
     await db.commit()
     return {
@@ -293,6 +493,9 @@ async def manual_entry(
             "turnovers": len(body.turnovers),
             "deflections": len(body.deflections),
             "possessions": len(body.possessions),
+            "free_throws": len(body.free_throws),
+            "special_situations": len(body.special_situations),
+            "player_profiles": len(body.player_profiles),
         },
     }
 
@@ -356,7 +559,7 @@ async def csv_import(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    game = await _load_session(db, body.session_id, user.organization_id)
+    game = await _authorized_session(db, body.session_id, user, write=True)
 
     reader = csv.DictReader(io.StringIO(body.csv_text))
     if not reader.fieldnames:
@@ -370,7 +573,10 @@ async def csv_import(
         )
 
     if body.replace:
-        existing = await db.execute(select(Event).where(Event.game_id == game.id))
+        # Wipe prior DATA events but keep the scout_meta intake (Module 1) intact.
+        existing = await db.execute(
+            select(Event).where(Event.game_id == game.id, Event.event_type != "scout_meta")
+        )
         for e in existing.scalars().all():
             await db.delete(e)
 
@@ -432,9 +638,13 @@ async def analyze(
     org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db),
 ):
-    game = await _load_session(db, body.session_id, org.id)
+    game = await _authorized_session(db, body.session_id, user, write=True)
 
-    count = await db.execute(select(Event).where(Event.game_id == game.id))
+    # Count only real DATA events — a session with just its scout_meta intake and
+    # no logged possessions is not analyzable yet.
+    count = await db.execute(
+        select(Event).where(Event.game_id == game.id, Event.event_type != "scout_meta")
+    )
     n_events = len(count.scalars().all())
     if n_events == 0:
         raise HTTPException(
@@ -473,38 +683,41 @@ async def analyze(
     return {"report_id": str(report.id), "session_id": str(game.id), "status": "queued", "events": n_events}
 
 
-# ── parallel structured retrieval — the six categories, each on its own ───────
+# ── parallel structured retrieval — six categories + full coordinator layer ───
 @router.get("/{session_id}/analysis")
 async def scouting_analysis(
     session_id: str,
-    category: Optional[str] = None,   # optional: return just one category by key
+    category: Optional[str] = None,   # optional: return just one of the six categories
+    block: Optional[str] = None,      # optional: one coordinator block (gates|game_plan|...)
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Return the six scouting categories as discrete, priority-ordered, labeled
-    blocks computed fresh from this session's events. This is the PARALLEL view:
-    each category is retrievable on its own (pass ?category=turnovers), fully
-    self-describing (sport + opponent), so there is no chance of confusing one
-    sport's data with another's or one category with another.
+    """The parallel, self-describing scouting view, computed fresh from this
+    session's events. Two axes of retrieval:
 
-    Distinct from /analyze, which queues the combined coach-facing prose report.
+      • ?category=turnovers  — one of the six priority categories on its own
+      • ?block=game_plan     — one coordinator block on its own: gates, game_plan,
+        situational, advanced, late_game, free_throws, special_situations,
+        player_profiles, camera_confidence
+
+    Every payload echoes sport + opponent, so there is no chance of confusing one
+    sport's data with another's, or one category/block with another. Distinct from
+    /analyze, which queues the combined coach-facing prose report.
     """
-    game = await _load_session(db, session_id, user.organization_id)
+    game = await _authorized_session(db, session_id, user, write=False)
 
     ev_result = await db.execute(select(Event).where(Event.game_id == game.id))
     events = ev_result.scalars().all()
 
-    scouting = build_scouting_report(events)
+    # Run the full engine so `scouting` carries the six categories AND the
+    # coordinator layer (validation gates, game plan, advanced metrics, etc.).
+    summary = await run_tendency_engine("basketball", events)
+    scouting = summary.get("scouting", {}) or {}
+
     categories = [
-        {
-            "priority": pri,
-            "key": key,
-            "name": name,
-            "data": scouting.get(engine_key, {}),
-        }
+        {"priority": pri, "key": key, "name": name, "data": scouting.get(engine_key, {})}
         for (pri, key, name, engine_key) in SCOUT_CATEGORIES
     ]
-
     if category:
         match = next((c for c in categories if c["key"] == category), None)
         if not match:
@@ -512,12 +725,139 @@ async def scouting_analysis(
             raise HTTPException(status_code=404, detail=f"Unknown category '{category}'. Valid: {valid}")
         categories = [match]
 
+    coordinator_blocks = {
+        "gates": {
+            "report_status": scouting.get("report_status"),
+            "validation_gates": scouting.get("validation_gates", []),
+        },
+        "game_plan": {
+            "game_plan": scouting.get("game_plan", {}),
+            "game_plan_priorities": scouting.get("game_plan_priorities", []),
+            "head_coach_priorities": scouting.get("head_coach_priorities", []),
+        },
+        "situational": scouting.get("situational_tendencies", []),
+        "advanced": scouting.get("advanced_metrics", {}),
+        "late_game": scouting.get("late_game_profile", {}),
+        "free_throws": scouting.get("free_throw_profile", {}),
+        "special_situations": scouting.get("special_situations", {}),
+        "player_profiles": scouting.get("player_profiles", {}),
+        "camera_confidence": scouting.get("camera_confidence", {}),
+    }
+    if block:
+        if block not in coordinator_blocks:
+            raise HTTPException(status_code=404,
+                                detail=f"Unknown block '{block}'. Valid: {', '.join(coordinator_blocks)}")
+        coordinator_blocks = {block: coordinator_blocks[block]}
+
     return {
         "session_id": str(game.id),
         "sport": game.sport,                 # always the discriminator, echoed back
         "opponent": game.opponent,
+        "report_status": scouting.get("report_status", "PRELIMINARY"),
         "total_events": len(events),
+        "total_possessions": scouting.get("total_possessions", 0),
+        "games_scouted": scouting.get("games_scouted", 1),
+        "personnel_flagged": scouting.get("personnel_flagged", False),
         "available": scouting.get("available", False),
         "categories": categories,            # the six, in parallel, priority-ordered
-        "game_plan_priorities": scouting.get("game_plan_priorities", []),
+        "coordinator": coordinator_blocks,   # gates, game plan, advanced, late-game, ...
     }
+
+
+# ── dual-analyst review sign-off (Gate 2 teeth) ──────────────────────────────
+class ReviewRequest(BaseModel):
+    session_id: str
+    decision: str = "reviewed"                     # "reviewed" | "final" | "changes_requested"
+    notes: Optional[str] = None
+    disputed_tendencies: Optional[List[str]] = None
+
+
+@router.post("/review")
+async def review_session(
+    body: ReviewRequest,
+    user: User = Depends(require_scout_reviewer),   # must hold review authority
+    db: AsyncSession = Depends(get_db),
+):
+    """Second-analyst sign-off. This is what makes Gate 2 real: only an
+    authenticated, review-authorized user who is NOT the primary analyst can
+    advance a session to reviewed/final. Identity is the token, not a form field.
+    """
+    game = await _load_session(db, body.session_id, user.organization_id)
+    meta = await _load_meta_event(db, game.id)
+    if not meta:
+        raise HTTPException(status_code=422, detail="Session has no intake metadata to review.")
+
+    data = dict(meta.extra_data or {})
+    analyst_id = data.get("analyst_id")
+    if analyst_id and str(analyst_id) == str(user.id):
+        raise HTTPException(
+            status_code=403,
+            detail="You are the primary analyst on this session. Dual review requires a different reviewer.",
+        )
+
+    decision = (body.decision or "reviewed").lower()
+    if decision not in ("reviewed", "final", "changes_requested"):
+        raise HTTPException(status_code=422, detail="decision must be reviewed, final, or changes_requested")
+
+    if decision == "changes_requested":
+        data["status"] = "draft"
+    else:
+        data["reviewer_id"] = str(user.id)
+        data["reviewer"] = user.name
+        data["status"] = decision
+    data["review_notes"] = body.notes
+    data["disputed_tendencies"] = body.disputed_tendencies or []
+    meta.extra_data = data
+    # JSONB in-place mutation needs an explicit flag for SQLAlchemy to persist it.
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(meta, "extra_data")
+    await db.commit()
+
+    await log_agent_action(
+        action="scout_review_signoff",
+        game_id=str(game.id),
+        organization_id=str(user.organization_id),
+        phase="scout",
+        reason=f"{user.name} ({user.role}) set review status to '{data['status']}' on {game.opponent} scout.",
+        level="success",
+        detail={"reviewer_id": str(user.id), "decision": decision,
+                "disputed": len(body.disputed_tendencies or [])},
+    )
+    return {"session_id": str(game.id), "status": data["status"],
+            "reviewer": user.name, "gate2_passed": data["status"] in ("reviewed", "final")}
+
+
+# ── sessions list (RLS: analysts see own, reviewers see the whole org) ────────
+@router.get("/sessions")
+async def list_sessions(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Game).where(Game.organization_id == user.organization_id,
+                           Game.sport == "basketball", Game.status == "manual")
+        .order_by(Game.created_at.desc()).limit(200)
+    )
+    games = result.scalars().all()
+    reviewer = can_review_scout(user)
+
+    out = []
+    for g in games:
+        meta = await _load_meta_event(db, g.id)
+        data = (meta.extra_data if meta else {}) or {}
+        analyst_id = data.get("analyst_id")
+        # RLS: a plain analyst only sees sessions they own; reviewers see all.
+        if not reviewer and analyst_id and str(analyst_id) != str(user.id):
+            continue
+        out.append({
+            "session_id": str(g.id),
+            "opponent": g.opponent,
+            "game_date": g.game_date.isoformat() if g.game_date else None,
+            "analyst": data.get("analyst"),
+            "reviewer": data.get("reviewer"),
+            "status": data.get("status", "draft"),
+            "camera_quality": data.get("camera_quality"),
+            "is_mine": analyst_id is not None and str(analyst_id) == str(user.id),
+            "can_review": reviewer and (not analyst_id or str(analyst_id) != str(user.id)),
+        })
+    return {"sessions": out, "you_can_review": reviewer}

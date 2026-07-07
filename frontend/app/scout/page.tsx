@@ -52,6 +52,13 @@ export default function ScoutPage() {
   const [opponent, setOpponent] = useState('')
   const [gameDate, setGameDate] = useState('')
   const [season, setSeason] = useState('')
+  // Module 1 intake + single-camera calibration — feeds the validation gates
+  // (games scouted -> Gate 1, injury -> Gate 8) and the camera-confidence summary.
+  const [gamesScouted, setGamesScouted] = useState('')
+  const [cameraAngle, setCameraAngle] = useState('')
+  const [cameraQuality, setCameraQuality] = useState('')
+  const [injuryNote, setInjuryNote] = useState('')
+  const [setupOpen, setSetupOpen] = useState(false)
   const [players, setPlayers] = useState<PlayerRow[]>([blankPlayer(), blankPlayer()])
   const [shots, setShots] = useState<ShotRow[]>([])
   const [csvOpen, setCsvOpen] = useState(false)
@@ -94,6 +101,10 @@ export default function ScoutPage() {
       opponent: opponent.trim() || 'Opponent',
       game_date: gameDate || null,
       season: season || null,
+      games_scouted: gamesScouted ? Number(gamesScouted) : null,
+      camera_angle: cameraAngle || null,
+      camera_quality: cameraQuality || null,
+      injury_flags: injuryNote.trim() ? [injuryNote.trim()] : null,
     })
     return res.data.session_id
   }
@@ -217,6 +228,43 @@ export default function ScoutPage() {
                 <input className="input" value={season} onChange={e => setSeason(e.target.value)} placeholder="2025-26" />
               </div>
             </div>
+          </div>
+
+          {/* Module 1 intake + single-camera calibration (powers the validation gates) */}
+          <div className="card" style={{ marginBottom: 18 }}>
+            <button onClick={() => setSetupOpen(o => !o)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, padding: 0 }}>
+              {setupOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />} Scouting Setup &amp; Single-Camera Calibration <span style={{ color: 'var(--text3)', fontWeight: 400, fontSize: 12 }}>(optional - sharpens the report&apos;s confidence gates)</span>
+            </button>
+            {setupOpen && (
+              <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+                <div>
+                  <label className="label">Games Scouted</label>
+                  <input className="input" type="number" min={1} value={gamesScouted} onChange={e => setGamesScouted(e.target.value)} placeholder="3+ recommended" />
+                </div>
+                <div>
+                  <label className="label">Camera Angle</label>
+                  <select className="input" value={cameraAngle} onChange={e => setCameraAngle(e.target.value)}>
+                    <option value="">Not recorded</option>
+                    <option value="high and wide">High &amp; wide (full-team spacing)</option>
+                    <option value="sideline mid-level">Sideline mid-level (technique)</option>
+                    <option value="end zone">Baseline / end zone (paint actions)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="label">Camera Quality</label>
+                  <select className="input" value={cameraQuality} onChange={e => setCameraQuality(e.target.value)}>
+                    <option value="">Not recorded</option>
+                    <option value="clear">Clear</option>
+                    <option value="standard">Standard</option>
+                    <option value="poor">Poor (drops individual grades a tier)</option>
+                  </select>
+                </div>
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <label className="label">Missing Starter / Injury Note</label>
+                  <input className="input" value={injuryNote} onChange={e => setInjuryNote(e.target.value)} placeholder="e.g. Starting C out Game 3 - flags affected tendencies (Gate 8)" />
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Player table - columns ordered by scouting priority */}
