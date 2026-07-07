@@ -40,9 +40,22 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# Every origin the browser app can be served from must be allowed, or the API
+# rejects it via CORS preflight. The app now lives at app.coachlenz.com (custom
+# domain); the Railway URL and the marketing site stay valid too. Deduped,
+# falsy-filtered so a missing settings.APP_URL never injects a bad origin.
+_ALLOWED_ORIGINS = [o for o in dict.fromkeys([
+    settings.APP_URL,
+    "https://app.coachlenz.com",
+    "https://coachlenz.com",
+    "https://www.coachlenz.com",
+    "https://coachlenz-frontend-production.up.railway.app",
+    "http://localhost:3000",
+]) if o]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.APP_URL, "http://localhost:3000"],
+    allow_origins=_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
