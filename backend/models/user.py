@@ -19,6 +19,9 @@ class User(Base):
     avatar_url = Column(String)
     is_active = Column(Boolean, nullable=False, default=True)
     last_login_at = Column(DateTime(timezone=True))
+    # Single-use password-reset token (SHA-256 hash of the emailed token) + expiry.
+    reset_token_hash = Column(String)
+    reset_token_expires = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 

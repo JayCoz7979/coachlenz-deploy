@@ -28,6 +28,25 @@ async def send_report_ready_email(to: str, name: str, report_title: str, report_
         "html": f"<p>Hi {name},</p><p>Your tendency report <strong>{report_title}</strong> is ready.</p><p><a href='{report_url}'>View Report</a></p><p>Powered by <a href='https://cosbyaisolutions.com'>Cosby AI Solutions</a></p>",
     })
 
+async def send_password_reset_email(to: str, name: str, reset_url: str):
+    resend.Emails.send({
+        "from": FROM,
+        "to": to,
+        "subject": "Reset your CoachLenz password",
+        "html": (
+            f"<p>Hi {name},</p>"
+            f"<p>We received a request to reset your CoachLenz password. "
+            f"Click the button below to choose a new one. This link expires in 1 hour "
+            f"and can be used once.</p>"
+            f"<p><a href='{reset_url}' style='display:inline-block;background:#1a5c2a;color:#fff;"
+            f"padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:600'>Reset Password</a></p>"
+            f"<p style='color:#666;font-size:13px'>If you didn't request this, you can safely ignore "
+            f"this email — your password will not change.</p>"
+            f"<p>Powered by <a href='https://cosbyaisolutions.com'>Cosby AI Solutions</a></p>"
+        ),
+    })
+
+
 async def send_referral_credit_email(to: str, name: str, credit_amount: str):
     resend.Emails.send({
         "from": FROM,
