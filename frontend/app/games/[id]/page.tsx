@@ -1186,6 +1186,30 @@ export default function GamePage() {
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
           {/* Video column */}
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '16px 16px 16px 20px' }}>
+            {/* FILM — the hero. Takes the majority of the room so it's actually watchable. */}
+            <div style={{
+              flex: '1 1 auto', minHeight: 360, background: '#000', borderRadius: 6, overflow: 'hidden',
+              border: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              {game.download_url ? (
+                <video ref={videoRef} src={game.download_url} controls onTimeUpdate={handleTimeUpdate}
+                  style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+              ) : (
+                <div style={{ textAlign: 'center', color: '#7a7a6e', padding: 40 }}>
+                  {['queued', 'downloading', 'processing'].includes(game.status)
+                    ? <><Loader2 size={32} style={{ color: '#C9A84C', animation: 'spin 1s linear infinite', margin: '0 auto 12px', display: 'block' }} /><div>Processing film...</div></>
+                    : <><Play size={40} style={{ margin: '0 auto 12px', display: 'block' }} /><div>Video not available</div></>
+                  }
+                </div>
+              )}
+            </div>
+            <div style={{ marginTop: 8, marginBottom: 8, fontSize: 12, color: '#7a7a6e', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+              <Tag size={12} /> {events.length} play{events.length !== 1 ? 's' : ''} tagged
+              {game.duration_seconds && <span style={{ marginLeft: 8 }}>· {fmtTime(game.duration_seconds)} total</span>}
+            </div>
+
+            {/* Setup & status — scrolls BELOW the film so it never squeezes it. */}
+            <div style={{ flexShrink: 0, maxHeight: '34vh', overflowY: 'auto' }}>
             <StatusBanner status={game.status} />
 
             {/* Auto-detect banner */}
@@ -1388,37 +1412,7 @@ export default function GamePage() {
               live={!!detectStatus && (['queued', 'running'].includes(detectStatus.job_status ?? '') || detectStatus.game_status === 'analyzing')}
             />
 
-            <div style={{
-              flex: 1, background: '#000', borderRadius: 6, overflow: 'hidden',
-              border: '1px solid rgba(255,255,255,0.08)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              minHeight: 0,
-            }}>
-              {game.download_url ? (
-                <video
-                  ref={videoRef}
-                  src={game.download_url}
-                  controls
-                  onTimeUpdate={handleTimeUpdate}
-                  style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-                />
-              ) : (
-                <div style={{ textAlign: 'center', color: '#7a7a6e', padding: 40 }}>
-                  {['queued', 'downloading', 'processing'].includes(game.status)
-                    ? <><Loader2 size={32} style={{ color: '#C9A84C', animation: 'spin 1s linear infinite', margin: '0 auto 12px', display: 'block' }} /><div>Processing film...</div></>
-                    : <><Play size={40} style={{ margin: '0 auto 12px', display: 'block' }} /><div>Video not available</div></>
-                  }
-                </div>
-              )}
-            </div>
-
-            {/* Play count */}
-            <div style={{ marginTop: 10, fontSize: 12, color: '#7a7a6e', display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Tag size={12} /> {events.length} play{events.length !== 1 ? 's' : ''} tagged
-              {game.duration_seconds && (
-                <span style={{ marginLeft: 8 }}>· {fmtTime(game.duration_seconds)} total</span>
-              )}
-            </div>
+            </div>{/* end setup & status scroll */}
           </div>
 
           {/* Right panel */}
