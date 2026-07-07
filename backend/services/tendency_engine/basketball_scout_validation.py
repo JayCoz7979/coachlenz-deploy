@@ -810,6 +810,60 @@ def _head_coach_digest(game_plan: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# COACH-TAGGED SYSTEMS / PRESS / PRESS-BREAK (from the film-room tag panel)
+# ═══════════════════════════════════════════════════════════════════════════
+def _clock(sec) -> Optional[str]:
+    if sec is None:
+        return None
+    try:
+        s = int(sec)
+    except (TypeError, ValueError):
+        return None
+    return f"{s // 60}:{s % 60:02d}"
+
+
+def coach_scheme_tags(events) -> Dict[str, Any]:
+    """Roll up the offense/defense systems, presses, and press-breaks the coach
+    tagged while charting film. Presses and press-breaks carry time markers so the
+    report can say WHEN a press started. Custom ('Other') entries come through as
+    the coach's own words and are surfaced verbatim."""
+    off_sets = Counter()
+    def_schemes = Counter()
+    presses: Dict[str, list] = defaultdict(list)
+    breaks: Dict[str, list] = defaultdict(list)
+    for e in events:
+        t = getattr(e, "time_seconds", None)
+        if (v := _x(e, "offensive_set")):
+            off_sets[v] += 1
+        if (v := _x(e, "defensive_scheme")):
+            def_schemes[v] += 1
+        if (v := _x(e, "press_type")):
+            presses[v].append(t)
+        if (v := _x(e, "press_break_action")):
+            breaks[v].append(t)
+
+    if not (off_sets or def_schemes or presses or breaks):
+        return {"tracked": False}
+
+    def with_markers(bucket):
+        out = {}
+        for name, times in bucket.items():
+            marks = [m for m in (_clock(x) for x in sorted(t for t in times if t is not None)) if m]
+            out[name] = {"count": len(times), "time_markers": marks[:8]}
+        return out
+
+    return {
+        "tracked": True,
+        "offensive_sets": dict(off_sets.most_common()),
+        "primary_offense": off_sets.most_common(1)[0][0] if off_sets else None,
+        "defensive_schemes": dict(def_schemes.most_common()),
+        "primary_defense": def_schemes.most_common(1)[0][0] if def_schemes else None,
+        "presses": with_markers(presses),
+        "press_breaks": with_markers(breaks),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # PUBLIC ENTRY
 # ═══════════════════════════════════════════════════════════════════════════
 def build_basketball_scouting_report(events, summary: Dict[str, Any],
@@ -873,6 +927,7 @@ def build_basketball_scouting_report(events, summary: Dict[str, Any],
         "free_throw_profile": ft,
         "special_situations": special,
         "player_profiles": profiles,
+        "coach_scheme_tags": coach_scheme_tags(events),
         "camera_confidence": camera,
     })
     return block

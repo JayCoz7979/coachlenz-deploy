@@ -355,6 +355,12 @@ const BB_TURNOVERS = ['bad_pass', 'live_ball_steal', 'travel', 'shot_clock', 'ou
 const BB_DEFL = ['tipped_pass', 'contested_catch', 'redirected_dribble']
 const BB_SITUATIONS = ['BLOB', 'SLOB', 'press_break', 'last_second', 'end_of_quarter']
 const BB_SIT_RESULTS = ['made', 'missed', 'reset', 'turnover']
+// Scheme-level tags (persist across a stretch of plays). 'Other' reveals a text
+// box so an unorthodox call gets named and lands in the AI report verbatim.
+const BB_OFFENSIVE_SETS = ['5-out motion', '4-out 1-in', '3-out 2-in', 'Horns', 'Flex', 'Princeton', 'Dribble-drive', 'Pick & Roll (primary)', 'Isolation', 'Post-up', 'Transition / early offense', 'Other']
+const BB_DEFENSES = ['Man-to-man', '2-3 zone', '1-3-1 zone', '3-2 zone', 'Matchup zone', 'Junk (box-and-1 / triangle-2)', 'Full-court press', 'Half-court trap', 'Other']
+const BB_PRESSES = ['1-2-1-1 zone press', '2-2-1 zone press', 'Full-court man', 'Run-and-jump', 'Half-court trap (1-3-1 / 1-2-2)', 'Diamond press', 'Other']
+const BB_PRESS_BREAKS = ['Dribble up the middle', 'Long pass over the top', 'Middle-man reversal', 'Guard-to-guard release', '1-4 spread break', '2-1-2 break', 'Other']
 // Legal HS jersey numbers use only digits 0-5 (refs signal them by hand).
 const bbLegalJersey = (n: string) => { const s = (n || '').trim(); return s !== '' && /^[0-5]{1,2}$/.test(s) }
 
@@ -384,6 +390,11 @@ function BasketballTagForm({ currentTime, onSave, saving, opponent }: {
   const [target, setTarget] = useState('')
   const [sitResult, setSitResult] = useState('made')
   const [lateClose, setLateClose] = useState(false)
+  // scheme-level tags (persist across plays; 'Other' -> free text into the report)
+  const [offSet, setOffSet] = useState(''); const [offSetOther, setOffSetOther] = useState('')
+  const [pressBreak, setPressBreak] = useState(''); const [pressBreakOther, setPressBreakOther] = useState('')
+  const [defScheme, setDefScheme] = useState(''); const [defSchemeOther, setDefSchemeOther] = useState('')
+  const [pressType, setPressType] = useState(''); const [pressTypeOther, setPressTypeOther] = useState('')
 
   const reset = () => {
     setJersey(''); setMade(false); setToType(''); setDeflType(''); setPossChange(false)
@@ -395,22 +406,26 @@ function BasketballTagForm({ currentTime, onSave, saving, opponent }: {
   const handleSave = async () => {
     const q = quarter === '' ? undefined : Number(quarter)
     const j = jersey.trim() || undefined
+    // 'Other' resolves to the typed text so an unorthodox call is named in the report.
+    const resolve = (v: string, other: string) => (v === 'Other' ? (other.trim() || undefined) : (v || undefined))
+    const offScheme = { offensive_set: resolve(offSet, offSetOther), press_break_action: resolve(pressBreak, pressBreakOther) }
+    const defSchemeData = { defensive_scheme: resolve(defScheme, defSchemeOther), press_type: resolve(pressType, pressTypeOther) }
     let data: any
     if (bside === 'offense') {
       if (offAction === 'shot') {
         data = { event_type: 'shot', side: 'offense', time_seconds: currentTime, result: made ? 'made' : 'missed', player: j,
-          extra_data: { primary_player_jersey: j, shot_zone: zone, shot_type: BB_THREE.has(zone) ? '3pt' : '2pt', possession_origin: origin, quarter: q } }
+          extra_data: { primary_player_jersey: j, shot_zone: zone, shot_type: BB_THREE.has(zone) ? '3pt' : '2pt', possession_origin: origin, quarter: q, ...offScheme } }
       } else {
         data = { event_type: 'turnover', side: 'offense', time_seconds: currentTime, player: j,
-          extra_data: { primary_player_jersey: j, turnover_type: toType || undefined, quarter: q } }
+          extra_data: { primary_player_jersey: j, turnover_type: toType || undefined, quarter: q, ...offScheme } }
       }
     } else if (bside === 'defense') {
       if (defAction === 'deflection') {
         data = { event_type: 'deflection', side: 'defense', time_seconds: currentTime, result: possChange ? 'possession_change' : undefined, player: j,
-          extra_data: { primary_player_jersey: j, deflection_type: deflType || undefined, resulted_in_possession_change: possChange, quarter: q } }
+          extra_data: { primary_player_jersey: j, deflection_type: deflType || undefined, resulted_in_possession_change: possChange, quarter: q, ...defSchemeData } }
       } else {
         data = { event_type: defAction, side: 'defense', time_seconds: currentTime, player: j,
-          extra_data: { primary_player_jersey: j, quarter: q } }
+          extra_data: { primary_player_jersey: j, quarter: q, ...defSchemeData } }
       }
     } else {
       data = { event_type: 'special_situation', side: 'offense', time_seconds: currentTime, result: sitResult, player: target.trim() || undefined,
@@ -430,6 +445,18 @@ function BasketballTagForm({ currentTime, onSave, saving, opponent }: {
   const pill = (active: boolean, label: string, onClick: () => void, color = '#C9A84C') => (
     <button onClick={onClick} style={{ flex: 1, padding: '7px 0', fontSize: 12, fontWeight: 700, cursor: 'pointer', borderRadius: 4,
       border: active ? 'none' : '1px solid rgba(255,255,255,0.1)', background: active ? color : 'transparent', color: active ? '#1c1c1c' : '#f8f6f0' }}>{label}</button>
+  )
+  // A scheme dropdown that reveals a text box when 'Other' is chosen. The typed
+  // description is what lands in the report. Scheme tags persist across plays.
+  const schemeField = (label: string, val: string, setVal: (v: string) => void, otherVal: string, setOther: (v: string) => void, options: string[], placeholder = '—') => (
+    <div>
+      {lbl(label)}
+      {sel(val, setVal, options, placeholder)}
+      {val === 'Other' && (
+        <input value={otherVal} onChange={e => setOther(e.target.value)} placeholder="Name it — this goes in the report"
+          className="input" style={{ fontSize: 12, padding: '6px 10px', height: 34, width: '100%', marginTop: 6, border: '1px solid #7a5c1e' }} />
+      )}
+    </div>
   )
 
   const SIDE_META = { offense: { bg: '#C9A84C', fg: '#1c1c1c' }, defense: { bg: '#1a5c2a', fg: '#f8f6f0' }, special: { bg: '#7a5c1e', fg: '#f8f6f0' } } as const
@@ -491,6 +518,8 @@ function BasketballTagForm({ currentTime, onSave, saving, opponent }: {
           ) : (
             <div>{lbl('TURNOVER TYPE')}{sel(toType, setToType, BB_TURNOVERS)}</div>
           )}
+          {schemeField('OFFENSIVE SET', offSet, setOffSet, offSetOther, setOffSetOther, BB_OFFENSIVE_SETS)}
+          {schemeField('PRESS BREAK (if breaking a press)', pressBreak, setPressBreak, pressBreakOther, setPressBreakOther, BB_PRESS_BREAKS)}
         </>
       ) : bside === 'defense' ? (
         <>
@@ -508,6 +537,8 @@ function BasketballTagForm({ currentTime, onSave, saving, opponent }: {
               </label>
             </>
           )}
+          {schemeField('DEFENSE', defScheme, setDefScheme, defSchemeOther, setDefSchemeOther, BB_DEFENSES)}
+          {schemeField('PRESS (if pressing)', pressType, setPressType, pressTypeOther, setPressTypeOther, BB_PRESSES)}
         </>
       ) : (
         <>
@@ -1185,7 +1216,7 @@ export default function GamePage() {
         {/* Main content: video + sidebar */}
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
           {/* LEFT: setup, scorecard & status — the controls, scrollable */}
-          <div style={{ width: 360, flexShrink: 0, borderRight: '1px solid rgba(255,255,255,0.06)', display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '16px 14px' }}>
+          <div style={{ width: 440, flexShrink: 0, borderRight: '1px solid rgba(255,255,255,0.06)', display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '16px 18px' }}>
             <div style={{ flex: 1, overflowY: 'auto' }}>
             <StatusBanner status={game.status} />
 
