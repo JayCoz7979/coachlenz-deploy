@@ -1,0 +1,56 @@
+"""
+Phone verification via Twilio Verify (SMS OTP). Twilio stores and checks the code
+itself, so nothing is persisted locally. Degrades with a clear 503 when Twilio is
+not configured (so onboarding surfaces "phone verification isn't set up" instead
+of a stack trace).
+"""
+import re
+from fastapi import HTTPException
+
+from backend.config import settings
+
+
+def _client():
+    if not (settings.TWILIO_ACCOUNT_SID and settings.TWILIO_AUTH_TOKEN and settings.TWILIO_VERIFY_SID):
+        return None
+    from twilio.rest import Client
+    return Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
+
+
+def normalize_phone(phone: str) -> str:
+    """Best-effort E.164. A bare 10-digit US number gets a +1; anything already
+    starting with + is passed through; otherwise digits are prefixed with +."""
+    p = (phone or "").strip()
+    if p.startswith("+"):
+        return "+" + re.sub(r"\D", "", p[1:])
+    digits = re.sub(r"\D", "", p)
+    if len(digits) == 10:
+        return "+1" + digits
+    if len(digits) == 11 and digits.startswith("1"):
+        return "+" + digits
+    return "+" + digits
+
+
+def send_sms_code(phone: str):
+    client = _client()
+    if not client:
+        raise HTTPException(status_code=503, detail="Phone verification isn't configured yet. Contact support.")
+    try:
+        client.verify.v2.services(settings.TWILIO_VERIFY_SID).verifications.create(
+            to=normalize_phone(phone), channel="sms"
+        )
+    except Exception as e:  # invalid number, unverified trial number, etc.
+        raise HTTPException(status_code=400, detail=f"Couldn't send the code to that number: {str(e)[:160]}")
+
+
+def check_sms_code(phone: str, code: str) -> bool:
+    client = _client()
+    if not client:
+        raise HTTPException(status_code=503, detail="Phone verification isn't configured yet. Contact support.")
+    try:
+        result = client.verify.v2.services(settings.TWILIO_VERIFY_SID).verification_checks.create(
+            to=normalize_phone(phone), code=code
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Couldn't verify that code: {str(e)[:160]}")
+    return getattr(result, "status", None) == "approved"

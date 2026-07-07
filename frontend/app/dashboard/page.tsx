@@ -14,6 +14,14 @@ export default function DashboardPage() {
 
   useEffect(() => { fetchMe() }, [])
   useEffect(() => { if (!isLoading && !user) router.push('/login') }, [isLoading, user])
+  // Gate: a new client must finish onboarding (verify email + phone, lock sport)
+  // before using the app. Existing orgs are grandfathered (migration 020).
+  useEffect(() => {
+    if (!user) return
+    api.get('/onboarding/status').then(s => {
+      if (!s.data.onboarding_completed) router.push('/onboarding')
+    }).catch(() => {})
+  }, [user])
   useEffect(() => {
     if (!user) return
     Promise.all([

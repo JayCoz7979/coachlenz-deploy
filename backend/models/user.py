@@ -22,6 +22,10 @@ class User(Base):
     # Single-use password-reset token (SHA-256 hash of the emailed token) + expiry.
     reset_token_hash = Column(String)
     reset_token_expires = Column(DateTime(timezone=True))
+    # Email verification code (SHA-256 hash of a 6-digit code) + expiry. Phone
+    # verification is handled by Twilio Verify (no code stored locally).
+    email_verify_code_hash = Column(String)
+    email_verify_expires = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
