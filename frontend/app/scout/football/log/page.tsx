@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import Sidebar from '@/components/layout/Sidebar'
 import { useAuth } from '@/lib/auth'
+import { useFootballGuard } from '@/lib/useFootballGuard'
 import api from '@/lib/api'
 import { Zap, Loader2, Undo2, Save, FileBarChart, CheckCircle2 } from 'lucide-react'
 
@@ -61,6 +62,7 @@ export default function LiveLoggerPage() {
   const [error, setError] = useState('')
   const [savedAt, setSavedAt] = useState('')
   const firstRef = useRef<HTMLSelectElement>(null)
+  const guard = useFootballGuard(!!user)
 
   useEffect(() => { fetchMe() }, [])
   useEffect(() => { if (!isLoading && !user) router.push('/login') }, [isLoading, user])
@@ -185,6 +187,18 @@ export default function LiveLoggerPage() {
       setError(e?.response?.data?.detail || 'Could not generate the report.')
       setBusy(false)
     }
+  }
+
+  // ── sport guard: basketball-only orgs are sent back to /scout ──────────────
+  if (guard === 'checking') {
+    return (
+      <div className="flex h-screen overflow-hidden">
+        <Sidebar />
+        <main className="flex-1 flex items-center justify-center">
+          <Loader2 size={22} style={{ color: 'var(--gold)' }} className="animate-spin" />
+        </main>
+      </div>
+    )
   }
 
   // ── session gate ──────────────────────────────────────────────────────────
