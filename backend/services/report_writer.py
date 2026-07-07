@@ -638,6 +638,21 @@ def _bball_sections(scouting, tendency_summary):
                 "Advise the exact coverage for each."
             ),
         })
+    cst = scouting.get("coach_scheme_tags") or {}
+    if cst.get("tracked"):
+        spec.append({
+            "heading": "Systems, Press & Press-Break (coach-tagged)",
+            "insight_type": "tendency",
+            "instructions": (
+                "Use scouting.coach_scheme_tags - the offense/defense systems, presses, and press-breaks the coach tagged "
+                "while charting film. Lead with primary_offense and primary_defense. Bullets: offensive_sets (most-run sets "
+                "with counts), defensive_schemes (what they play and how often), presses (each press type WITH its "
+                "time_markers - e.g. 'Full-court man press, first seen 6:12, 4 times'), and press_breaks (what beat a press, "
+                "with time_markers). Any unorthodox/custom entry is the COACH'S OWN WORDS for a special call - surface it "
+                "VERBATIM so it makes the report. If a press shows time markers, tell our staff to be ready for it at those "
+                "points in the game."
+            ),
+        })
     if scouting.get("head_coach_priorities"):
         spec.append({
             "heading": "Head Coach One-Sheet - Top Priorities",
