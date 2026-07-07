@@ -40,6 +40,7 @@ from backend.services.auth import (
     require_scout_reviewer, SCOUT_ASSIGNABLE_ROLES,
 )
 from backend.services.agent_log import log_agent_action
+from backend.services.sports import assert_sport_allowed
 from backend.services.tendency_engine import run_tendency_engine
 
 router = APIRouter(prefix="/scout/football", tags=["scout-football"])
@@ -129,6 +130,7 @@ async def create_session(
     org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db),
 ):
+    assert_sport_allowed(org, "football")
     gd = None
     if body.game_date:
         try:

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from sqlalchemy import Column, String, Boolean, Integer, DateTime, ForeignKey, text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from .base import Base
 
@@ -19,6 +19,10 @@ class Organization(Base):
     stripe_subscription_status = Column(String)
     has_coach_tenure_access = Column(Boolean, nullable=False, default=False)
     admin_level = Column(String)
+    # Sport entitlement lock (set during onboarding, enforced everywhere film is
+    # analyzed). Empty list = not yet locked. See backend/services/sports.py.
+    chosen_sports = Column(JSONB, nullable=False, default=list)
+    onboarding_completed = Column(Boolean, nullable=False, default=False)
     referral_code = Column(String, unique=True)
     referred_by_org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"))
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
