@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import Sidebar from '@/components/layout/Sidebar'
 import { useAuth } from '@/lib/auth'
+import { useFootballGuard } from '@/lib/useFootballGuard'
 import api from '@/lib/api'
 import { ClipboardCheck, Loader2, ShieldCheck, CheckCircle2, XCircle, Plus } from 'lucide-react'
 
@@ -32,6 +33,7 @@ export default function ScoutFootballSessionsPage() {
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState('')
   const [error, setError] = useState('')
+  const guard = useFootballGuard(!!user)
 
   useEffect(() => { fetchMe() }, [])
   useEffect(() => { if (!isLoading && !user) router.push('/login') }, [isLoading, user])
@@ -55,6 +57,17 @@ export default function ScoutFootballSessionsPage() {
     } catch (e: any) {
       setError(e?.response?.data?.detail || 'Sign-off failed.')
     } finally { setBusyId('') }
+  }
+
+  if (guard === 'checking') {
+    return (
+      <div className="flex h-screen overflow-hidden">
+        <Sidebar />
+        <main className="flex-1 flex items-center justify-center">
+          <Loader2 size={22} style={{ color: 'var(--gold)' }} className="animate-spin" />
+        </main>
+      </div>
+    )
   }
 
   return (

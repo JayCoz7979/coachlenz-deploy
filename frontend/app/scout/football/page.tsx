@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import Sidebar from '@/components/layout/Sidebar'
 import { useAuth } from '@/lib/auth'
+import { useFootballGuard } from '@/lib/useFootballGuard'
 import api from '@/lib/api'
 import { Plus, Trash2, Upload, ClipboardPaste, Loader2, ClipboardList, ChevronDown, ChevronRight, ShieldCheck } from 'lucide-react'
 
@@ -56,6 +57,8 @@ export default function ScoutFootballPage() {
 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+
+  const guard = useFootballGuard(!!user)
 
   useEffect(() => { fetchMe() }, [])
   useEffect(() => { if (!isLoading && !user) router.push('/login') }, [isLoading, user])
@@ -125,6 +128,17 @@ export default function ScoutFootballPage() {
       setError(e?.response?.data?.detail || 'Something went wrong generating the report.')
       setBusy(false)
     }
+  }
+
+  if (guard === 'checking') {
+    return (
+      <div className="flex h-screen overflow-hidden">
+        <Sidebar />
+        <main className="flex-1 flex items-center justify-center">
+          <Loader2 size={22} style={{ color: 'var(--gold)' }} className="animate-spin" />
+        </main>
+      </div>
+    )
   }
 
   return (
