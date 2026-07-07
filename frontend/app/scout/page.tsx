@@ -23,6 +23,16 @@ type PlayerRow = {
   shot_attempts_3pt: number; shot_makes_3pt: number
 }
 type ShotRow = { jersey_number: string; court_zone: string; made: boolean; possession_origin: string; quarter: number; possession_seconds: number }
+// Module 8 (free throws + box-outs), Module 7 (special situations), Module 5 (player grades).
+type FreeThrowRow = { jersey_number: string; attempts: number; makes: number; pressure_situation: boolean; shooter_tempo: string; box_out_formation_offense: string; box_out_formation_defense: string; quarter: number }
+type SpecialRow = { situation_type: string; formation: string; primary_action: string; target: string; result: string; late_and_close: boolean; quarter: number }
+type GradeRow = { jersey: string; position: string; handedness: string; role: string; visible_examples: number; scoring: number; defense: number; playmaking: number; rebounding: number }
+
+const SITUATION_TYPES = ['BLOB', 'SLOB', 'press_break', 'last_second', 'end_of_quarter']
+const TEMPOS = ['', 'quick', 'routine', 'slow']
+const RESULTS = ['made', 'missed', 'reset', 'turnover']
+const POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C']
+const HANDS = ['', 'right', 'left', 'ambidextrous']
 
 const blankPlayer = (): PlayerRow => ({
   jersey_number: '', player_name: '',
@@ -30,6 +40,9 @@ const blankPlayer = (): PlayerRow => ({
   shot_attempts_2pt: 0, shot_makes_2pt: 0, shot_attempts_3pt: 0, shot_makes_3pt: 0,
 })
 const blankShot = (): ShotRow => ({ jersey_number: '', court_zone: 'Restricted Area', made: false, possession_origin: 'half_court', quarter: 1, possession_seconds: 12 })
+const blankFT = (): FreeThrowRow => ({ jersey_number: '', attempts: 2, makes: 0, pressure_situation: false, shooter_tempo: '', box_out_formation_offense: '', box_out_formation_defense: '', quarter: 1 })
+const blankSpecial = (): SpecialRow => ({ situation_type: 'BLOB', formation: '', primary_action: '', target: '', result: 'made', late_and_close: false, quarter: 4 })
+const blankGrade = (): GradeRow => ({ jersey: '', position: 'PG', handedness: '', role: '', visible_examples: 0, scoring: 0, defense: 0, playmaking: 0, rebounding: 0 })
 
 const num = (v: string) => (v === '' ? 0 : Number(v) || 0)
 
@@ -61,9 +74,15 @@ export default function ScoutPage() {
   const [setupOpen, setSetupOpen] = useState(false)
   const [players, setPlayers] = useState<PlayerRow[]>([blankPlayer(), blankPlayer()])
   const [shots, setShots] = useState<ShotRow[]>([])
+  const [freeThrows, setFreeThrows] = useState<FreeThrowRow[]>([])
+  const [specials, setSpecials] = useState<SpecialRow[]>([])
+  const [grades, setGrades] = useState<GradeRow[]>([])
   const [csvOpen, setCsvOpen] = useState(false)
   const [csvText, setCsvText] = useState('')
   const [shotsOpen, setShotsOpen] = useState(false)
+  const [ftOpen, setFtOpen] = useState(false)
+  const [specialsOpen, setSpecialsOpen] = useState(false)
+  const [gradesOpen, setGradesOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -95,6 +114,12 @@ export default function ScoutPage() {
     setPlayers(ps => ps.map((p, idx) => (idx === i ? { ...p, [key]: val } : p)))
   const setS = (i: number, key: keyof ShotRow, val: any) =>
     setShots(ss => ss.map((s, idx) => (idx === i ? { ...s, [key]: val } : s)))
+  const setFT = (i: number, key: keyof FreeThrowRow, val: any) =>
+    setFreeThrows(rs => rs.map((r, idx) => (idx === i ? { ...r, [key]: val } : r)))
+  const setSpec = (i: number, key: keyof SpecialRow, val: any) =>
+    setSpecials(rs => rs.map((r, idx) => (idx === i ? { ...r, [key]: val } : r)))
+  const setGrade = (i: number, key: keyof GradeRow, val: any) =>
+    setGrades(rs => rs.map((r, idx) => (idx === i ? { ...r, [key]: val } : r)))
 
   async function createSession(): Promise<string> {
     const res = await api.post('/scout/session', {
@@ -114,8 +139,12 @@ export default function ScoutPage() {
     if (!opponent.trim()) { setError('Enter the opponent name first.'); return }
     const validPlayers = players.filter(p => p.jersey_number.trim() !== '')
     const validShots = shots.filter(s => s.jersey_number.trim() !== '')
-    if (validPlayers.length === 0 && csvText.trim() === '') {
-      setError('Add at least one player row (jersey number) or paste a CSV box score.')
+    const validFT = freeThrows.filter(f => f.jersey_number.trim() !== '')
+    const validSpecials = specials  // every added row carries a situation_type
+    const validGrades = grades.filter(g => g.jersey.trim() !== '')
+    const hasManual = validPlayers.length || validShots.length || validFT.length || validSpecials.length || validGrades.length
+    if (!hasManual && csvText.trim() === '') {
+      setError('Add at least one player row, shot, free throw, special situation, or grade — or paste a CSV box score.')
       return
     }
     setBusy(true)
@@ -125,7 +154,10 @@ export default function ScoutPage() {
       if (csvText.trim()) {
         await api.post('/scout/csv', { session_id: sessionId, csv_text: csvText, replace: true })
       }
-      if (validPlayers.length || validShots.length) {
+      if (hasManual) {
+        // Drop 1-5 grade fields that are still 0 (ungraded) so the report card
+        // only shows grades the analyst actually set.
+        const grade = (v: number) => (Number(v) > 0 ? Number(v) : undefined)
         await api.post('/scout/manual', {
           session_id: sessionId,
           replace: csvText.trim() === '',
@@ -140,6 +172,23 @@ export default function ScoutPage() {
             jersey_number: s.jersey_number, court_zone: s.court_zone, made: s.made,
             possession_origin: s.possession_origin, quarter: Number(s.quarter),
             possession_seconds: Number(s.possession_seconds),
+          })),
+          free_throws: validFT.map(f => ({
+            jersey_number: f.jersey_number, attempts: Number(f.attempts), makes: Number(f.makes),
+            pressure_situation: f.pressure_situation, shooter_tempo: f.shooter_tempo || null,
+            box_out_formation_offense: f.box_out_formation_offense || null,
+            box_out_formation_defense: f.box_out_formation_defense || null, quarter: Number(f.quarter),
+          })),
+          special_situations: validSpecials.map(s => ({
+            situation_type: s.situation_type, formation: s.formation || null,
+            primary_action: s.primary_action || null, target: s.target || null,
+            result: s.result || null, late_and_close: s.late_and_close, quarter: Number(s.quarter),
+          })),
+          player_profiles: validGrades.map(g => ({
+            jersey: g.jersey, position: g.position || null, handedness: g.handedness || null,
+            role: g.role || null, visible_examples: Number(g.visible_examples),
+            scoring: grade(g.scoring), defense: grade(g.defense),
+            playmaking: grade(g.playmaking), rebounding: grade(g.rebounding),
           })),
         })
       }
@@ -347,6 +396,134 @@ export default function ScoutPage() {
                 </table>
                 <button onClick={() => setShots(ss => [...ss, blankShot()])} className="btn-green" style={{ marginTop: 10, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                   <Plus size={14} /> Add Shot
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Optional: free throws + box-out formations (Module 8) */}
+          <div className="card" style={{ marginBottom: 18 }}>
+            <button onClick={() => setFtOpen(o => !o)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, padding: 0 }}>
+              {ftOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />} Free Throws &amp; Box-Outs <span style={{ color: 'var(--text3)', fontWeight: 400, fontSize: 12 }}>(optional - strategic foul targets &amp; never-foul list)</span>
+            </button>
+            {ftOpen && (
+              <div style={{ marginTop: 12, overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 820 }}>
+                  <thead><tr>
+                    <th style={th}>#</th><th style={th}>Att</th><th style={th}>Made</th><th style={th}>Late/Close?</th>
+                    <th style={th}>Tempo</th><th style={th}>Off Box-Out</th><th style={th}>Def Box-Out</th><th style={th}>Qtr</th><th style={th}></th>
+                  </tr></thead>
+                  <tbody>
+                    {freeThrows.map((f, i) => (
+                      <tr key={i}>
+                        <td style={{ padding: 4, width: 60 }}><input style={cellStyle} value={f.jersey_number} onChange={e => setFT(i, 'jersey_number', e.target.value)} placeholder="#" /></td>
+                        <td style={{ padding: 4, width: 60 }}><input style={cellStyle} type="number" value={f.attempts} onChange={e => setFT(i, 'attempts', num(e.target.value))} /></td>
+                        <td style={{ padding: 4, width: 60 }}><input style={cellStyle} type="number" value={f.makes} onChange={e => setFT(i, 'makes', num(e.target.value))} /></td>
+                        <td style={{ padding: 4, width: 80, textAlign: 'center' }}><input type="checkbox" checked={f.pressure_situation} onChange={e => setFT(i, 'pressure_situation', e.target.checked)} /></td>
+                        <td style={{ padding: 4, width: 110 }}>
+                          <select style={cellStyle} value={f.shooter_tempo} onChange={e => setFT(i, 'shooter_tempo', e.target.value)}>
+                            {TEMPOS.map(t => <option key={t} value={t}>{t || '—'}</option>)}
+                          </select>
+                        </td>
+                        <td style={{ padding: 4, minWidth: 120 }}><input style={cellStyle} value={f.box_out_formation_offense} onChange={e => setFT(i, 'box_out_formation_offense', e.target.value)} placeholder="optional" /></td>
+                        <td style={{ padding: 4, minWidth: 120 }}><input style={cellStyle} value={f.box_out_formation_defense} onChange={e => setFT(i, 'box_out_formation_defense', e.target.value)} placeholder="optional" /></td>
+                        <td style={{ padding: 4, width: 55 }}><input style={cellStyle} type="number" value={f.quarter} onChange={e => setFT(i, 'quarter', num(e.target.value))} /></td>
+                        <td style={{ padding: 4, width: 40 }}><button onClick={() => setFreeThrows(rs => rs.filter((_, idx) => idx !== i))} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text3)' }}><Trash2 size={15} /></button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>Under 60% (min 4 attempts) becomes a strategic foul target; 90%+ goes on the never-foul-late list. Check <strong>Late/Close?</strong> for clutch attempts.</div>
+                <button onClick={() => setFreeThrows(rs => [...rs, blankFT()])} className="btn-green" style={{ marginTop: 10, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <Plus size={14} /> Add Free Throw
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Optional: special situations - BLOB/SLOB/press/last-second/EOQ (Module 7) */}
+          <div className="card" style={{ marginBottom: 18 }}>
+            <button onClick={() => setSpecialsOpen(o => !o)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, padding: 0 }}>
+              {specialsOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />} Special Situations <span style={{ color: 'var(--text3)', fontWeight: 400, fontSize: 12 }}>(optional - inbounds, press break, last-second sets)</span>
+            </button>
+            {specialsOpen && (
+              <div style={{ marginTop: 12, overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 860 }}>
+                  <thead><tr>
+                    <th style={th}>Type</th><th style={th}>Formation</th><th style={th}>Primary Action</th><th style={th}>Target #</th>
+                    <th style={th}>Result</th><th style={th}>Late &amp; Close?</th><th style={th}>Qtr</th><th style={th}></th>
+                  </tr></thead>
+                  <tbody>
+                    {specials.map((s, i) => (
+                      <tr key={i}>
+                        <td style={{ padding: 4, width: 150 }}>
+                          <select style={cellStyle} value={s.situation_type} onChange={e => setSpec(i, 'situation_type', e.target.value)}>
+                            {SITUATION_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                          </select>
+                        </td>
+                        <td style={{ padding: 4, minWidth: 130 }}><input style={cellStyle} value={s.formation} onChange={e => setSpec(i, 'formation', e.target.value)} placeholder="e.g. Box, Stack" /></td>
+                        <td style={{ padding: 4, minWidth: 160 }}><input style={cellStyle} value={s.primary_action} onChange={e => setSpec(i, 'primary_action', e.target.value)} placeholder="e.g. screen the screener" /></td>
+                        <td style={{ padding: 4, width: 70 }}><input style={cellStyle} value={s.target} onChange={e => setSpec(i, 'target', e.target.value)} placeholder="#" /></td>
+                        <td style={{ padding: 4, width: 110 }}>
+                          <select style={cellStyle} value={s.result} onChange={e => setSpec(i, 'result', e.target.value)}>
+                            {RESULTS.map(r => <option key={r} value={r}>{r}</option>)}
+                          </select>
+                        </td>
+                        <td style={{ padding: 4, width: 90, textAlign: 'center' }}><input type="checkbox" checked={s.late_and_close} onChange={e => setSpec(i, 'late_and_close', e.target.checked)} /></td>
+                        <td style={{ padding: 4, width: 55 }}><input style={cellStyle} type="number" value={s.quarter} onChange={e => setSpec(i, 'quarter', num(e.target.value))} /></td>
+                        <td style={{ padding: 4, width: 40 }}><button onClick={() => setSpecials(rs => rs.filter((_, idx) => idx !== i))} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text3)' }}><Trash2 size={15} /></button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>A set logged 2+ times — especially <strong>Late &amp; Close</strong> — is flagged as a trusted, must-defend call.</div>
+                <button onClick={() => setSpecials(rs => [...rs, blankSpecial()])} className="btn-green" style={{ marginTop: 10, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <Plus size={14} /> Add Special Situation
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Optional: individual player grade cards (Module 5) */}
+          <div className="card" style={{ marginBottom: 18 }}>
+            <button onClick={() => setGradesOpen(o => !o)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, padding: 0 }}>
+              {gradesOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />} Player Grades <span style={{ color: 'var(--text3)', fontWeight: 400, fontSize: 12 }}>(optional - 1-5 scouting grades, single-camera visibility audit)</span>
+            </button>
+            {gradesOpen && (
+              <div style={{ marginTop: 12, overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
+                  <thead><tr>
+                    <th style={th}>#</th><th style={th}>Pos</th><th style={th}>Hand</th><th style={th}>Role</th>
+                    <th style={th}>Visible Looks</th><th style={th}>Scoring</th><th style={th}>Defense</th><th style={th}>Playmaking</th><th style={th}>Reb</th><th style={th}></th>
+                  </tr></thead>
+                  <tbody>
+                    {grades.map((g, i) => (
+                      <tr key={i}>
+                        <td style={{ padding: 4, width: 60 }}><input style={cellStyle} value={g.jersey} onChange={e => setGrade(i, 'jersey', e.target.value)} placeholder="#" /></td>
+                        <td style={{ padding: 4, width: 75 }}>
+                          <select style={cellStyle} value={g.position} onChange={e => setGrade(i, 'position', e.target.value)}>
+                            {POSITIONS.map(p => <option key={p} value={p}>{p}</option>)}
+                          </select>
+                        </td>
+                        <td style={{ padding: 4, width: 110 }}>
+                          <select style={cellStyle} value={g.handedness} onChange={e => setGrade(i, 'handedness', e.target.value)}>
+                            {HANDS.map(h => <option key={h} value={h}>{h || '—'}</option>)}
+                          </select>
+                        </td>
+                        <td style={{ padding: 4, minWidth: 130 }}><input style={cellStyle} value={g.role} onChange={e => setGrade(i, 'role', e.target.value)} placeholder="e.g. primary handler" /></td>
+                        <td style={{ padding: 4, width: 90 }}><input style={cellStyle} type="number" value={g.visible_examples} onChange={e => setGrade(i, 'visible_examples', num(e.target.value))} placeholder="5+" /></td>
+                        <td style={{ padding: 4, width: 70 }}><input style={cellStyle} type="number" min={0} max={5} value={g.scoring} onChange={e => setGrade(i, 'scoring', num(e.target.value))} /></td>
+                        <td style={{ padding: 4, width: 70 }}><input style={cellStyle} type="number" min={0} max={5} value={g.defense} onChange={e => setGrade(i, 'defense', num(e.target.value))} /></td>
+                        <td style={{ padding: 4, width: 70 }}><input style={cellStyle} type="number" min={0} max={5} value={g.playmaking} onChange={e => setGrade(i, 'playmaking', num(e.target.value))} /></td>
+                        <td style={{ padding: 4, width: 70 }}><input style={cellStyle} type="number" min={0} max={5} value={g.rebounding} onChange={e => setGrade(i, 'rebounding', num(e.target.value))} /></td>
+                        <td style={{ padding: 4, width: 40 }}><button onClick={() => setGrades(rs => rs.filter((_, idx) => idx !== i))} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text3)' }}><Trash2 size={15} /></button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>Grades resting on fewer than 5 clearly visible looks are flagged ESTIMATE (Gate 5). Leave a grade at 0 to omit it.</div>
+                <button onClick={() => setGrades(rs => [...rs, blankGrade()])} className="btn-green" style={{ marginTop: 10, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <Plus size={14} /> Add Player Grade
                 </button>
               </div>
             )}
