@@ -95,6 +95,16 @@ async def run_tendency_engine(sport: str, events: List[Event]) -> Dict[str, Any]
 
     elif sport == "basketball":
         result = analyze_basketball(events)
+        # Coordinator layer: eight validation gates (Module 10), situational
+        # tendency statements (Gate 6 translation), the installable game plan
+        # (Module 11), advanced metrics + late-game + free-throw + special
+        # situations + player profiles + single-camera confidence (Modules 5/7/8/9/12).
+        # It wraps the six-category scout, returning a superset so every consumer
+        # that reads the category_* keys keeps working untouched.
+        from .basketball_scout_validation import build_basketball_scouting_report
+        six_cat = result.get("scouting", {}) or {}
+        if six_cat.get("available"):
+            result["scouting"] = build_basketball_scouting_report(events, result, six_cat)
         result["data_confidence"] = _coverage_report(events)
         result["player_tendencies"] = analyze_players(events, sport)
         return result
