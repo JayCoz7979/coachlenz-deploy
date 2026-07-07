@@ -17,7 +17,10 @@ resend==2.5.1
 twilio==9.4.0
 sentry-sdk[fastapi]==2.19.2
 slowapi==0.1.9
-yt-dlp==2024.12.13
+# Floor pin only — the worker_ingest Dockerfile force-upgrades yt-dlp to the
+# latest at build time (YouTube breaks old versions within weeks). Keep this
+# recent; do not rely on it as the effective version for ingest.
+yt-dlp>=2025.06.09
 playwright==1.49.1
 celery==5.4.0
 redis==5.2.1
