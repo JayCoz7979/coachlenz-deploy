@@ -32,7 +32,7 @@ const NAV_SECTIONS = [
       { href: '/settings/connections', label: 'Connected Accounts', icon: Link2 },
       { href: '/referrals', label: 'Referrals', icon: Share2 },
       { href: '/admin', label: 'Admin', icon: ShieldCheck, requiresAdmin: true },
-      { href: '/settings/billing', label: 'Settings', icon: Settings },
+      { href: '/settings', label: 'Settings', icon: Settings },
     ],
   },
 ]
