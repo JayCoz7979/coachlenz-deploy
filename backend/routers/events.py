@@ -80,6 +80,9 @@ class EventUpdate(BaseModel):
     motion: Optional[bool] = None
     time_seconds: Optional[float] = None
     player: Optional[str] = None
+    # Basketball (and other extra) fields live in extra_data — MERGED, not replaced,
+    # so editing one scheme field never wipes the rest of the play's data.
+    extra_data: Optional[Dict[str, Any]] = None
 
 @router.patch("/{event_id}")
 async def update_event(event_id: str, body: EventUpdate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
@@ -89,8 +92,13 @@ async def update_event(event_id: str, body: EventUpdate, user: User = Depends(ge
         raise HTTPException(status_code=404, detail="Event not found")
     # Only apply fields the client actually sent.
     changes = body.dict(exclude_unset=True)
+    new_extra = changes.pop("extra_data", None)
     for k, v in changes.items():
         setattr(event, k, v)
+    if new_extra is not None:
+        from sqlalchemy.orm.attributes import flag_modified
+        event.extra_data = {**(event.extra_data or {}), **new_extra}
+        flag_modified(event, "extra_data")
     await db.commit()
     await db.refresh(event)
     return {
