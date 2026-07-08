@@ -48,7 +48,10 @@ interface TaggedEvent {
   yards_gained: number | null
   personnel: string | null
   motion: boolean
-  extra_data?: { auto_detected?: boolean; confidence?: number }
+  player?: string | null
+  // auto_detected/confidence are set by the vision engine; basketball scheme and
+  // shot fields (offensive_set, shot_zone, press_type, ...) also live here.
+  extra_data?: { auto_detected?: boolean; confidence?: number; [k: string]: any }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -217,6 +220,15 @@ function TagForm({
       {options.map(o => <option key={o} value={o}>{o}</option>)}
     </select>
   )
+  // Free-entry field: preset formations/fronts/coverages as suggestions, but a
+  // coach can type an unorthodox one — it saves and flows into the AI report.
+  const selFree = (val: string, set: (v: string) => void, listId: string, options: string[]) => (
+    <>
+      <input list={listId} value={val} onChange={e => set(e.target.value)} placeholder="pick or type your own"
+        className="input" style={{ fontSize: 12, padding: '6px 10px', height: 36, width: '100%' }} />
+      <datalist id={listId}>{options.map(o => <option key={o} value={o} />)}</datalist>
+    </>
+  )
   const lbl = (t: string) => <div style={{ fontSize: 10, color: '#7a7a6e', marginBottom: 4, letterSpacing: '0.08em' }}>{t}</div>
 
   return (
@@ -281,7 +293,7 @@ function TagForm({
 
       {side === 'offense' ? (
         <>
-          <div>{lbl('FORMATION')}{sel(formation, setFormation, FORMATIONS)}</div>
+          <div>{lbl('FORMATION')}{selFree(formation, setFormation, 'dlf-off-form', FORMATIONS)}</div>
           <div>{lbl('PLAY TYPE')}{sel(playType, setPlayType, PLAY_TYPES)}</div>
           <div>
             {lbl('PERSONNEL')}
@@ -307,8 +319,8 @@ function TagForm({
         </>
       ) : side === 'defense' ? (
         <>
-          <div>{lbl('FRONT')}{sel(front, setFront, FRONTS)}</div>
-          <div>{lbl('COVERAGE')}{sel(coverage, setCoverage, COVERAGES)}</div>
+          <div>{lbl('FRONT')}{selFree(front, setFront, 'dlf-def-front', FRONTS)}</div>
+          <div>{lbl('COVERAGE')}{selFree(coverage, setCoverage, 'dlf-def-cov', COVERAGES)}</div>
           <div>{lbl('BLITZ')}{sel(blitz, setBlitz, BLITZES)}</div>
         </>
       ) : (
@@ -573,12 +585,15 @@ function PlayLog({
   onDelete,
   onSeek,
   onUpdate,
+  sport,
 }: {
   events: TaggedEvent[]
   onDelete: (id: string) => void
   onSeek: (t: number) => void
   onUpdate: (id: string, data: Partial<TaggedEvent>) => Promise<void>
+  sport?: string
 }) {
+  const isBball = sport === 'basketball'
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState<Partial<TaggedEvent>>({})
   const [filter, setFilter] = useState<'all' | 'offense' | 'defense' | 'special_teams'>('all')
@@ -600,6 +615,42 @@ function PlayLog({
       {options.map(o => <option key={o} value={o}>{o}</option>)}
     </select>
   )
+  // Free-entry version of esel for a direct column: preset suggestions PLUS any
+  // unorthodox formation/front/coverage the coach types (it flows straight to the report).
+  const efree = (k: keyof TaggedEvent, listId: string, options: string[]) => (
+    <div style={{ minWidth: 0 }}>
+      <input list={listId} value={(draft[k] as string) || ''} onChange={e => set(k, e.target.value || null)}
+        className="input" placeholder="—" style={{ fontSize: 11, padding: '4px 6px', height: 30, width: '100%', minWidth: 0 }} />
+      <datalist id={listId}>{options.map(o => <option key={o} value={o} />)}</datalist>
+    </div>
+  )
+
+  // ── extra_data editors (basketball scheme fields live in JSONB extra_data) ──
+  // Empty selection is sent as null so the backend MERGE actually clears it.
+  const xd = () => (draft.extra_data as any) || {}
+  const setX = (k: string, v: any) => setDraft(d => ({ ...d, extra_data: { ...((d.extra_data as any) || {}), [k]: v } }))
+  const xv = (k: string) => (xd()[k] ?? '')
+  const xsel = (k: string, options: string[]) => (
+    <select value={xv(k)} onChange={e => setX(k, e.target.value || null)}
+      className="input" style={{ fontSize: 11, padding: '4px 6px', height: 30, minWidth: 0 }}>
+      <option value="">—</option>
+      {options.map(o => <option key={o} value={o}>{o}</option>)}
+    </select>
+  )
+  // Datalist-backed field: dropdown of the common calls PLUS free text, so a
+  // standard set or an unorthodox one the coach names both save and reach the report.
+  const xfree = (k: string, listId: string, options: string[]) => (
+    <div style={{ minWidth: 0 }}>
+      <input list={listId} value={xv(k)} onChange={e => setX(k, e.target.value || null)}
+        className="input" placeholder="—" style={{ fontSize: 11, padding: '4px 6px', height: 30, width: '100%', minWidth: 0 }} />
+      <datalist id={listId}>{options.filter(o => o !== 'Other').map(o => <option key={o} value={o} />)}</datalist>
+    </div>
+  )
+  // Jersey lives in BOTH the player column and extra_data — keep them in lockstep.
+  const setJersey = (raw: string) => {
+    const v = raw.trim() || null
+    setDraft(d => ({ ...d, player: v, extra_data: { ...((d.extra_data as any) || {}), primary_player_jersey: v } }))
+  }
 
   if (events.length === 0) {
     return (
@@ -615,7 +666,9 @@ function PlayLog({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       {/* Phase filter */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
-        {([['all', 'All'], ['offense', 'Off'], ['defense', 'Def'], ['special_teams', 'ST']] as const).map(([k, label]) => (
+        {((isBball
+          ? [['all', 'All'], ['offense', 'Off'], ['defense', 'Def']]
+          : [['all', 'All'], ['offense', 'Off'], ['defense', 'Def'], ['special_teams', 'ST']]) as const).map(([k, label]) => (
           <button key={k} onClick={() => setFilter(k)}
             style={{ flex: 1, padding: '4px 0', fontSize: 10, fontWeight: 600, cursor: 'pointer', borderRadius: 3,
               background: filter === k ? 'rgba(201,168,76,0.2)' : 'rgba(255,255,255,0.04)',
@@ -628,33 +681,75 @@ function PlayLog({
       {shown.map((ev, i) => editingId === ev.id ? (
         // ── Inline editor ──
         <div key={ev.id} style={{ background: 'rgba(201,168,76,0.06)', border: '1px solid rgba(201,168,76,0.25)', borderRadius: 4, padding: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ fontSize: 10, color: '#C9A84C', fontWeight: 700, letterSpacing: '0.06em' }}>EDITING {fmtTime(ev.time_seconds)} · {(ev.side || 'offense').replace('_', ' ').toUpperCase()}</div>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <select value={(draft.side as string) || 'offense'} onChange={e => set('side', e.target.value)} className="input" style={{ fontSize: 11, padding: '4px 6px', height: 30 }}>
-              <option value="offense">Offense</option>
-              <option value="defense">Defense</option>
-              <option value="special_teams">Special Teams</option>
-            </select>
-            <input type="number" placeholder="down" value={(draft.down as number) ?? ''} onChange={e => set('down', e.target.value === '' ? null : Number(e.target.value))} className="input" style={{ fontSize: 11, padding: '4px 6px', height: 30, width: 56 }} />
-            <input type="number" placeholder="dist" value={(draft.distance as number) ?? ''} onChange={e => set('distance', e.target.value === '' ? null : Number(e.target.value))} className="input" style={{ fontSize: 11, padding: '4px 6px', height: 30, width: 56 }} />
-          </div>
-          {draft.side === 'defense' ? (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
-              {esel('defensive_front', FRONTS)}{esel('coverage', COVERAGES)}{esel('blitz', BLITZES)}
-            </div>
-          ) : draft.side === 'special_teams' ? (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-              {esel('play_type', ST_UNITS)}{esel('formation', FORMATIONS)}
-            </div>
+          <div style={{ fontSize: 10, color: '#C9A84C', fontWeight: 700, letterSpacing: '0.06em' }}>EDITING {fmtTime(ev.time_seconds)} · {isBball ? ev.event_type.replace('_', ' ').toUpperCase() : (ev.side || 'offense').replace('_', ' ').toUpperCase()}</div>
+          {isBball ? (
+            // ── Basketball editor: fields depend on what was tagged; scheme calls
+            //    (offensive set / defense / press / press break) are always editable
+            //    via a dropdown-plus-free-text so unorthodox calls survive edits. ──
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 64px', gap: 6 }}>
+                <input placeholder="jersey # (0-5)" value={(draft.player as string) ?? (xv('primary_player_jersey') || '')}
+                  onChange={e => setJersey(e.target.value)} className="input" style={{ fontSize: 11, padding: '4px 6px', height: 30 }} />
+                <input type="number" placeholder="qtr" value={xv('quarter')} onChange={e => setX('quarter', e.target.value === '' ? null : Number(e.target.value))}
+                  className="input" style={{ fontSize: 11, padding: '4px 6px', height: 30 }} />
+              </div>
+              {ev.event_type === 'shot' && (
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>{xsel('shot_zone', BB_ZONES)}{xsel('possession_origin', BB_ORIGINS)}</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>{esel('result', ['made', 'missed'])}{xsel('shot_type', ['2pt', '3pt'])}</div>
+                </>
+              )}
+              {ev.event_type === 'turnover' && xsel('turnover_type', BB_TURNOVERS)}
+              {ev.event_type === 'deflection' && xsel('deflection_type', BB_DEFL)}
+              {ev.event_type === 'special_situation' && (
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>{xsel('situation_type', BB_SITUATIONS)}{esel('result', BB_SIT_RESULTS)}</div>
+                  <input placeholder="formation (e.g. Box, Stack)" value={xv('formation')} onChange={e => setX('formation', e.target.value || null)} className="input" style={{ fontSize: 11, padding: '4px 6px', height: 30 }} />
+                  <input placeholder="primary action" value={xv('primary_action')} onChange={e => setX('primary_action', e.target.value || null)} className="input" style={{ fontSize: 11, padding: '4px 6px', height: 30 }} />
+                </>
+              )}
+              {ev.side === 'defense' ? (
+                <>
+                  <div style={{ fontSize: 9, color: '#7a7a6e', letterSpacing: '0.06em' }}>DEFENSE SCHEME · PRESS</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>{xfree('defensive_scheme', 'dl-bb-def', BB_DEFENSES)}{xfree('press_type', 'dl-bb-press', BB_PRESSES)}</div>
+                </>
+              ) : ev.event_type !== 'special_situation' ? (
+                <>
+                  <div style={{ fontSize: 9, color: '#7a7a6e', letterSpacing: '0.06em' }}>OFFENSIVE SET · PRESS BREAK</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>{xfree('offensive_set', 'dl-bb-offset', BB_OFFENSIVE_SETS)}{xfree('press_break_action', 'dl-bb-pbreak', BB_PRESS_BREAKS)}</div>
+                </>
+              ) : null}
+            </>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
-              {esel('formation', FORMATIONS)}{esel('play_type', PLAY_TYPES)}{esel('personnel', PERSONNEL)}
-            </div>
+            <>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <select value={(draft.side as string) || 'offense'} onChange={e => set('side', e.target.value)} className="input" style={{ fontSize: 11, padding: '4px 6px', height: 30 }}>
+                  <option value="offense">Offense</option>
+                  <option value="defense">Defense</option>
+                  <option value="special_teams">Special Teams</option>
+                </select>
+                <input type="number" placeholder="down" value={(draft.down as number) ?? ''} onChange={e => set('down', e.target.value === '' ? null : Number(e.target.value))} className="input" style={{ fontSize: 11, padding: '4px 6px', height: 30, width: 56 }} />
+                <input type="number" placeholder="dist" value={(draft.distance as number) ?? ''} onChange={e => set('distance', e.target.value === '' ? null : Number(e.target.value))} className="input" style={{ fontSize: 11, padding: '4px 6px', height: 30, width: 56 }} />
+              </div>
+              {draft.side === 'defense' ? (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
+                  {efree('defensive_front', 'dl-fb-front', FRONTS)}{efree('coverage', 'dl-fb-cov', COVERAGES)}{esel('blitz', BLITZES)}
+                </div>
+              ) : draft.side === 'special_teams' ? (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                  {esel('play_type', ST_UNITS)}{efree('formation', 'dl-fb-stform', FORMATIONS)}
+                </div>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
+                  {efree('formation', 'dl-fb-form', FORMATIONS)}{esel('play_type', PLAY_TYPES)}{esel('personnel', PERSONNEL)}
+                </div>
+              )}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 70px', gap: 6 }}>
+                {esel('result', draft.side === 'special_teams' ? ST_RESULTS : RESULTS)}
+                <input type="number" placeholder="yds" value={(draft.yards_gained as number) ?? ''} onChange={e => set('yards_gained', e.target.value === '' ? null : Number(e.target.value))} className="input" style={{ fontSize: 11, padding: '4px 6px', height: 30 }} />
+              </div>
+            </>
           )}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 70px', gap: 6 }}>
-            {esel('result', draft.side === 'special_teams' ? ST_RESULTS : RESULTS)}
-            <input type="number" placeholder="yds" value={(draft.yards_gained as number) ?? ''} onChange={e => set('yards_gained', e.target.value === '' ? null : Number(e.target.value))} className="input" style={{ fontSize: 11, padding: '4px 6px', height: 30 }} />
-          </div>
           <div style={{ display: 'flex', gap: 6 }}>
             <button onClick={() => save(ev.id)} disabled={savingId === ev.id} className="btn-primary" style={{ flex: 1, height: 32, fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
               {savingId === ev.id ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Check size={12} />} Save
@@ -681,27 +776,63 @@ function PlayLog({
                 const txt = isDef ? 'DEF' : isSt ? 'ST' : 'OFF'
                 return <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.08em', padding: '1px 5px', borderRadius: 3, background: bg, color: fg }}>{txt}</span>
               })()}
-              {ev.down && <span style={{ color: '#C9A84C', fontWeight: 600 }}>{ev.down}&amp;{ev.distance}</span>}
-              {ev.side === 'defense' ? (
+              {isBball ? (() => {
+                const x: any = ev.extra_data || {}
+                const et = ev.event_type
+                const made = ev.result === 'made'
+                const clean = (s: any) => String(s).replace(/_/g, ' ')
+                return (
+                  <>
+                    <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.06em', padding: '1px 5px', borderRadius: 3, background: 'rgba(255,255,255,0.06)', color: '#ede9df' }}>{clean(et).toUpperCase()}</span>
+                    {et === 'shot' && (
+                      <>
+                        {x.shot_zone && <span>{x.shot_zone}</span>}
+                        {x.shot_type && <span style={{ color: '#7a7a6e' }}>{x.shot_type}</span>}
+                        <span style={{ color: made ? '#2d8c40' : '#b45c5c', fontWeight: 600 }}>{made ? 'made' : 'missed'}</span>
+                      </>
+                    )}
+                    {et === 'turnover' && x.turnover_type && <span style={{ color: '#e07070' }}>{clean(x.turnover_type)}</span>}
+                    {et === 'deflection' && x.deflection_type && <span style={{ color: '#7ea0d0' }}>{clean(x.deflection_type)}</span>}
+                    {et === 'special_situation' && (
+                      <>
+                        {x.situation_type && <span style={{ color: '#C9A84C' }}>{x.situation_type}</span>}
+                        {x.primary_action && <span style={{ color: '#ede9df' }}>{x.primary_action}</span>}
+                        {ev.result && <span style={{ color: '#7a7a6e' }}>{clean(ev.result)}</span>}
+                      </>
+                    )}
+                    {x.offensive_set && <span style={{ color: '#7a7a6e', fontStyle: 'italic' }}>{x.offensive_set}</span>}
+                    {x.defensive_scheme && <span style={{ color: '#7a7a6e', fontStyle: 'italic' }}>{x.defensive_scheme}</span>}
+                    {x.press_type && <span style={{ color: '#e0a060', fontStyle: 'italic' }}>press: {x.press_type}</span>}
+                    {x.press_break_action && <span style={{ color: '#7ea0d0', fontStyle: 'italic' }}>break: {x.press_break_action}</span>}
+                    {x.quarter != null && x.quarter !== '' && <span style={{ fontSize: 10, color: '#7a7a6e' }}>Q{x.quarter}</span>}
+                    {ev.player && <span style={{ fontSize: 10, color: '#7a7a6e' }}>#{ev.player}</span>}
+                  </>
+                )
+              })() : (
                 <>
-                  {ev.defensive_front && <span>{ev.defensive_front}</span>}
-                  {ev.coverage && <span style={{ color: '#ede9df' }}>{ev.coverage}</span>}
-                  {ev.blitz && ev.blitz !== 'None' && <span style={{ color: '#e07070' }}>{ev.blitz} blitz</span>}
-                </>
-              ) : ev.side === 'special_teams' ? (
-                <>
-                  {ev.play_type && <span style={{ color: '#7ea0d0' }}>{ev.play_type}</span>}
-                  {ev.formation && <span style={{ color: '#7a7a6e' }}>{ev.formation}</span>}
-                </>
-              ) : (
-                <>
-                  {ev.formation && <span>{ev.formation}</span>}
-                  {ev.play_type && <span style={{ color: '#ede9df' }}>{ev.play_type}</span>}
-                  {ev.motion && <span style={{ fontSize: 10, color: '#7a7a6e', fontStyle: 'italic' }}>motion</span>}
+                  {ev.down && <span style={{ color: '#C9A84C', fontWeight: 600 }}>{ev.down}&amp;{ev.distance}</span>}
+                  {ev.side === 'defense' ? (
+                    <>
+                      {ev.defensive_front && <span>{ev.defensive_front}</span>}
+                      {ev.coverage && <span style={{ color: '#ede9df' }}>{ev.coverage}</span>}
+                      {ev.blitz && ev.blitz !== 'None' && <span style={{ color: '#e07070' }}>{ev.blitz} blitz</span>}
+                    </>
+                  ) : ev.side === 'special_teams' ? (
+                    <>
+                      {ev.play_type && <span style={{ color: '#7ea0d0' }}>{ev.play_type}</span>}
+                      {ev.formation && <span style={{ color: '#7a7a6e' }}>{ev.formation}</span>}
+                    </>
+                  ) : (
+                    <>
+                      {ev.formation && <span>{ev.formation}</span>}
+                      {ev.play_type && <span style={{ color: '#ede9df' }}>{ev.play_type}</span>}
+                      {ev.motion && <span style={{ fontSize: 10, color: '#7a7a6e', fontStyle: 'italic' }}>motion</span>}
+                    </>
+                  )}
+                  {ev.result && <span style={{ color: ev.result === 'Touchdown' ? '#2d8c40' : ev.result === 'Interception' || ev.result === 'Fumble' ? '#e07070' : '#7a7a6e' }}>{ev.result}</span>}
+                  {ev.yards_gained != null && <span style={{ color: '#7a7a6e' }}>{ev.yards_gained > 0 ? '+' : ''}{ev.yards_gained} yds</span>}
                 </>
               )}
-              {ev.result && <span style={{ color: ev.result === 'Touchdown' ? '#2d8c40' : ev.result === 'Interception' || ev.result === 'Fumble' ? '#e07070' : '#7a7a6e' }}>{ev.result}</span>}
-              {ev.yards_gained != null && <span style={{ color: '#7a7a6e' }}>{ev.yards_gained > 0 ? '+' : ''}{ev.yards_gained} yds</span>}
               {ev.extra_data?.auto_detected && (
                 <span style={{ fontSize: 9, color: '#C9A84C', letterSpacing: '0.1em', opacity: 0.7 }}>AI</span>
               )}
@@ -1461,7 +1592,7 @@ export default function GamePage() {
                     ? <BasketballTagForm currentTime={currentTime} onSave={handleSaveTag} saving={saving} opponent={game.opponent} />
                     : <TagForm currentTime={currentTime} onSave={handleSaveTag} saving={saving} side={side} setSide={setSide} opponent={game.opponent} />)
                 : tab === 'log'
-                ? <PlayLog events={events} onDelete={handleDelete} onSeek={handleSeek} onUpdate={handleUpdate} />
+                ? <PlayLog events={events} onDelete={handleDelete} onSeek={handleSeek} onUpdate={handleUpdate} sport={game.sport} />
                 : tab === 'tendencies'
                 ? <TendenciesPanel gameId={id} />
                 : tab === 'players'
