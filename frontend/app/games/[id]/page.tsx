@@ -1,10 +1,10 @@
 'use client'
-import { useEffect, useRef, useState, useCallback, Fragment } from 'react'
+import { useEffect, useRef, useState, useCallback, Fragment, type RefObject } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Sidebar from '@/components/layout/Sidebar'
 import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
-import { ChevronLeft, Tag, Play, Trash2, Clock, FileText, Loader2, CheckCircle, AlertCircle, Zap, Pencil, Check, X, Activity, TrendingUp, Users } from 'lucide-react'
+import { ChevronLeft, Tag, Play, Pause, Trash2, Clock, FileText, Loader2, CheckCircle, AlertCircle, Zap, Pencil, Check, X, Activity, TrendingUp, Users, Film, SkipForward, SkipBack } from 'lucide-react'
 import Link from 'next/link'
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -850,6 +850,213 @@ function PlayLog({
   )
 }
 
+// ── Cut-Ups ─────────────────────────────────────────────────────────────────
+// Virtual film cut-ups: pick a dimension (concept / formation / down&distance /
+// personnel / player / big plays), pick a value, and get a playlist of every
+// matching play. Playback drives the EXISTING <video> to each play's window and
+// auto-advances — no server-side clipping, works on the film already loaded.
+const CLIP_PRE = 4   // seconds of lead-in before the tagged snap
+const CLIP_POST = 6  // seconds after
+const _ORD = (d: number) => (({ 1: '1st', 2: '2nd', 3: '3rd', 4: '4th' } as Record<number, string>)[d] || `${d}`)
+
+function CutUps({ events, videoRef, sport }: {
+  events: TaggedEvent[]
+  videoRef: RefObject<HTMLVideoElement | null>
+  sport?: string
+}) {
+  const isBball = sport === 'basketball'
+  const DIMS: [string, string][] = isBball
+    ? [['zone', 'Shot Zone'], ['set', 'Off Set'], ['def', 'Defense'], ['quarter', 'Quarter'], ['player', 'Player'], ['result', 'Result']]
+    : [['concept', 'Concept'], ['formation', 'Formation'], ['dd', 'Down & Dist'], ['personnel', 'Personnel'], ['player', 'Player'], ['impact', 'Big Plays']]
+  const [dim, setDim] = useState(DIMS[0][0])
+  const [value, setValue] = useState<string | null>(null)
+  const [idx, setIdx] = useState(0)
+  const [playing, setPlaying] = useState(false)
+
+  const groupValue = (e: TaggedEvent): string | null => {
+    const x: any = e.extra_data || {}
+    if (isBball) {
+      if (dim === 'zone') return x.shot_zone || null
+      if (dim === 'set') return x.offensive_set || null
+      if (dim === 'def') return x.defensive_scheme || null
+      if (dim === 'quarter') return x.quarter != null ? `Q${x.quarter}` : null
+      if (dim === 'player') return e.player ? `#${e.player}` : null
+      if (dim === 'result') return e.result || null
+      return null
+    }
+    if (dim === 'concept') return x.run_concept || x.pass_concept || null
+    if (dim === 'formation') return e.formation || null
+    if (dim === 'dd') return e.down != null ? `${_ORD(e.down)} & ${e.distance == null ? '?' : e.distance <= 3 ? 'Short' : e.distance <= 7 ? 'Med' : 'Long'}` : null
+    if (dim === 'personnel') return e.personnel || null
+    if (dim === 'player') return e.player ? `#${e.player}` : null
+    if (dim === 'impact') {
+      const y = e.yards_gained
+      const res = (e.result || '').toLowerCase()
+      if (res.includes('touchdown') || res === 'td') return 'Touchdown'
+      const passish = !!x.pass_concept || /pass|screen|rpo/i.test(e.play_type || '')
+      if (y != null && y >= (passish ? 15 : 10)) return 'Explosive'
+      if ((y != null && y < 0) || res.includes('sack') || res.includes('loss') || res.includes('intercept') || res.includes('fumble')) return 'Negative'
+      return null
+    }
+    return null
+  }
+
+  const clipLabel = (e: TaggedEvent): string => {
+    const x: any = e.extra_data || {}
+    if (isBball) {
+      const bits = [x.shot_zone || e.event_type, e.result].filter(Boolean)
+      return bits.join(' · ')
+    }
+    const bits = [e.formation, x.run_concept || x.pass_concept || e.play_type, e.result].filter(Boolean)
+    return bits.join(' · ') || 'play'
+  }
+
+  const clipable = events.filter(e => e.time_seconds != null)
+  const groups = new Map<string, TaggedEvent[]>()
+  for (const e of clipable) {
+    const v = groupValue(e)
+    if (!v) continue
+    const arr = groups.get(v)
+    if (arr) arr.push(e); else groups.set(v, [e])
+  }
+  const sortedGroups = [...groups.entries()].sort((a, b) => b[1].length - a[1].length)
+
+  const clips = (value ? (groups.get(value) || []) : [])
+    .slice().sort((a, b) => (a.time_seconds || 0) - (b.time_seconds || 0))
+    .map(e => ({ ev: e, start: Math.max(0, (e.time_seconds || 0) - CLIP_PRE), end: (e.time_seconds || 0) + CLIP_POST }))
+
+  const stateRef = useRef({ clips, idx })
+  stateRef.current = { clips, idx }
+
+  // Auto-advance: when the current clip window ends, jump to the next (or stop).
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v || !playing) return
+    const onTime = () => {
+      const { clips, idx } = stateRef.current
+      const clip = clips[idx]
+      if (!clip) return
+      if (v.currentTime >= clip.end - 0.05) {
+        if (idx + 1 < clips.length) setIdx(idx + 1)
+        else { setPlaying(false); v.pause() }
+      }
+    }
+    v.addEventListener('timeupdate', onTime)
+    return () => v.removeEventListener('timeupdate', onTime)
+  }, [playing, videoRef])
+
+  // Seek to the active clip whenever the index or play state changes.
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v || !playing) return
+    const clip = clips[idx]
+    if (clip) { v.currentTime = clip.start; v.play().catch(() => {}) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idx, playing])
+
+  const selectValue = (val: string) => { setValue(val); setIdx(0); setPlaying(false) }
+  const playFrom = (i: number) => {
+    setIdx(i); setPlaying(true)
+    const v = videoRef.current, clip = clips[i]
+    if (v && clip) { v.currentTime = clip.start; v.play().catch(() => {}) }
+  }
+  const stop = () => { setPlaying(false); videoRef.current?.pause() }
+
+  if (!clipable.length) {
+    return (
+      <div style={{ textAlign: 'center', color: '#7a7a6e', padding: '32px 0', fontSize: 13 }}>
+        No plays with timestamps yet. Tag plays (or run AI detection), then build cut-ups here.
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {/* Dimension selector */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+        {DIMS.map(([k, label]) => (
+          <button key={k} onClick={() => { setDim(k); setValue(null); setPlaying(false) }}
+            style={{
+              padding: '5px 9px', fontSize: 10, fontWeight: 700, cursor: 'pointer', borderRadius: 4, border: 'none',
+              letterSpacing: '0.04em', textTransform: 'uppercase',
+              background: dim === k ? 'rgba(201,168,76,0.2)' : 'rgba(255,255,255,0.04)',
+              color: dim === k ? '#C9A84C' : '#7a7a6e',
+            }}>{label}</button>
+        ))}
+      </div>
+
+      {!value ? (
+        // ── Group list ──
+        sortedGroups.length ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            {sortedGroups.map(([val, evs]) => (
+              <button key={val} onClick={() => selectValue(val)}
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+                  background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)',
+                  borderRadius: 4, padding: '9px 12px', cursor: 'pointer', color: '#ede9df', fontSize: 13,
+                }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Film size={13} style={{ color: '#C9A84C' }} />{val}</span>
+                <span style={{ fontSize: 11, color: '#7a7a6e' }}>{evs.length} clip{evs.length !== 1 ? 's' : ''}</span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div style={{ fontSize: 12, color: '#7a7a6e', padding: '12px 0' }}>No plays carry this tag yet.</div>
+        )
+      ) : (
+        // ── Playlist for the selected value ──
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button onClick={() => { setValue(null); stop() }} style={{ background: 'none', border: 'none', color: '#7a7a6e', cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', gap: 4 }}>
+              <ChevronLeft size={13} /> All
+            </button>
+            <span style={{ fontSize: 13, fontWeight: 700, color: '#f8f6f0' }}>{value}</span>
+            <span style={{ fontSize: 11, color: '#7a7a6e' }}>{clips.length} clip{clips.length !== 1 ? 's' : ''}</span>
+          </div>
+
+          {/* Transport */}
+          <div style={{ display: 'flex', gap: 6 }}>
+            {!playing ? (
+              <button onClick={() => playFrom(0)} className="btn-primary" style={{ flex: 1, height: 34, fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                <Play size={13} /> Play all
+              </button>
+            ) : (
+              <button onClick={stop} className="btn-secondary" style={{ flex: 1, height: 34, fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                <Pause size={13} /> Pause
+              </button>
+            )}
+            <button onClick={() => playFrom(Math.max(0, idx - 1))} disabled={!playing && idx === 0} className="btn-secondary" style={{ width: 42, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="Previous clip">
+              <SkipBack size={13} />
+            </button>
+            <button onClick={() => playFrom(Math.min(clips.length - 1, idx + 1))} className="btn-secondary" style={{ width: 42, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="Next clip">
+              <SkipForward size={13} />
+            </button>
+          </div>
+
+          {/* Clip list */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {clips.map((c, i) => (
+              <button key={c.ev.id} onClick={() => playFrom(i)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10, textAlign: 'left',
+                  background: playing && i === idx ? 'rgba(201,168,76,0.15)' : 'rgba(255,255,255,0.03)',
+                  border: playing && i === idx ? '1px solid rgba(201,168,76,0.4)' : '1px solid rgba(255,255,255,0.05)',
+                  borderRadius: 4, padding: '7px 10px', cursor: 'pointer',
+                }}>
+                <span style={{ fontSize: 11, color: '#7a7a6e', width: 20, flexShrink: 0 }}>{i + 1}</span>
+                <span style={{ fontSize: 12, color: '#C9A84C', fontFamily: 'var(--font-dm-mono)', flexShrink: 0 }}>{fmtTime(c.ev.time_seconds)}</span>
+                <span style={{ fontSize: 12, color: '#ede9df', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{clipLabel(c.ev)}</span>
+                {playing && i === idx && <span style={{ fontSize: 9, color: '#C9A84C', letterSpacing: '0.08em', flexShrink: 0 }}>NOW</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Accuracy Panel ─────────────────────────────────────────────────────────
 function PlayersPanel({ gameId }: { gameId: string }) {
   const [data, setData] = useState<any>(null)
@@ -1112,7 +1319,7 @@ export default function GamePage() {
   const [events, setEvents] = useState<TaggedEvent[]>([])
   const [currentTime, setCurrentTime] = useState(0)
   const [saving, setSaving] = useState(false)
-  const [tab, setTab] = useState<'tag' | 'log' | 'tendencies' | 'players' | 'accuracy'>('tag')
+  const [tab, setTab] = useState<'tag' | 'log' | 'cutups' | 'tendencies' | 'players' | 'accuracy'>('tag')
   const [side, setSide] = useState<'offense' | 'defense' | 'special_teams'>('offense')
   const [reportPending, setReportPending] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
@@ -1563,7 +1770,7 @@ export default function GamePage() {
           }}>
             {/* Tabs */}
             <div style={{ display: 'flex', borderBottom: '1px solid rgba(255,255,255,0.06)', flexShrink: 0 }}>
-              {(['tag', 'log', 'tendencies', 'players', 'accuracy'] as const).map(t => (
+              {(['tag', 'log', 'cutups', 'tendencies', 'players', 'accuracy'] as const).map(t => (
                 <button
                   key={t}
                   onClick={() => setTab(t)}
@@ -1578,6 +1785,7 @@ export default function GamePage() {
                 >
                   {t === 'tag' ? <><Tag size={11} style={{ display: 'inline', marginRight: 4 }} />Tag</>
                     : t === 'log' ? <><FileText size={11} style={{ display: 'inline', marginRight: 4 }} />Log ({events.length})</>
+                    : t === 'cutups' ? <><Film size={11} style={{ display: 'inline', marginRight: 4 }} />Cut-Ups</>
                     : t === 'tendencies' ? <><TrendingUp size={11} style={{ display: 'inline', marginRight: 4 }} />Tendencies</>
                     : t === 'players' ? <><Users size={11} style={{ display: 'inline', marginRight: 4 }} />Players</>
                     : <><Activity size={11} style={{ display: 'inline', marginRight: 4 }} />Accuracy</>}
@@ -1593,6 +1801,8 @@ export default function GamePage() {
                     : <TagForm currentTime={currentTime} onSave={handleSaveTag} saving={saving} side={side} setSide={setSide} opponent={game.opponent} />)
                 : tab === 'log'
                 ? <PlayLog events={events} onDelete={handleDelete} onSeek={handleSeek} onUpdate={handleUpdate} sport={game.sport} />
+                : tab === 'cutups'
+                ? <CutUps events={events} videoRef={videoRef} sport={game.sport} />
                 : tab === 'tendencies'
                 ? <TendenciesPanel gameId={id} />
                 : tab === 'players'
