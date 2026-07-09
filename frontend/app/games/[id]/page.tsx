@@ -681,7 +681,7 @@ function PlayLog({
       {shown.map((ev, i) => editingId === ev.id ? (
         // ── Inline editor ──
         <div key={ev.id} style={{ background: 'rgba(201,168,76,0.06)', border: '1px solid rgba(201,168,76,0.25)', borderRadius: 4, padding: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ fontSize: 10, color: '#C9A84C', fontWeight: 700, letterSpacing: '0.06em' }}>EDITING {fmtTime(ev.time_seconds)} · {isBball ? ev.event_type.replace('_', ' ').toUpperCase() : (ev.side || 'offense').replace('_', ' ').toUpperCase()}</div>
+          <div style={{ fontSize: 10, color: '#C9A84C', fontWeight: 700, letterSpacing: '0.06em' }}>EDITING {fmtTime(ev.time_seconds)} · {isBball ? (ev.event_type || 'play').replace('_', ' ').toUpperCase() : (ev.side || 'offense').replace('_', ' ').toUpperCase()}</div>
           {isBball ? (
             // ── Basketball editor: fields depend on what was tagged; scheme calls
             //    (offensive set / defense / press / press break) are always editable
@@ -880,7 +880,7 @@ function CutUps({ events, videoRef, sport }: {
       if (dim === 'set') return x.offensive_set || null
       if (dim === 'def') return x.defensive_scheme || null
       if (dim === 'quarter') return x.quarter != null ? `Q${x.quarter}` : null
-      if (dim === 'player') return e.player ? `#${e.player}` : null
+      if (dim === 'player') return (e.player != null && `${e.player}` !== '') ? `#${e.player}` : null
       if (dim === 'result') return e.result || null
       return null
     }
@@ -888,7 +888,7 @@ function CutUps({ events, videoRef, sport }: {
     if (dim === 'formation') return e.formation || null
     if (dim === 'dd') return e.down != null ? `${_ORD(e.down)} & ${e.distance == null ? '?' : e.distance <= 3 ? 'Short' : e.distance <= 7 ? 'Med' : 'Long'}` : null
     if (dim === 'personnel') return e.personnel || null
-    if (dim === 'player') return e.player ? `#${e.player}` : null
+    if (dim === 'player') return (e.player != null && `${e.player}` !== '') ? `#${e.player}` : null
     if (dim === 'impact') {
       const y = e.yards_gained
       const res = (e.result || '').toLowerCase()

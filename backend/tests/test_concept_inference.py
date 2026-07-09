@@ -91,6 +91,21 @@ def run():
     pc = infer_pass_concept({"play_description": "Four verticals, hit the seam"})
     check("inferred pass concept is canonical", pc and pc[0] in PASS_CONCEPT_NAMES)
 
+    # ── Word boundaries: substring look-alikes must NOT fire a false concept. ──
+    check("'drawn up' does not false-match Draw",
+          (infer_run_concept({"play_description": "a well-designed play, drawn up perfectly"}) or (None,))[0] != "Draw")
+    check("'bootstrapped' does not false-match PA Boot",
+          infer_pass_concept({"play_description": "they bootstrapped a new tempo look"}) is None)
+    check("real 'bootleg' still fires PA Boot",
+          (infer_pass_concept({"play_description": "QB ran a clean bootleg to the right"}) or (None,))[0] == "PA Boot")
+    # ── Broadened classification: freeform play_type variants still recover. ──
+    p = {"play_type": "handoff", "run_gap": "A"}
+    fill_concepts(p)
+    check("play_type 'handoff' classifies as run and recovers a concept", p.get("run_concept") == "Inside Zone")
+    p = {"play_type": "dropback", "pass_depth": "Deep (20+)", "target_area": "Seam Left"}
+    fill_concepts(p)
+    check("play_type 'dropback' classifies as pass and recovers a concept", p.get("pass_concept") == "Four Verticals")
+
     # ── Prompt guidance carries names AND recognition cues. ──
     guide = postsnap_concept_guidance()
     check("guidance includes run + pass concepts", "Power" in guide and "Mesh" in guide)
