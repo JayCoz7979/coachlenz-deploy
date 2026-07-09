@@ -1322,6 +1322,7 @@ export default function GamePage() {
   const [tab, setTab] = useState<'tag' | 'log' | 'cutups' | 'tendencies' | 'players' | 'accuracy'>('tag')
   const [side, setSide] = useState<'offense' | 'defense' | 'special_teams'>('offense')
   const [reportPending, setReportPending] = useState(false)
+  const [reportType, setReportType] = useState<'opponent' | 'self_scout'>('opponent')
   const [toast, setToast] = useState<string | null>(null)
   const [detectStatus, setDetectStatus] = useState<null | {
     game_status: string
@@ -1486,10 +1487,10 @@ export default function GamePage() {
     setReportPending(true)
     try {
       const res = await api.post('/reports', {
-        title: `${game.title} Tendency Report`,
+        title: `${game.title} ${reportType === 'self_scout' ? 'Self-Scout' : 'Tendency'} Report`,
         sport: game.sport,
         game_ids: [id],
-        report_type: 'opponent',
+        report_type: reportType,
       })
       router.push(`/reports/${res.data.id}`)
     } catch {
@@ -1814,6 +1815,21 @@ export default function GamePage() {
             {/* Generate Report CTA */}
             {events.length >= 3 && (
               <div style={{ padding: 16, borderTop: '1px solid rgba(255,255,255,0.06)', flexShrink: 0 }}>
+                {/* Opponent vs self-scout (football only — self-scout turns the same
+                    engine on your own film: what you're giving away). */}
+                {(game.sport === 'football' || game.sport === 'flag_football') && (
+                  <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
+                    {([['opponent', 'Scout Opponent'], ['self_scout', 'Self-Scout']] as const).map(([k, label]) => (
+                      <button key={k} onClick={() => setReportType(k)}
+                        style={{
+                          flex: 1, padding: '6px 0', fontSize: 10, fontWeight: 700, cursor: 'pointer', borderRadius: 4,
+                          border: 'none', letterSpacing: '0.04em', textTransform: 'uppercase',
+                          background: reportType === k ? 'rgba(201,168,76,0.2)' : 'rgba(255,255,255,0.04)',
+                          color: reportType === k ? '#C9A84C' : '#7a7a6e',
+                        }}>{label}</button>
+                    ))}
+                  </div>
+                )}
                 <button
                   onClick={handleGenerateReport}
                   disabled={reportPending}
@@ -1822,11 +1838,13 @@ export default function GamePage() {
                 >
                   {reportPending
                     ? <><Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> Generating...</>
-                    : <><FileText size={14} /> GENERATE AI REPORT</>
+                    : <><FileText size={14} /> {reportType === 'self_scout' ? 'GENERATE SELF-SCOUT' : 'GENERATE AI REPORT'}</>
                   }
                 </button>
                 <div style={{ fontSize: 10, color: '#7a7a6e', textAlign: 'center', marginTop: 6 }}>
-                  {events.length} plays · AI tendency analysis
+                  {reportType === 'self_scout'
+                    ? `${events.length} plays · what you're giving away`
+                    : `${events.length} plays · AI tendency analysis`}
                 </div>
               </div>
             )}
