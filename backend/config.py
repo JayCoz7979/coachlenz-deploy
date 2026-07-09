@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     RESEND_DOMAIN: str = "cosbyaisolutions.com"
     EMAIL_FROM: str = "CoachLenz <noreply@cosbyaisolutions.com>"
     ADMIN_EMAIL: str = "info@cosbyaisolutions.com"
+    # Where replies to the founder welcome email land. Empty -> jay@<RESEND_DOMAIN>.
+    # Set this env to a monitored inbox (e.g. a Gmail) so "just reply" actually reaches Jay.
+    FOUNDER_REPLY_TO: str = ""
 
     # Twilio
     TWILIO_ACCOUNT_SID: str = ""

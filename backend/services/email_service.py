@@ -3,13 +3,30 @@ from backend.config import settings
 
 resend.api_key = settings.RESEND_API_KEY
 FROM = f"CoachLenz <noreply@{settings.RESEND_DOMAIN}>"
+# The welcome email comes from Jay personally, not a no-reply. Same verified
+# sending domain (so it delivers), but a founder From + a real reply-to.
+FOUNDER_FROM = f"Jay Cosby, CoachLenz <jay@{settings.RESEND_DOMAIN}>"
+FOUNDER_REPLY_TO = settings.FOUNDER_REPLY_TO or f"jay@{settings.RESEND_DOMAIN}"
 
 async def send_welcome_email(to: str, name: str):
+    first = (name or "Coach").split(" ")[0]
     resend.Emails.send({
-        "from": FROM,
+        "from": FOUNDER_FROM,
+        "reply_to": FOUNDER_REPLY_TO,
         "to": to,
         "subject": "Welcome to CoachLenz",
-        "html": f"<p>Hi {name},</p><p>Welcome to CoachLenz — your AI-powered film analysis platform.</p><p>Powered by <a href='https://cosbyaisolutions.com'>Cosby AI Solutions</a></p>",
+        "html": (
+            f"<p>Hey {first},</p>"
+            f"<p>Jay here, the founder of CoachLenz. I wanted to welcome you myself.</p>"
+            f"<p>You didn't sign up for another dashboard. You signed up to get your nights back. "
+            f"CoachLenz watches the film, finds the tendencies, and hands you the game plan, so your "
+            f"time goes to coaching instead of scrubbing tape.</p>"
+            f"<p>Upload a game, let the AI tag it, and generate your first report. If you get stuck or "
+            f"have an idea, just reply to this email. It reaches me.</p>"
+            f"<p>Let's get to work,<br/>Jay Cosby<br/>Founder, CoachLenz</p>"
+            f"<p style='color:#666;font-size:12px'>Powered by "
+            f"<a href='https://cosbyaisolutions.com'>Cosby AI Solutions</a></p>"
+        ),
     })
 
 async def send_trial_ending_email(to: str, name: str, days_left: int):
