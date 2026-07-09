@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
 import Link from 'next/link'
 import { ChevronLeft, Loader2, FileText, AlertTriangle, TrendingUp, Shield, Zap, Target, Printer, Download, ChevronDown } from 'lucide-react'
+import FieldHeatMap from '@/components/report/FieldHeatMap'
 
 interface Section {
   heading: string
@@ -412,6 +413,14 @@ export default function ReportPage() {
                     )
                   })()
               }
+            </div>
+          )}
+
+          {/* Field heat maps (football) — rendered from the report summary, no extra call */}
+          {(report.sport === 'football' || report.sport === 'flag_football')
+            && report.summary && typeof report.summary !== 'string' && (
+            <div style={{ marginBottom: 28 }}>
+              <FieldHeatMap summary={report.summary} />
             </div>
           )}
 
