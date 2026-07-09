@@ -179,7 +179,7 @@ def build_scouting_keys(offense: Dict[str, Any], defense: Dict[str, Any],
             f"Their bread-and-butter run is {top_concept}: {total} reps, "
             f"{cd.get('avg_yards', 0)} ypc, {cd.get('success_rate', 0)}% success"
             + (f", {cd.get('explosive_count')} explosive" if cd.get("explosive_count") else "") + ".",
-            total, max(_lean_strength(50 + share / 2), cd.get("success_rate", 0)),
+            total, max(_lean_strength(50 + share / 2), cd.get("success_rate") or 0),
             f"Stop {top_concept} first — it's their hat-hanger. Set the front to it.")
     if rda.get("total_runs"):
         left, right = rda.get("left_pct", 0), rda.get("right_pct", 0)
@@ -203,7 +203,7 @@ def build_scouting_keys(offense: Dict[str, Any], defense: Dict[str, Any],
             f"Their #1 pass target is the {hottest}: {total} throws "
             f"({ad.get('pct_of_passes', 0)}% of passes), {ad.get('avg_yards', 0)} yds/att, "
             f"{ad.get('success_rate', 0)}% success.",
-            total, max(ad.get("pct_of_passes", 0) * 1.5, ad.get("success_rate", 0)),
+            total, max((ad.get("pct_of_passes") or 0) * 1.5, ad.get("success_rate") or 0),
             f"Rotate coverage to the {hottest} and take away the first read.")
     pca = (offense.get("pass_concept_analysis") or {}).get("by_concept") or {}
     if pca:
@@ -212,7 +212,7 @@ def build_scouting_keys(offense: Dict[str, Any], defense: Dict[str, Any],
         add("Pass Game",
             f"Favorite pass concept: {top_pc} ({total} calls, {pcd.get('pct_of_passes', 0)}% of passes, "
             f"{pcd.get('avg_yards', 0)} yds, {pcd.get('success_rate', 0)}% success).",
-            total, max(pcd.get("pct_of_passes", 0) * 1.5, pcd.get("success_rate", 0)),
+            total, max((pcd.get("pct_of_passes") or 0) * 1.5, pcd.get("success_rate") or 0),
             f"Drill the defense against {top_pc}; it's their go-to dropback answer.")
 
     # ── Explosive sources — the game-losers. Featured to the top. ──
@@ -297,7 +297,7 @@ def build_scouting_keys(offense: Dict[str, Any], defense: Dict[str, Any],
         add("Special Teams: Alert",
             f"They have shown {fakes.get('count')} fake/trick plays on film "
             f"({fakes.get('success_rate', 0)}% success).",
-            max(fakes.get("count", 0), WATCH_MIN_SAMPLE), 70.0,
+            fakes.get("count", 0), 70.0,
             "Stay coverage-alert on every 4th-down and ST look.", featured=True)
     punts = special.get("punts") or {}
     directional = punts.get("directional_pct") or {}

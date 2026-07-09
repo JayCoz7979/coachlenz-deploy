@@ -706,7 +706,7 @@ class AiDetectWorker(BaseWorker):
                         if sport in ("football", "flag_football"):
                             from backend.services.tendency_engine.concept_taxonomy import fill_concepts
                             for _p in deduped:
-                                if (_p.get("side") or "offense").lower() == "offense":
+                                if (_p.get("side") or "offense").strip().lower() == "offense":
                                     fill_concepts(_p)
 
                         events = [

@@ -157,9 +157,23 @@ async def generate_prose_sections(
 
     # SELF-SCOUT: same facts, flipped voice — what YOU give away, what's working,
     # where you hurt yourself. Its own section set and prompt; opponent path untouched.
-    if report_type == "self_scout" and (scouting.get("self_scout") or {}).get("available"):
-        return await _generate_self_scout_sections(
-            tendency_summary, scouting, plays, off_plays, def_plays, st_plays, is_trial)
+    if report_type == "self_scout":
+        if (scouting.get("self_scout") or {}).get("available"):
+            return await _generate_self_scout_sections(
+                tendency_summary, scouting, plays, off_plays, def_plays, st_plays, is_trial)
+        # Requested a self-scout but there's no offense to analyze — say so plainly
+        # rather than silently handing back an opponent-framed report.
+        return [{
+            "heading": "Not Enough Offense to Self-Scout",
+            "insight_type": "tendency",
+            "body": (
+                "A self-scout finds what YOUR offense is giving away, so it needs your offensive plays. "
+                f"This film had {off_plays} offensive play{'s' if off_plays != 1 else ''} tagged, which isn't enough "
+                "to read your own tendencies.\n\n"
+                "Tag (or AI-detect) full offensive film, then generate the self-scout again. To break down an "
+                "opponent instead, switch the report type back to Opponent."
+            ),
+        }]
 
     # Build sections based on available data
     sections_spec = [

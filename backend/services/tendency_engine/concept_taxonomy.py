@@ -24,13 +24,14 @@ This module does two jobs, from ONE source of truth:
 HS-focused: the core concept menu a Friday-night staff actually sees, not an
 exhaustive NFL install.
 """
+import re
 from typing import Dict, Any, List, Optional, Tuple
 
 # ── RUN CONCEPTS: (canonical name, recognition cue, alias keywords) ──────────
 # Aliases are lowercase substrings scanned in the model's play_description.
 RUN_CONCEPTS: List[Tuple[str, str, List[str]]] = [
     ("Inside Zone", "OL takes lateral zone steps play-side, double-teams to the backers, RB presses A/B gap and cuts off the first down lineman. No puller.",
-     ["inside zone", "iz ", " iz", "tight zone"]),
+     ["inside zone", "iz", "tight zone"]),
     ("Outside Zone", "OL reaches play-side on the run, ball stretches to the perimeter, RB reads the C-gap to bounce/bang/bend. Wide 'stretch'.",
      ["outside zone", "wide zone", "stretch", "zone stretch"]),
     ("Power", "Back-side guard PULLS and kicks/leads through the hole, play-side down-blocks, a tight end or back kicks out the edge. Downhill.",
@@ -86,7 +87,7 @@ PASS_CONCEPTS: List[Tuple[str, str, List[str]]] = [
     ("Snag", "Triangle: snag/spot sit, corner, flat — spacing triangle to one side.",
      ["snag", "spot", "triangle"]),
     ("PA Boot", "Play-action boot/naked — QB fakes the run and rolls, high-low the flat.",
-     ["boot", "naked", "waggle", "keeper", "play action pass", "play-action boot"]),
+     ["boot", "bootleg", "naked", "waggle", "keeper", "play action pass", "play-action boot"]),
     ("Screen", "Ball behind the LOS to a back/receiver with blockers releasing in front.",
      ["screen", "bubble", "tunnel", "jailbreak", "slip screen"]),
     ("Quick Game", "One-step hitches/quick outs — get the ball out now vs pressure/off.",
@@ -121,11 +122,16 @@ def postsnap_concept_guidance() -> str:
 # 2) DETERMINISTIC RECOVERY — fill a null concept from what we already have
 # ═══════════════════════════════════════════════════════════════════════════
 def _mine_description(desc: str, lookup) -> Optional[str]:
-    """Return the first concept whose alias appears in the coach description."""
-    d = f" {(desc or '').lower()} "
+    """Return the first concept whose alias appears in the coach description as a
+    WHOLE word/phrase. Word boundaries stop 'stick route' -> Stick from also firing
+    on 'lipstick', 'boot' on 'bootstrap', 'iz' on 'size', etc. — the false positives
+    that would otherwise stamp a confident-but-wrong concept on the play."""
+    d = (desc or "").lower()
+    if not d:
+        return None
     for name, _cue, aliases in lookup:
         for a in aliases:
-            if a and a in d:
+            if a and re.search(r"\b" + re.escape(a) + r"\b", d):
                 return name
     return None
 
@@ -176,6 +182,14 @@ def infer_pass_concept(play: Dict[str, Any]) -> Optional[Tuple[str, float, str]]
     return None
 
 
+# Keyword sets matched as substrings of a freeform play_type — real film labels
+# vary ("handoff", "dropback", "qb keeper", "rpo pass"), so exact-match dropped them.
+_RUN_PT = ("run", "draw", "rush", "sweep", "dive", "option", "keeper", "scramble",
+           "handoff", "belly", "toss", "counter", "power", "iso", "trap", "zone")
+_PASS_PT = ("pass", "screen", "rpo", "dropback", "drop back", "play action",
+            "play-action", "boot", "naked", "waggle")
+
+
 def _is_run(play: Dict[str, Any]) -> bool:
     rp = (play.get("run_pass") or "").lower()
     if rp == "run":
@@ -183,7 +197,9 @@ def _is_run(play: Dict[str, Any]) -> bool:
     if rp == "pass":
         return False
     pt = (play.get("play_type") or "").lower()
-    return pt in ("run", "draw", "qb run", "option", "rush")
+    # A pass call wins ties (e.g. "run pass option" -> treat as its pass read
+    # only if no run keyword) — check run first so RPO run action stays a run.
+    return any(k in pt for k in _RUN_PT)
 
 
 def _is_pass(play: Dict[str, Any]) -> bool:
@@ -193,7 +209,7 @@ def _is_pass(play: Dict[str, Any]) -> bool:
     if rp == "run":
         return False
     pt = (play.get("play_type") or "").lower()
-    return pt in ("pass", "screen", "rpo", "play action", "play-action")
+    return any(k in pt for k in _PASS_PT)
 
 
 def fill_concepts(play: Dict[str, Any]) -> Dict[str, Any]:

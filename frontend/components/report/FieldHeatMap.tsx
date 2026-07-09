@@ -160,7 +160,7 @@ export default function FieldHeatMap({ summary }: { summary: any }) {
             </div>
             {(sideDist.left_pct != null) && (
               <div style={{ fontSize: 10, color: '#7a7a6e', marginTop: 8 }}>
-                Field side: <b style={{ color: '#ede9df' }}>{Math.round(sideDist.left_pct)}%</b> left · <b style={{ color: '#ede9df' }}>{Math.round(sideDist.middle_pct || 0)}%</b> middle · <b style={{ color: '#ede9df' }}>{Math.round(sideDist.right_pct)}%</b> right
+                Field side: <b style={{ color: '#ede9df' }}>{Math.round(sideDist.left_pct || 0)}%</b> left · <b style={{ color: '#ede9df' }}>{Math.round(sideDist.middle_pct || 0)}%</b> middle · <b style={{ color: '#ede9df' }}>{Math.round(sideDist.right_pct || 0)}%</b> right
               </div>
             )}
           </div>
