@@ -251,8 +251,8 @@ For each play return:
 - play_type: "Run","Pass","Screen","Draw","RPO","QB Run","Option","Punt","Field Goal","Kickoff","PAT","Two-Point", null
 - run_pass: "Run" | "Pass" | null (the fundamental call)
 - run_gap: "A","B","C","D/Edge", null  | run_direction: "Left","Right","Middle", null
-- run_concept: "Inside Zone","Outside Zone","Power","Counter","Trap","Duo","Sweep","Toss","Dive", null
-- pass_concept: "Slant-Flat","Mesh","Smash","Four Verts","Stick","Curl-Flat","Y-Cross","Screen", null
+- run_concept / pass_concept: classify using the CONCEPT CLASSIFICATION guide at the END of this prompt — match the recognition CUE, do not guess off the name. null if the angle truly won't let you tell (say so in blind_spot).
+- concept_confidence: 0-1, your confidence in the concept read (null if no concept named)
 - pass_depth: "Behind LOS","Short (1-9)","Intermediate (10-19)","Deep (20+)", null
 - target_area: "Left flat","Left seam","Middle","Right seam","Right flat","Backfield", null
 - is_play_action: true/false  | screen_subtype: "Bubble","Tunnel","RB Screen","Slip","Jailbreak", null
@@ -266,6 +266,20 @@ For each play return:
 - confidence: 0-1, your confidence in THIS post-snap read
 
 Return ONLY JSON: {"plays": [{"play_index": 0, "play_type": ..., ...}]}"""
+
+
+# Concept taxonomy WITH recognition cues, appended to the post-snap prompt so the
+# model classifies run/pass concepts from coaching keys, not a bare name list.
+# Built once (cached) — the guidance is static.
+_POSTSNAP_CONCEPT_GUIDE = None
+
+
+def _postsnap_prompt(ctx: str) -> str:
+    global _POSTSNAP_CONCEPT_GUIDE
+    if _POSTSNAP_CONCEPT_GUIDE is None:
+        from backend.services.tendency_engine.concept_taxonomy import postsnap_concept_guidance
+        _POSTSNAP_CONCEPT_GUIDE = postsnap_concept_guidance()
+    return DETECTION_PROMPT_POSTSNAP.replace("{presnap_plays}", ctx) + "\n\n" + _POSTSNAP_CONCEPT_GUIDE
 
 
 # PASS 3: Opus adversarially verifies ONE low-confidence merged play.
@@ -626,6 +640,9 @@ class AiDetectWorker(BaseWorker):
                             # Football round 1
                             "run_direction", "run_concept", "pass_concept", "pass_depth",
                             "coverage_shell", "pressure_type", "play_description",
+                            # Concept detection provenance (v2): how the concept was
+                            # determined — model read vs recovered from description/signals.
+                            "concept_confidence", "concept_source",
                             # Football round 2
                             "run_gap", "target_area", "motion_type", "receiver_alignment",
                             "corner_technique", "safety_rotation", "pressure_gap",
@@ -680,6 +697,17 @@ class AiDetectWorker(BaseWorker):
                                 _pl = _p.get("players")
                                 if isinstance(_pl, list):
                                     _p["players"] = [pp for pp in _pl if _legal_bb(pp.get("jersey"))]
+
+                        # CONCEPT RECOVERY (football): a null run/pass concept
+                        # silently drops a tendency. Fill it from the play
+                        # description the model already wrote, then structural
+                        # signals — recording concept_source/confidence. A
+                        # confident model read is preserved, never overwritten.
+                        if sport in ("football", "flag_football"):
+                            from backend.services.tendency_engine.concept_taxonomy import fill_concepts
+                            for _p in deduped:
+                                if (_p.get("side") or "offense").lower() == "offense":
+                                    fill_concepts(_p)
 
                         events = [
                             Event(
@@ -1074,7 +1102,7 @@ class AiDetectWorker(BaseWorker):
         try:
             post_resp = await self._vision_json(
                 client, DETECT_MODEL,
-                frames + [{"type": "text", "text": getattr(self, "_team_context", "") + DETECTION_PROMPT_POSTSNAP.replace("{presnap_plays}", ctx)}])
+                frames + [{"type": "text", "text": getattr(self, "_team_context", "") + _postsnap_prompt(ctx)}])
             p2 = {pl.get("play_index"): pl for pl in post_resp.get("plays", []) if pl.get("play_index") is not None}
         except Exception as e:
             logger.warning(f"[ai_detect] post-snap pass failed batch {batch_idx}: {e}")
