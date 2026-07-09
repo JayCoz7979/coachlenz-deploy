@@ -155,6 +155,12 @@ async def generate_prose_sections(
     st_plays = int(tendency_summary.get("special_teams_plays", 0) or 0)
     scouting = tendency_summary.get("scouting") or {}
 
+    # SELF-SCOUT: same facts, flipped voice — what YOU give away, what's working,
+    # where you hurt yourself. Its own section set and prompt; opponent path untouched.
+    if report_type == "self_scout" and (scouting.get("self_scout") or {}).get("available"):
+        return await _generate_self_scout_sections(
+            tendency_summary, scouting, plays, off_plays, def_plays, st_plays, is_trial)
+
     # Build sections based on available data
     sections_spec = [
         {
@@ -174,6 +180,26 @@ async def generate_prose_sections(
             ),
         }
     ]
+
+    # AUTO SCOUTING KEYS — the plain-English tendency layer, front and center.
+    # This is the coach's #1 ask: "tell me the tendencies automatically." Every key
+    # is pre-computed and ranked; the writer only states them.
+    if scouting.get("scouting_keys"):
+        sections_spec.append({
+            "heading": "Auto Scouting Keys — What They Tip",
+            "insight_type": "tendency",
+            "instructions": (
+                "THIS IS THE MOST IMPORTANT SECTION — put it right after the summary. "
+                "Use scouting.scouting_keys, a pre-computed list ALREADY ranked most-exploitable first, each with "
+                "a statement, sample, confidence (HIGH/MEDIUM/LOW), strength, exploit, and a featured flag. "
+                "Present the keys VERBATIM as bullets in the given order. Format each: "
+                "'- **[statement]** — [exploit] (N reps, CONFIDENCE)'. "
+                "Lead with any featured:true keys (explosive/fake game-losers) — mark them 'GAME-LOSER:'. "
+                "Do NOT invent, reorder, or merge keys, and do NOT drop the sample counts. "
+                "An asterisk on a statement means a personnel/injury flag applied (Gate 7) — keep it and note it once. "
+                "This is the tear-away tendency sheet a coach scans in 60 seconds."
+            ),
+        })
 
     # Checks & Balances (Module 7): surface the gate results up top so the staff
     # knows exactly how much to trust this report before reading tendencies.
@@ -443,6 +469,102 @@ Return ONLY the JSON array, nothing else."""
     raw = message.content[0].text.strip()
     sections = _parse_report_sections(raw)
 
+    if is_trial:
+        sections.append({
+            "heading": "Trial Report",
+            "insight_type": "tendency",
+            "body": "This is a trial report. Upgrade at coachlenz.com to unlock full reports and exports.",
+        })
+    return sections
+
+
+async def _generate_self_scout_sections(tendency_summary, scouting, plays,
+                                        off_plays, def_plays, st_plays, is_trial):
+    """Self-scout report: 'what am I giving away before someone else finds it?'
+    Built from scouting.self_scout (predictability / winning concepts / self-inflicted),
+    the same analytics as the opponent report, turned inward."""
+    sections_spec = [
+        {
+            "heading": "Self-Scout Summary",
+            "insight_type": "tendency",
+            "instructions": (
+                "Use scouting.self_scout.summary and scouting.self_scout.biggest_giveaway. "
+                "2-3 sentences: what is this offense's identity, and the single biggest thing you are tipping. "
+                "Frame it as a coach self-scouting before Friday — honest, direct, fix-it tone."
+            ),
+        },
+        {
+            "heading": "What You're Giving Away — Predictability",
+            "insight_type": "tendency",
+            "instructions": (
+                "THE MOST IMPORTANT SECTION. Use scouting.self_scout.predictability, ALREADY ranked loudest-tip first. "
+                "Each item: statement, sample, confidence, fix. Present VERBATIM as bullets, strongest first. "
+                "Format: '- **[statement]** — Fix: [fix] (N reps, CONFIDENCE)'. "
+                "These are the tells an opponent's film crew will find. Do not invent or reorder."
+            ),
+        },
+        {
+            "heading": "What's Working — Keep Feeding It",
+            "insight_type": "red_zone",
+            "instructions": (
+                "Use scouting.self_scout.winning_concepts (ranked by success rate). Each: statement, sample, success_rate. "
+                "Present VERBATIM as bullets. Format: '- **[statement]**'. "
+                "These are your money plays — the point is to keep calling what wins. If the list is empty, say the sample "
+                "is too thin to confirm winners yet and move on."
+            ),
+        },
+        {
+            "heading": "Where You're Hurting Yourself",
+            "insight_type": "tendency",
+            "instructions": (
+                "Use scouting.self_scout.self_inflicted (negative plays, penalties, turnovers). Each: statement, count. "
+                "Present as bullets, biggest count first. Format: '- **[statement]**'. "
+                "If the list is empty, say the offense is clean in this sample. Blunt, corrective tone."
+            ),
+        },
+        {
+            "heading": "Scout's Note: Single-Camera Coverage & Confidence",
+            "insight_type": "tendency",
+            "instructions": (
+                "Use the data_confidence block. State the confidence_band and avg_confidence and what it means. "
+                "List top_blind_spots verbatim so the coach knows what the fixed angle could not read. Never overstate certainty."
+            ),
+        },
+    ]
+
+    section_outline = "\n".join(
+        f"{i+1}. \"{s['heading']}\" (insight_type: \"{s['insight_type']}\")\n   Instructions: {s['instructions']}"
+        for i, s in enumerate(sections_spec)
+    )
+
+    prompt = f"""Sport: football
+Report Type: self_scout
+Sample Size: {plays} total plays (your offense: {off_plays}, your defense: {def_plays}, special teams: {st_plays})
+
+TENDENCY DATA:
+{json.dumps(tendency_summary, indent=2)}
+
+Write a complete SELF-SCOUT report as a JSON array. This is the coach's own team looking in the mirror:
+find what they are giving away before an opponent does. Each element: {{"heading": "...", "insight_type": "...", "body": "..."}}.
+
+SECTIONS (write every one, in this exact order):
+{section_outline}
+
+BODY FORMAT (a coach scans this fast, do NOT write essays):
+- Each section body = ONE short lead sentence, then a blank line, then BULLET POINTS on their own lines starting with "- ".
+- One point per bullet, one sentence each. Bold key numbers and calls with **double asterisks**.
+- Every bullet cites play counts alongside percentages. Lead each section with the most important finding.
+- Do not write multi-sentence paragraphs. Default to bullets everywhere.
+
+Return ONLY the JSON array, nothing else."""
+
+    message = client.messages.create(
+        model=MODEL,
+        max_tokens=6000,
+        system=SYSTEM_PROMPT_FOOTBALL,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    sections = _parse_report_sections(message.content[0].text.strip())
     if is_trial:
         sections.append({
             "heading": "Trial Report",
