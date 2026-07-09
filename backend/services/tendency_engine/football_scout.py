@@ -520,6 +520,13 @@ def build_football_scouting_report(events, offense: Dict[str, Any],
     statements = situational_statements(offense, defense, personnel_flagged)
     game_plan = build_game_plan(offense, defense, special, explosive_alerts, personnel_flagged)
 
+    # Auto Scouting Keys — the plain-English layer that speaks the WHOLE engine
+    # (pre-snap tells, formation/personnel/concept splits, explosive sources,
+    # situational), ranked most-exploitable first. Plus the self-scout view.
+    from .scouting_keys import build_scouting_keys, build_self_scout
+    scouting_keys = build_scouting_keys(offense, defense, special, personnel_flagged)
+    self_scout = build_self_scout(offense, defense, special, personnel_flagged)
+
     # GATE 5 — GAME PLAN TRANSLATION: pass iff we produced installable calls.
     total_calls = (len(game_plan["defensive_plan"]) + len(game_plan["offensive_plan"])
                    + len(game_plan["special_teams_plan"]))
@@ -540,6 +547,10 @@ def build_football_scouting_report(events, offense: Dict[str, Any],
         "personnel_flagged": personnel_flagged,
         "validation_gates": validation["gates"],
         "situational_tendencies": statements,
+        # The full plain-English key set, ranked most-exploitable first.
+        "scouting_keys": scouting_keys,
+        # Self-scout view of the same facts (populated for self_scout reports).
+        "self_scout": self_scout,
         "game_plan": game_plan,
         # A flat, priority-ordered digest for the head-coach one-pager.
         "head_coach_priorities": _head_coach_digest(game_plan),
