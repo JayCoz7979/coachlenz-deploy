@@ -668,7 +668,7 @@ function PlayLog({
       <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
         {((isBball
           ? [['all', 'All'], ['offense', 'Off'], ['defense', 'Def']]
-          : [['all', 'All'], ['offense', 'Off'], ['defense', 'Def'], ['special_teams', 'ST']]) as const).map(([k, label]) => (
+          : [['all', 'All'], ['offense', 'Off'], ['defense', 'Def'], ['special_teams', 'ST']]) as [('all' | 'offense' | 'defense' | 'special_teams'), string][]).map(([k, label]) => (
           <button key={k} onClick={() => setFilter(k)}
             style={{ flex: 1, padding: '4px 0', fontSize: 10, fontWeight: 600, cursor: 'pointer', borderRadius: 3,
               background: filter === k ? 'rgba(201,168,76,0.2)' : 'rgba(255,255,255,0.04)',
