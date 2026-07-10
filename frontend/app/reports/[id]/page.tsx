@@ -186,10 +186,69 @@ export default function ReportPage() {
       return `<p>${fmt(lines[0] || '').replace(/^\s*[-•*]\s+/, '')}</p>`
     }).join('')
 
+  // Print-friendly field heat map (light theme) built from the report summary, so
+  // the PDF export carries the same "where they attack" visual as the screen.
+  const buildHeatMapHtml = (s: any): string => {
+    const off = s?.offense || {}
+    const byArea: Record<string, any> = (off.pass_distribution || {}).by_area || {}
+    const byGap: Record<string, any> = (off.run_gap_analysis || {}).by_gap || {}
+    const rda = off.run_direction_analysis || {}
+    const sideDist = (off.pass_distribution || {}).field_side_distribution || {}
+    const hasPass = Object.keys(byArea).length > 0
+    const hasRun = Object.keys(byGap).length > 0 || (rda.total_runs || 0) > 0
+    if (!hasPass && !hasRun) {
+      return `<section><h2>Field Heat Maps — Where They Attack</h2><p style="color:#555;font-style:italic">No pass-target or run-gap detail was readable on this film yet — a thin or low-confidence breakdown. Run a full or DEEP breakdown of the whole game and the field maps fill in.</p></section>`
+    }
+    const cells: Record<string, { count: number }> = {}; let behind = 0
+    const classify = (a: string) => {
+      const l = a.toLowerCase()
+      const bhd = l.includes('backfield') || l.includes('screen') || l.includes('behind')
+      const col = l.includes('left') ? 0 : l.includes('right') ? 2 : 1
+      let row = 1
+      if (l.includes('flat') || l.includes('short') || l.includes('quick') || l.includes('hitch')) row = 2
+      else if (l.includes('seam') || l.includes('deep') || l.includes('sideline') || l.includes('post') || l.includes('go') || l.includes('vert')) row = 0
+      return { row, col, bhd }
+    }
+    for (const [area, d] of Object.entries<any>(byArea)) {
+      const c = d.count || 0; if (!c) continue
+      const b = classify(area)
+      if (b.bhd) behind += c
+      else { const k = `${b.row}-${b.col}`; cells[k] = cells[k] || { count: 0 }; cells[k].count += c }
+    }
+    const maxV = Math.max(1, ...Object.values(cells).map(c => c.count), behind)
+    const grn = (c: number) => c ? `background:rgba(26,92,42,${(0.15 + 0.7 * (c / maxV)).toFixed(2)});color:#fff;font-weight:bold` : 'background:#f2f2ee;color:#bbb'
+    const rows = ['Deep', 'Intermediate', 'Short'], cols = ['Left', 'Middle', 'Right']
+    const cellTd = (r: number, cn: number) => { const c = cells[`${r}-${cn}`]?.count || 0; return `<td style="${grn(c)};text-align:center;padding:8px;border:2px solid #fff">${c || ''}</td>` }
+    const passTable = hasPass ? `<div style="flex:1;min-width:230px">
+        <div style="font-size:11px;font-weight:bold;color:#1a5c2a;text-transform:uppercase;margin-bottom:4px">Pass Targets (throws)</div>
+        <table style="border-collapse:collapse;width:100%;font-size:12px">
+          <tr><td></td>${cols.map(c => `<td style="text-align:center;font-size:10px;color:#666">${c}</td>`).join('')}</tr>
+          ${rows.map((rl, ri) => `<tr><td style="font-size:10px;color:#666;padding-right:6px">${rl}</td>${[0, 1, 2].map(ci => cellTd(ri, ci)).join('')}</tr>`).join('')}
+        </table>
+        <div style="font-size:10px;color:#666;margin-top:4px">Behind LOS / screens: <b>${behind || 0}</b></div>
+      </div>` : ''
+    let gapTable = ''
+    if (hasRun) {
+      const gaps = Object.entries<any>(byGap).map(([g, d]) => [g, d.count || 0] as [string, number]).sort((a, b) => b[1] - a[1])
+      const maxG = Math.max(1, ...gaps.map(([, c]) => c))
+      const dirs = ([['Left', rda.left_pct], ['Right', rda.right_pct], ['Inside', rda.inside_pct], ['Outside', rda.outside_pct]] as [string, number][]).filter(([, v]) => v != null)
+      gapTable = `<div style="flex:1;min-width:230px">
+        <div style="font-size:11px;font-weight:bold;color:#1a5c2a;text-transform:uppercase;margin-bottom:4px">Run Gaps (carries)</div>
+        <table style="border-collapse:collapse;width:100%;font-size:12px">
+          <tr>${gaps.length ? gaps.map(([g]) => `<td style="text-align:center;font-size:10px;color:#666">${g}</td>`).join('') : '<td style="font-size:10px;color:#999">no gap detail</td>'}</tr>
+          <tr>${gaps.map(([, c]) => `<td style="background:rgba(26,92,42,${(0.15 + 0.7 * (c / maxG)).toFixed(2)});color:#fff;font-weight:bold;text-align:center;padding:8px;border:2px solid #fff">${c}</td>`).join('')}</tr>
+        </table>
+        ${dirs.length ? `<div style="font-size:10px;color:#666;margin-top:4px">${dirs.map(([l, v]) => `${l} ${Math.round(v)}%`).join(' · ')}${rda.total_runs ? ` · ${rda.total_runs} runs` : ''}</div>` : ''}
+      </div>`
+    }
+    const sideLine = (sideDist.left_pct != null) ? `<div style="font-size:11px;color:#555;margin-top:8px">Pass field side: <b>${Math.round(sideDist.left_pct || 0)}%</b> left · <b>${Math.round(sideDist.middle_pct || 0)}%</b> middle · <b>${Math.round(sideDist.right_pct || 0)}%</b> right</div>` : ''
+    return `<section><h2>Field Heat Maps — Where They Attack</h2><div style="display:flex;gap:24px;flex-wrap:wrap">${passTable}${gapTable}</div>${sideLine}<div style="font-size:10px;color:#888;margin-top:6px">Darker green = more volume.</div></section>`
+  }
+
   // One branded print/PDF renderer for every format. Blocks are {heading, body}.
   const printDoc = (opts: {
     title: string; subtitle: string; blocks: Section[]; watermarked: boolean
-    counts?: [string, any][]; hint?: string
+    counts?: [string, any][]; hint?: string; heatMapHtml?: string
   }) => {
     const esc = (s: string) => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     const date = report?.generated_at ? new Date(report.generated_at).toLocaleDateString() : ''
@@ -222,6 +281,7 @@ export default function ReportPage() {
       ${opts.hint ? `<div class="hint">${esc(opts.hint)}</div>` : ''}
       ${opts.watermarked ? '<div class="wm">TRIAL REPORT — Upgrade at coachlenz.com to remove watermark</div>' : ''}
       ${counts.length ? `<div class="counts">${counts.map(([l, v]) => `<div class="count"><div class="n">${v}</div><div class="l">${esc(l)}</div></div>`).join('')}</div>` : ''}
+      ${opts.heatMapHtml || ''}
       ${sectionsHtml}
       <div class="footer">Generated by CoachLenz · Powered by Cosby AI Solutions</div>
       </body></html>`
@@ -239,6 +299,7 @@ export default function ReportPage() {
       blocks: report.sections || [],
       counts: [['Total Plays', s.total_plays], ['Offense', s.offense_plays],
                ['Defense', s.defense_plays], ['Special Teams', s.special_teams_plays]],
+      heatMapHtml: String(report.sport || '').toLowerCase().includes('football') ? buildHeatMapHtml(s) : '',
     })
   }
 
