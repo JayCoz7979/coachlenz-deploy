@@ -79,7 +79,8 @@ export default function FieldHeatMap({ summary }: { summary: any }) {
 
   const hasPass = Object.keys(byArea).length > 0
   const hasRun = Object.keys(byGap).length > 0 || (rda.total_runs || 0) > 0
-  if (!hasPass && !hasRun) return null
+  // NOTE: we intentionally do NOT hide the card when data is thin — an invisible
+  // card reads as a missing feature. Instead we show an honest empty state below.
 
   // Aggregate pass areas into the field grid + behind-LOS strip.
   const cells: Record<string, Cell> = {}
@@ -121,6 +122,12 @@ export default function FieldHeatMap({ summary }: { summary: any }) {
         <button onClick={() => setMetric('yards')} style={toggleBtn(metric === 'yards')}>Avg Yds</button>
       </div>
       <div style={{ fontSize: 10, color: '#7a7a6e', marginBottom: 16 }}>{metricLegend}. Empty zones had no readable plays on this film.</div>
+
+      {(!hasPass && !hasRun) && (
+        <div style={{ fontSize: 12, color: '#7ea88a', background: '#123a1e', border: '1px solid rgba(45,140,64,0.25)', borderRadius: 6, padding: 16, lineHeight: 1.6 }}>
+          No pass-target or run-gap detail was readable on this film yet. That usually means a thin or low-confidence breakdown — a wide single-camera angle, or only the opening minutes were analyzed. Run a full or DEEP breakdown of the whole game and these field maps fill in with real zones.
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 20 }}>
         {/* ── Pass target field ── */}

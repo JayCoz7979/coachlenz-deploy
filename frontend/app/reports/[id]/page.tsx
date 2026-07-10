@@ -417,7 +417,7 @@ export default function ReportPage() {
           )}
 
           {/* Field heat maps (football) — rendered from the report summary, no extra call */}
-          {(report.sport === 'football' || report.sport === 'flag_football')
+          {String(report.sport || '').toLowerCase().includes('football')
             && report.summary && typeof report.summary !== 'string' && (
             <div style={{ marginBottom: 28 }}>
               <FieldHeatMap summary={report.summary} />
