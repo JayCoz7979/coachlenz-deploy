@@ -45,7 +45,7 @@ CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "multipass-v7-eagleeye-slowmo"
+CODE_VERSION = "multipass-v8-eagleeye-lean"
 
 # Parallel ranged extraction: one long fps=0.5 pass over a 2.75h stream times out
 # silently. Instead decode many short windows concurrently, each its own ffmpeg.
@@ -85,14 +85,16 @@ TEST_CLIP_SECONDS = 180   # quick-test mode analyzes only the opening 3 minutes
 # the human eye is legible to the model. Football numbers are 0-99.
 JERSEY_PASS_ENABLED = True
 MAX_JERSEY_PLAYS = 90          # cost guardrail: read jerseys on up to N plays/game
-JERSEY_HIRES_WIDTH = 3200      # re-extract the play moment this wide (vs 1600 bulk)
+JERSEY_HIRES_WIDTH = 2400      # re-extract the play moment this wide (vs 1600 bulk);
+                              # 2400 is plenty post-downscale and far lighter on memory than 3200.
 # SLOW IT DOWN: sample the play frame-by-frame instead of grabbing 2 moments. A
 # number blurs while running and is legible only at specific instants (a back set
 # pre-snap, a runner slowing after a cut). Dense sampling catches those instants.
-JERSEY_FRAMES_PER_PLAY = 7     # frames across the play window (was 2)
-JERSEY_FRAME_STRIDE = 0.45     # seconds between frames — fine-grained (was 1.2)
-JERSEY_LEAD = 1.0             # start this many seconds BEFORE the tagged snap (pre-snap set)
-JERSEY_PARALLEL = 4            # concurrent jersey reads
+# Kept modest + LOW PARALLELISM so the pass never OOM-kills the worker.
+JERSEY_FRAMES_PER_PLAY = 5     # frames across the play window (was 2)
+JERSEY_FRAME_STRIDE = 0.55     # seconds between frames — fine-grained (was 1.2)
+JERSEY_LEAD = 0.8             # start this many seconds BEFORE the tagged snap (pre-snap set)
+JERSEY_PARALLEL = 2            # concurrent jersey reads — memory guardrail
 JERSEY_MIN_CONFIDENCE = 0.5    # below this we do not accept a read (never guess)
 
 JERSEY_PROMPT = """You have EAGLE-EYE vision. Below are HIGH-RESOLUTION zoom crops of ONE football play, sampled frame-by-frame (~0.45s apart) from just before the snap through the early run — the SAME players across consecutive moments.
@@ -1080,7 +1082,7 @@ class AiDetectWorker(BaseWorker):
     def _player_crop_blocks(self, path: str, label: str) -> list:
         """From a high-res frame, drop the sky + near foreground and split the player
         band into two overlapping left/right tiles (the center is covered by both).
-        Each tile is upscaled so digits stay chunky after Vision downsamples it."""
+        The high-res extraction carries the detail; tiling puts the jersey on more pixels."""
         blocks = []
         try:
             import io
@@ -1094,12 +1096,17 @@ class AiDetectWorker(BaseWorker):
             for tlabel, box in (("left", (0, 0, int(bw * 0.60), bh)),
                                 ("right", (int(bw * 0.40), 0, bw, bh))):
                 crop = band.crop(box)
-                crop = crop.resize((int(crop.width * 2), int(crop.height * 2)), Image.LANCZOS)
+                # NO upscale: the model downsamples to ~1568px anyway, so upscaling
+                # only burns memory (this OOM-killed the worker) for zero added detail.
+                # The tile already zooms the jersey; the high-res extraction carries the detail.
                 buf = io.BytesIO()
-                crop.save(buf, format="JPEG", quality=92)
+                crop.save(buf, format="JPEG", quality=90)
+                crop.close()
                 data = base64.standard_b64encode(buf.getvalue()).decode()
                 blocks.append({"type": "text", "text": f"{label} - {tlabel} zoom:"})
                 blocks.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": data}})
+            band.close()
+            img.close()
         except Exception as e:
             logger.warning(f"[ai_detect] jersey crop failed for {path}: {e}")
         return blocks
