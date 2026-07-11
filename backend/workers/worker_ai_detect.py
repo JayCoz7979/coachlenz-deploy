@@ -1157,6 +1157,7 @@ class AiDetectWorker(BaseWorker):
         MAX_JERSEY_PLAYS plays. Mutates plays in place. Reports a real breakdown into
         the Film Assistant log (worker stdout is unreliable). Returns primary reads."""
         import tempfile
+        import anthropic  # imported locally elsewhere; needs its own import in this method
         candidates = [p for p in plays if p.get("time_seconds") is not None][:MAX_JERSEY_PLAYS]
         if not candidates:
             return 0
