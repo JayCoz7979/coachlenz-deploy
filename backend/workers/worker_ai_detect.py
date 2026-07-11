@@ -45,7 +45,7 @@ CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "multipass-v6-eagleeye"
+CODE_VERSION = "multipass-v7-eagleeye-slowmo"
 
 # Parallel ranged extraction: one long fps=0.5 pass over a 2.75h stream times out
 # silently. Instead decode many short windows concurrently, each its own ffmpeg.
@@ -86,14 +86,20 @@ TEST_CLIP_SECONDS = 180   # quick-test mode analyzes only the opening 3 minutes
 JERSEY_PASS_ENABLED = True
 MAX_JERSEY_PLAYS = 90          # cost guardrail: read jerseys on up to N plays/game
 JERSEY_HIRES_WIDTH = 3200      # re-extract the play moment this wide (vs 1600 bulk)
-JERSEY_FRAMES_PER_PLAY = 2     # temporal consensus: a number seen twice is trusted
-JERSEY_FRAME_STRIDE = 1.2      # seconds between the two consensus moments
+# SLOW IT DOWN: sample the play frame-by-frame instead of grabbing 2 moments. A
+# number blurs while running and is legible only at specific instants (a back set
+# pre-snap, a runner slowing after a cut). Dense sampling catches those instants.
+JERSEY_FRAMES_PER_PLAY = 7     # frames across the play window (was 2)
+JERSEY_FRAME_STRIDE = 0.45     # seconds between frames — fine-grained (was 1.2)
+JERSEY_LEAD = 1.0             # start this many seconds BEFORE the tagged snap (pre-snap set)
 JERSEY_PARALLEL = 4            # concurrent jersey reads
 JERSEY_MIN_CONFIDENCE = 0.5    # below this we do not accept a read (never guess)
 
-JERSEY_PROMPT = """You have EAGLE-EYE vision. Below are HIGH-RESOLUTION zoom crops of ONE football play from a single fixed camera, taken a moment apart. Your ONLY job: read the JERSEY NUMBERS.
+JERSEY_PROMPT = """You have EAGLE-EYE vision. Below are HIGH-RESOLUTION zoom crops of ONE football play, sampled frame-by-frame (~0.45s apart) from just before the snap through the early run — the SAME players across consecutive moments.
 
-Read every number you can actually make out on a chest or back, even a partial one you are confident about. High-school football numbers are 0-99. A number that appears the SAME across two moments (same player, two frames) is a confident read — prefer those.
+Your ONLY job: read the JERSEY NUMBERS. Work like a coach scrubbing the play frame by frame: a number is a blur while a player runs, but at SOME moment in this sequence a player is set, turning, or slowing and their number faces the camera clearly. READ IT FROM THAT SHARPEST MOMENT. Scan every moment for each player before you decide.
+
+Read every number you can make out on a chest or back. High-school football numbers are 0-99. A number that reads the SAME across multiple moments is a confident read — prefer those.
 
 Identify the MAIN actor of the play specifically — the ball carrier, passer, or kicker (whoever has the ball) — and give their number.
 
@@ -1083,11 +1089,10 @@ class AiDetectWorker(BaseWorker):
             w, h = img.size
             band = img.crop((0, int(h * 0.12), w, int(h * 0.90)))  # players live mid-frame
             bw, bh = band.size
-            # Three overlapping tiles (tighter zoom than two) so a small number
-            # on a wide angle occupies more pixels after Vision downsamples it.
-            for tlabel, box in (("left", (0, 0, int(bw * 0.42), bh)),
-                                ("center", (int(bw * 0.29), 0, int(bw * 0.71), bh)),
-                                ("right", (int(bw * 0.58), 0, bw, bh))):
+            # Two overlapping tiles (center covered by both) at 2x — we lean on dense
+            # temporal sampling (many frames) rather than more tiles for the read.
+            for tlabel, box in (("left", (0, 0, int(bw * 0.60), bh)),
+                                ("right", (int(bw * 0.40), 0, bw, bh))):
                 crop = band.crop(box)
                 crop = crop.resize((int(crop.width * 2), int(crop.height * 2)), Image.LANCZOS)
                 buf = io.BytesIO()
@@ -1133,9 +1138,12 @@ class AiDetectWorker(BaseWorker):
         if ts is None:
             return {}, 0
         content, got = [], 0
+        # Sample a window from just before the snap through the early run so we catch
+        # the instant a number faces the camera and isn't motion-blurred.
         for fi in range(JERSEY_FRAMES_PER_PLAY):
             fp = os.path.join(tmpdir, f"jrsy_{idx}_{fi}.jpg")
-            if await self._extract_hires_frame(video_source, float(ts) + fi * JERSEY_FRAME_STRIDE, fp):
+            when = float(ts) - JERSEY_LEAD + fi * JERSEY_FRAME_STRIDE
+            if await self._extract_hires_frame(video_source, when, fp):
                 content.append({"type": "text", "text": f"Moment {fi + 1}:"})
                 content.extend(self._player_crop_blocks(fp, f"Moment {fi + 1}"))
                 got += 1
