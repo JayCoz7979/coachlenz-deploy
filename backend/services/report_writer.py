@@ -4,11 +4,26 @@ import anthropic
 from typing import List, Dict, Any
 from backend.config import settings
 
-client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+# ASYNC client: the sync client blocks the reports worker's event loop for the full
+# 30-90s of an LLM call, stalling every other queued report and the stuck-job watchdog.
+client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
 
 # Single source of truth: the report model comes from config (env-overridable),
 # not a hardcode. Keeps config.ANTHROPIC_MODEL honest instead of drifting from it.
 MODEL = settings.ANTHROPIC_MODEL
+
+
+def _first_text(message) -> str:
+    """Safely pull the text out of a Claude response. An empty content list (e.g. a
+    max_tokens truncation with no text block) would otherwise IndexError and kill the
+    whole report with an opaque error."""
+    try:
+        for block in (message.content or []):
+            if getattr(block, "type", None) == "text" or hasattr(block, "text"):
+                return (block.text or "").strip()
+    except Exception:
+        pass
+    return ""
 
 
 def _unescape(s: str) -> str:
@@ -474,13 +489,13 @@ BODY FORMAT (a coach scans this fast, do NOT write essays):
 
 Return ONLY the JSON array, nothing else."""
 
-    message = client.messages.create(
+    message = await client.messages.create(
         model=MODEL,
         max_tokens=6000,
         system=SYSTEM_PROMPT_FOOTBALL,
         messages=[{"role": "user", "content": prompt}],
     )
-    raw = message.content[0].text.strip()
+    raw = _first_text(message)
     sections = _parse_report_sections(raw)
 
     if is_trial:
@@ -572,13 +587,13 @@ BODY FORMAT (a coach scans this fast, do NOT write essays):
 
 Return ONLY the JSON array, nothing else."""
 
-    message = client.messages.create(
+    message = await client.messages.create(
         model=MODEL,
         max_tokens=6000,
         system=SYSTEM_PROMPT_FOOTBALL,
         messages=[{"role": "user", "content": prompt}],
     )
-    sections = _parse_report_sections(message.content[0].text.strip())
+    sections = _parse_report_sections(_first_text(message))
     if is_trial:
         sections.append({
             "heading": "Trial Report",
@@ -914,13 +929,13 @@ BODY FORMAT (a coach scans this fast, do NOT write essays):
 
 Return ONLY the JSON array, nothing else."""
 
-    message = client.messages.create(
+    message = await client.messages.create(
         model=MODEL,
         max_tokens=7000,
         system=SYSTEM_PROMPT_BASKETBALL,
         messages=[{"role": "user", "content": prompt}],
     )
-    raw = message.content[0].text.strip()
+    raw = _first_text(message)
     sections = _parse_report_sections(raw)
 
     if is_trial:
@@ -933,7 +948,7 @@ Return ONLY the JSON array, nothing else."""
 
 
 async def suggest_tags(event_description: str) -> List[str]:
-    message = client.messages.create(
+    message = await client.messages.create(
         model=MODEL,
         max_tokens=200,
         messages=[{
@@ -942,6 +957,6 @@ async def suggest_tags(event_description: str) -> List[str]:
         }],
     )
     try:
-        return json.loads(message.content[0].text)
+        return json.loads(_first_text(message) or "{}")
     except Exception:
         return []

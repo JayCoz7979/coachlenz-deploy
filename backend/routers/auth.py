@@ -11,6 +11,7 @@ from backend.services.abuse_prevention import get_risk_score, fingerprint_reques
 from backend.services.trial import TRIAL_DAYS
 from backend.services.email_service import send_welcome_email, send_password_reset_email, send_email_verification_code
 from backend.services import twilio_verify
+from backend.utils.timeutils import to_naive_utc
 import uuid
 import secrets
 import hashlib
@@ -212,6 +213,12 @@ class VerifyPhoneRequest(BaseModel):
 async def send_email_code(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     if user.email_verified:
         return {"ok": True, "already_verified": True}
+    # Cooldown: each send sets the expiry to now+15min. If it's still >14min out, a
+    # code went out under a minute ago — throttle so this can't be spammed (email
+    # cost + sender-reputation damage). No extra column needed.
+    exp = to_naive_utc(user.email_verify_expires)
+    if exp is not None and exp > datetime.utcnow() + timedelta(minutes=14):
+        raise HTTPException(status_code=429, detail="A code was just sent. Please wait a minute before requesting another.")
     code = f"{secrets.randbelow(1000000):06d}"
     await db.execute(update(User).where(User.id == user.id).values(
         email_verify_code_hash=_sha256(code),

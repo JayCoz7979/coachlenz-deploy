@@ -11,6 +11,8 @@ logger = logging.getLogger(__name__)
 
 WORKER_ID = socket.gethostname()
 STUCK_THRESHOLD_MINUTES = 10  # re-queue jobs orphaned by a worker restart within 10 min
+MAX_ATTEMPTS = 3              # dead-letter after this many tries so a job that keeps
+                             # killing the worker (e.g. an OOM film) can't crash-loop forever
 
 class BaseWorker:
     job_type: str
@@ -36,10 +38,20 @@ class BaseWorker:
             job = result.scalar_one_or_none()
             if not job:
                 return
+            job.attempts += 1
+            # Circuit breaker: a job that keeps dying (OOM, corrupt film) is left
+            # "running" and re-queued by the watchdog forever. Give up after
+            # MAX_ATTEMPTS so it can't crash-loop the shared worker or burn cost.
+            if job.attempts > MAX_ATTEMPTS:
+                job.status = "error"
+                job.error_message = f"Gave up after {MAX_ATTEMPTS} failed attempts (job kept failing)."
+                job.locked_at = None
+                await db.commit()
+                logger.error(f"[{self.job_type}] job {job.id} dead-lettered after {MAX_ATTEMPTS} attempts")
+                return
             job.status = "running"
             job.locked_at = datetime.utcnow()
             job.locked_by = WORKER_ID
-            job.attempts += 1
             await db.commit()
 
         try:

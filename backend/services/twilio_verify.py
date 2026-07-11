@@ -10,8 +10,15 @@ from fastapi import HTTPException
 from backend.config import settings
 
 
+def phone_verification_configured() -> bool:
+    """True only when Twilio Verify is fully wired up. When False, phone
+    verification must NOT gate onboarding — otherwise a new user can never get
+    phone_verified and is trapped, unable to finish signup. Email stays the hard gate."""
+    return bool(settings.TWILIO_ACCOUNT_SID and settings.TWILIO_AUTH_TOKEN and settings.TWILIO_VERIFY_SID)
+
+
 def _client():
-    if not (settings.TWILIO_ACCOUNT_SID and settings.TWILIO_AUTH_TOKEN and settings.TWILIO_VERIFY_SID):
+    if not phone_verification_configured():
         return None
     from twilio.rest import Client
     return Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
