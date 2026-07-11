@@ -1457,21 +1457,31 @@ export default function GamePage() {
       setEvents(prev => [...prev, newEvent].sort((a, b) => (a.time_seconds ?? 0) - (b.time_seconds ?? 0)))
       setTab('log')
       showToast('Play tagged')
+    } catch (e: any) {
+      showToast(e?.response?.data?.detail ?? 'Could not save that play — please try again.')
     } finally {
       setSaving(false)
     }
   }
 
   const handleDelete = async (eventId: string) => {
-    await api.delete(`/events/${eventId}`)
-    setEvents(prev => prev.filter(e => e.id !== eventId))
+    try {
+      await api.delete(`/events/${eventId}`)
+      setEvents(prev => prev.filter(e => e.id !== eventId))
+    } catch {
+      showToast('Could not delete that play — please try again.')
+    }
   }
 
   const handleUpdate = async (eventId: string, data: Partial<TaggedEvent>) => {
-    const res = await api.patch(`/events/${eventId}`, data)
-    setEvents(prev => prev.map(e => e.id === eventId ? { ...e, ...res.data } : e)
-      .sort((a, b) => (a.time_seconds ?? 0) - (b.time_seconds ?? 0)))
-    showToast('Play updated')
+    try {
+      const res = await api.patch(`/events/${eventId}`, data)
+      setEvents(prev => prev.map(e => e.id === eventId ? { ...e, ...res.data } : e)
+        .sort((a, b) => (a.time_seconds ?? 0) - (b.time_seconds ?? 0)))
+      showToast('Play updated')
+    } catch (e: any) {
+      showToast(e?.response?.data?.detail ?? 'Could not update that play — please try again.')
+    }
   }
 
   const handleSeek = (t: number) => {

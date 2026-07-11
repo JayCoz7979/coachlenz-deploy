@@ -1361,10 +1361,22 @@ class AiDetectWorker(BaseWorker):
         def is_off(p):
             return (p.get("side") or "offense") == "offense"
 
+        def _int(v):
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                return None
+
         for i, p in enumerate(plays):
             if not is_off(p) or p.get("down") is None or p.get("distance") is None:
                 continue
-            d_i, dist_i = p["down"], p["distance"]
+            # Coerce: the model can return "GOAL" for distance or "2ND" for down.
+            # A non-numeric value can't be chained arithmetically — skip it. Without
+            # this, `dist_i - dist_j` below raised TypeError and discarded the WHOLE
+            # game's detected plays at the final derivation step.
+            d_i, dist_i = _int(p["down"]), _int(p["distance"])
+            if d_i is None or dist_i is None:
+                continue
             # next offensive play in the same possession
             q = None
             for j in range(i + 1, n):
@@ -1378,8 +1390,8 @@ class AiDetectWorker(BaseWorker):
                     break
             if not q:
                 continue
-            d_j, dist_j = q.get("down"), q.get("distance")
-            if d_j == d_i + 1 and dist_j is not None:
+            d_j, dist_j = _int(q.get("down")), _int(q.get("distance"))
+            if d_j is not None and d_j == d_i + 1 and dist_j is not None:
                 gained = dist_i - dist_j  # exact: distance-to-go dropped by the gain
                 if -30 <= gained <= 40:
                     if p.get("yards_gained") is None:

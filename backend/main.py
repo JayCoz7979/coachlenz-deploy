@@ -77,9 +77,21 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 app.add_middleware(SecurityHeadersMiddleware)
 
 
+# The heavy hitters: memory/CPU-intensive jobs (film ingest, multi-pass vision
+# detection). A crash or OOM in one of these, when run inside the API process,
+# takes HTTP serving down with it. WORKERS_IN_API="light" moves them off the API
+# onto the dedicated worker service. See config.WORKERS_IN_API.
+_HEAVY_WORKERS = {AiDetectWorker, IngestWorker}
+
+
 @app.on_event("startup")
 async def start_workers():
+    mode = (settings.WORKERS_IN_API or "all").strip().lower()
+    if mode == "none":
+        return
     for WorkerClass in [AiDetectWorker, AnalysisWorker, DripWorker, IngestWorker, PackagesWorker, ReferralsWorker, ReportsWorker, SurveyWorker]:
+        if mode == "light" and WorkerClass in _HEAVY_WORKERS:
+            continue
         asyncio.create_task(WorkerClass().run_forever())
 
 app.include_router(auth.router)

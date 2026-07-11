@@ -50,6 +50,14 @@ class Settings(BaseSettings):
     # Sentry
     SENTRY_DSN: Optional[str] = None
 
+    # Which workers the API process runs in-process, alongside serving HTTP.
+    #   "all"  (default) - every worker; matches historical behavior.
+    #   "light"          - skip the OOM/CPU-heavy workers (ai_detect, ingest) so a
+    #                      crash in a big detection job can't take the API down.
+    #                      Set this once the dedicated worker service handles them.
+    #   "none"           - API serves HTTP only; all jobs run on worker services.
+    WORKERS_IN_API: str = "all"
+
     # App
     APP_URL: str = "https://coachlenz.com"
     ENVIRONMENT: str = "production"

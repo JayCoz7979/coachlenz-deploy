@@ -2,10 +2,8 @@
 const nextConfig = {
   output: 'standalone',
   images: { domains: ['*'] },
-  // TEMPORARY: a bad `as const` on a ternary (fixed) was failing the type-check
-  // and silently blocking every frontend deploy this session. This bypass
-  // guarantees the deploy ships while I confirm there are no other type errors,
-  // then it comes back out. Runtime code is unaffected by type-check errors.
-  typescript: { ignoreBuildErrors: true },
+  // The type-check gate stays ON. It is the thing that catches a broken build
+  // BEFORE it ships as a silent failure. Full `tsc --noEmit` verified clean;
+  // do not re-add ignoreBuildErrors to "unblock" a deploy — fix the type error.
 }
 module.exports = nextConfig

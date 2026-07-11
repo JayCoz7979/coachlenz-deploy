@@ -9,6 +9,7 @@ from backend.models.job import Job
 from backend.models.event import Event
 from backend.models.agent_log import AgentLog
 from backend.services.auth import get_current_user
+from backend.utils.timeutils import to_naive_utc
 
 router = APIRouter(prefix="/games", tags=["ai-detect"])
 
@@ -346,13 +347,11 @@ async def detect_status(
     # and reading them afterward triggers a forbidden async lazy-load (500).
     game_status = game.status
     job_status = job.status if job else None
-    job_locked_at = job.locked_at if job else None
     # The locked_at column comes back timezone-AWARE from Postgres, but stale_cutoff
     # below is a naive utcnow(); comparing the two throws TypeError and 500s the whole
     # status check (which the UI reads as "Could not start the film breakdown").
     # Normalize to naive UTC so the comparison is always valid.
-    if job_locked_at is not None and job_locked_at.tzinfo is not None:
-        job_locked_at = job_locked_at.replace(tzinfo=None)
+    job_locked_at = to_naive_utc(job.locked_at if job else None)
     job_payload = job.payload if job else None
     job_error = job.error_message if job else None
 

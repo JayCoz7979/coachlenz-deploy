@@ -10,6 +10,7 @@ from backend.models.base import get_db
 from backend.models.user import User
 from backend.models.comms import FilmPackage
 from backend.services.auth import get_current_user
+from backend.utils.timeutils import to_naive_utc
 
 router = APIRouter(prefix="/packages", tags=["packages"])
 
@@ -49,7 +50,7 @@ async def view_package(token: str, db: AsyncSession = Depends(get_db)):
     pkg = result.scalar_one_or_none()
     if not pkg:
         raise HTTPException(status_code=404, detail="Package not found")
-    if pkg.expires_at and datetime.utcnow() > pkg.expires_at.replace(tzinfo=None):
+    if pkg.expires_at and datetime.utcnow() > to_naive_utc(pkg.expires_at):
         raise HTTPException(status_code=410, detail="Package expired")
     await db.execute(update(FilmPackage).where(FilmPackage.id == pkg.id).values(view_count=FilmPackage.view_count + 1))
     await db.commit()

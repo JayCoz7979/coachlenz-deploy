@@ -149,6 +149,7 @@ export default function ReportPage() {
   const { user, isLoading, fetchMe } = useAuth()
   const [report, setReport] = useState<Report | null>(null)
   const [polling, setPolling] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   useEffect(() => { fetchMe() }, [])
   useEffect(() => { if (!isLoading && !user) router.push('/login') }, [isLoading, user])
@@ -157,8 +158,13 @@ export default function ReportPage() {
     if (!user || !id) return
     const load = () => api.get(`/reports/${id}`).then(r => {
       setReport(r.data)
+      setLoadError(null)
       if (!r.data.generated_at) setPolling(true)
       else setPolling(false)
+    }).catch((e: any) => {
+      // Without this, a failed load left the page spinning forever.
+      setPolling(false)
+      setLoadError(e?.response?.data?.detail ?? 'We could not load this report. Please refresh to try again.')
     })
     load()
   }, [user, id])
@@ -170,6 +176,10 @@ export default function ReportPage() {
       api.get(`/reports/${id}`).then(r => {
         setReport(r.data)
         if (r.data.generated_at) { setPolling(false) }
+      }).catch(() => {
+        // Transient poll failure: stop the loop so it can't spin silently. A
+        // still-generating report recovers on the next page load.
+        setPolling(false)
       })
     }, 5000)
     return () => clearInterval(t)
@@ -326,8 +336,20 @@ export default function ReportPage() {
     return (
       <div className="flex h-screen overflow-hidden">
         <Sidebar />
-        <main className="flex-1 flex items-center justify-center">
-          <Loader2 size={24} style={{ color: '#C9A84C', animation: 'spin 1s linear infinite' }} />
+        <main className="flex-1 flex flex-col items-center justify-center gap-4 px-6 text-center">
+          {loadError ? (
+            <>
+              <p style={{ color: '#4B5563', maxWidth: 420 }}>{loadError}</p>
+              <button
+                onClick={() => window.location.reload()}
+                style={{ background: '#1B4332', color: '#fff', padding: '8px 18px', borderRadius: 8, fontWeight: 600 }}
+              >
+                Refresh
+              </button>
+            </>
+          ) : (
+            <Loader2 size={24} style={{ color: '#C9A84C', animation: 'spin 1s linear infinite' }} />
+          )}
         </main>
       </div>
     )

@@ -27,6 +27,21 @@ class IngestWorker(BaseWorker):
             return await self._ingest_uploaded_file(game_id)
 
     async def _ingest_uploaded_file(self, game_id: str) -> dict:
+        try:
+            return await self._ingest_uploaded_file_inner(game_id)
+        except Exception as e:
+            # Mirror the URL path: a corrupt upload or ffprobe failure must not
+            # leave the game stuck mid-processing with nothing shown to the coach.
+            async with AsyncSessionLocal() as db:
+                await db.execute(
+                    update(Game).where(Game.id == game_id).values(
+                        status="error", error_message=str(e)[:480]
+                    )
+                )
+                await db.commit()
+            raise
+
+    async def _ingest_uploaded_file_inner(self, game_id: str) -> dict:
         async with AsyncSessionLocal() as db:
             result = await db.execute(select(Game).where(Game.id == game_id))
             game = result.scalar_one_or_none()
