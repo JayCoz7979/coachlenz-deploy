@@ -45,7 +45,7 @@ CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "multipass-v5-quicktest"
+CODE_VERSION = "multipass-v6-eagleeye"
 
 # Parallel ranged extraction: one long fps=0.5 pass over a 2.75h stream times out
 # silently. Instead decode many short windows concurrently, each its own ffmpeg.
@@ -77,6 +77,34 @@ PARALLEL_VISION_DEEP = 4
 # pass full=true to bypass it for a game that matters.
 MAX_SEGMENTS_PER_RUN = 150
 TEST_CLIP_SECONDS = 180   # quick-test mode analyzes only the opening 3 minutes
+
+# ── EAGLE EYE jersey reader ─────────────────────────────────────────────────
+# The bulk passes read jerseys off a 1600px wide frame where a number is a tiny
+# smudge. This dedicated pass RE-EXTRACTS each play's moment at high resolution,
+# zoom-crops the players, and reads numbers off the crop — so a number legible to
+# the human eye is legible to the model. Football numbers are 0-99.
+JERSEY_PASS_ENABLED = True
+MAX_JERSEY_PLAYS = 90          # cost guardrail: read jerseys on up to N plays/game
+JERSEY_HIRES_WIDTH = 3200      # re-extract the play moment this wide (vs 1600 bulk)
+JERSEY_FRAMES_PER_PLAY = 2     # temporal consensus: a number seen twice is trusted
+JERSEY_FRAME_STRIDE = 1.2      # seconds between the two consensus moments
+JERSEY_PARALLEL = 4            # concurrent jersey reads
+JERSEY_MIN_CONFIDENCE = 0.5    # below this we do not accept a read (never guess)
+
+JERSEY_PROMPT = """You have EAGLE-EYE vision. Below are HIGH-RESOLUTION zoom crops of ONE football play from a single fixed camera, taken a moment apart. Your ONLY job: read the JERSEY NUMBERS.
+
+Read every number you can actually make out on a chest or back, even a partial one you are confident about. High-school football numbers are 0-99. A number that appears the SAME across two moments (same player, two frames) is a confident read — prefer those.
+
+Identify the MAIN actor of the play specifically — the ball carrier, passer, or kicker (whoever has the ball) — and give their number.
+
+HARD RULES:
+- Only report a number you can genuinely see. If a jersey is turned away, blurred, or blocked, leave that player out. NEVER invent or guess a number.
+- confidence 0-1 = how clearly you can read the digits.
+- team: "offense" (has the ball) or "defense". role: "ball_carrier","passer","receiver","rusher","tackler","blocker","other".
+
+Return ONLY JSON:
+{"primary_jersey":"<main ball-handler number or null>","primary_confidence":0.0,"players":[{"jersey":"12","team":"offense","role":"ball_carrier","confidence":0.9}]}
+If you cannot read a single number: {"primary_jersey":null,"primary_confidence":0,"players":[]}"""
 
 
 def _build_team_context(scout_jersey: Optional[str], opponent_jersey: Optional[str]) -> str:
@@ -589,6 +617,15 @@ class AiDetectWorker(BaseWorker):
                     deduped = self._derive_field_position(deduped)
                 logger.info(f"[ai_detect] {len(all_plays)} raw → {len(deduped)} after dedup")
 
+                # EAGLE EYE jersey pass (football): re-read jersey numbers off high-res
+                # player crops so personnel is actually usable. Skipped on dry runs.
+                # Mutates deduped in place before persist; failures never sink the run.
+                if JERSEY_PASS_ENABLED and sport in ("football", "flag_football") and not dry_run and deduped:
+                    try:
+                        await self._read_jerseys(video_source, deduped)
+                    except Exception as e:
+                        logger.warning(f"[ai_detect] EAGLE EYE jersey pass failed: {e}")
+
                 # ── Confidence + escalation accounting (UATP) ──────────────
                 all_confs = [p.get("confidence", 0.8) for p in deduped]
                 avg_conf = round(sum(all_confs) / len(all_confs), 2) if all_confs else None
@@ -670,6 +707,8 @@ class AiDetectWorker(BaseWorker):
                             "blind_spot",
                             # Player-level tracking (all sports)
                             "players", "primary_player_jersey",
+                            # EAGLE EYE jersey provenance (high-res re-read)
+                            "jersey_source", "jersey_confidence",
                             # Derivation provenance
                             "yards_source", "field_position_derived",
                             # Special teams deep extraction
@@ -1017,6 +1056,113 @@ class AiDetectWorker(BaseWorker):
             content.append({"type": "text", "text": f"Frame {i + 1} (timestamp {int(t)}s):"})
             content.extend(self._frame_blocks(path, i + 1))
         return content
+
+    # ── EAGLE EYE jersey reader ──────────────────────────────────────────────
+    async def _extract_hires_frame(self, url: str, ts: float, out_path: str,
+                                   width: int = JERSEY_HIRES_WIDTH) -> bool:
+        """Grab ONE frame at `ts`, scaled to `width` wide (far higher than the 1600px
+        bulk pass) so a jersey number survives the crop and Vision's downscale."""
+        cmd = ["ffmpeg", "-y", "-ss", str(max(0.0, ts)), "-i", url, "-frames:v", "1",
+               "-vf", f"scale={width}:-2", "-q:v", "2", out_path]
+        proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        try:
+            await asyncio.wait_for(proc.communicate(), timeout=60)
+            return os.path.exists(out_path) and os.path.getsize(out_path) > 0
+        except asyncio.TimeoutError:
+            proc.kill(); await proc.communicate(); return False
+
+    def _player_crop_blocks(self, path: str, label: str) -> list:
+        """From a high-res frame, drop the sky + near foreground and split the player
+        band into two overlapping left/right tiles (the center is covered by both).
+        Each tile is upscaled so digits stay chunky after Vision downsamples it."""
+        blocks = []
+        try:
+            import io
+            from PIL import Image
+            img = Image.open(path).convert("RGB")
+            w, h = img.size
+            band = img.crop((0, int(h * 0.12), w, int(h * 0.90)))  # players live mid-frame
+            bw, bh = band.size
+            for tlabel, box in (("left", (0, 0, int(bw * 0.60), bh)),
+                                ("right", (int(bw * 0.40), 0, bw, bh))):
+                crop = band.crop(box)
+                crop = crop.resize((int(crop.width * 1.5), int(crop.height * 1.5)), Image.LANCZOS)
+                buf = io.BytesIO()
+                crop.save(buf, format="JPEG", quality=92)
+                data = base64.standard_b64encode(buf.getvalue()).decode()
+                blocks.append({"type": "text", "text": f"{label} - {tlabel} zoom:"})
+                blocks.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": data}})
+        except Exception as e:
+            logger.warning(f"[ai_detect] jersey crop failed for {path}: {e}")
+        return blocks
+
+    @staticmethod
+    def _legal_football_jersey(n) -> bool:
+        s = str(n or "").strip().lstrip("#")
+        return s.isdigit() and 1 <= len(s) <= 2 and 0 <= int(s) <= 99
+
+    def _apply_jersey_reads(self, play: dict, resp: dict) -> bool:
+        """Merge a high-res jersey read into a play. Upgrades the low-confidence bulk
+        read; only accepts numbers at/above the confidence floor (never a guess).
+        Returns True if the play's primary jersey was set/updated."""
+        if not resp:
+            return False
+        good = [p for p in (resp.get("players") or [])
+                if self._legal_football_jersey(p.get("jersey"))
+                and (p.get("confidence") or 0) >= JERSEY_MIN_CONFIDENCE]
+        if good:
+            play["players"] = [{"jersey": str(p["jersey"]).strip().lstrip("#"),
+                                "team": p.get("team"), "role": p.get("role"),
+                                "confidence": p.get("confidence")} for p in good]
+        pj = resp.get("primary_jersey")
+        if self._legal_football_jersey(pj) and (resp.get("primary_confidence") or 0) >= JERSEY_MIN_CONFIDENCE:
+            num = str(pj).strip().lstrip("#")
+            play["primary_player_jersey"] = num
+            play["ball_carrier_jersey"] = num
+            play["jersey_source"] = "eagle_eye"
+            play["jersey_confidence"] = resp.get("primary_confidence")
+            return True
+        return False
+
+    async def _read_jerseys_for_play(self, client, video_source: str, play: dict, tmpdir: str, idx: int) -> dict:
+        ts = play.get("time_seconds")
+        if ts is None:
+            return {}
+        content, got = [], 0
+        for fi in range(JERSEY_FRAMES_PER_PLAY):
+            fp = os.path.join(tmpdir, f"jrsy_{idx}_{fi}.jpg")
+            if await self._extract_hires_frame(video_source, float(ts) + fi * JERSEY_FRAME_STRIDE, fp):
+                content.append({"type": "text", "text": f"Moment {fi + 1}:"})
+                content.extend(self._player_crop_blocks(fp, f"Moment {fi + 1}"))
+                got += 1
+        if not got:
+            return {}
+        content.append({"type": "text", "text": JERSEY_PROMPT})
+        return await self._vision_json(client, DETECT_MODEL, content, max_tokens=1024)
+
+    async def _read_jerseys(self, video_source: str, plays: list) -> int:
+        """EAGLE EYE pass: re-read jerseys off high-res player crops for up to
+        MAX_JERSEY_PLAYS plays. Mutates plays in place. Returns count of primary reads."""
+        import tempfile
+        candidates = [p for p in plays if p.get("time_seconds") is not None][:MAX_JERSEY_PLAYS]
+        if not candidates:
+            return 0
+        logger.info(f"[ai_detect] EAGLE EYE jersey pass starting on {len(candidates)} plays")
+        client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+        sem = asyncio.Semaphore(JERSEY_PARALLEL)
+        read = 0
+        with tempfile.TemporaryDirectory() as tmp:
+            async def run(i, p):
+                nonlocal read
+                async with sem:
+                    try:
+                        if self._apply_jersey_reads(p, await self._read_jerseys_for_play(client, video_source, p, tmp, i)):
+                            read += 1
+                    except Exception as e:
+                        logger.warning(f"[ai_detect] jersey read failed play {i}: {e}")
+            await asyncio.gather(*[run(i, p) for i, p in enumerate(candidates)], return_exceptions=True)
+        logger.info(f"[ai_detect] EAGLE EYE read a primary jersey on {read}/{len(candidates)} plays")
+        return read
 
     @staticmethod
     def _parse_json(raw: str) -> dict:
