@@ -622,7 +622,7 @@ class AiDetectWorker(BaseWorker):
                 # Mutates deduped in place before persist; failures never sink the run.
                 if JERSEY_PASS_ENABLED and sport in ("football", "flag_football") and not dry_run and deduped:
                     try:
-                        await self._read_jerseys(video_source, deduped)
+                        await self._read_jerseys(video_source, deduped, game_id, org_id, job_id)
                     except Exception as e:
                         logger.warning(f"[ai_detect] EAGLE EYE jersey pass failed: {e}")
 
@@ -1083,10 +1083,13 @@ class AiDetectWorker(BaseWorker):
             w, h = img.size
             band = img.crop((0, int(h * 0.12), w, int(h * 0.90)))  # players live mid-frame
             bw, bh = band.size
-            for tlabel, box in (("left", (0, 0, int(bw * 0.60), bh)),
-                                ("right", (int(bw * 0.40), 0, bw, bh))):
+            # Three overlapping tiles (tighter zoom than two) so a small number
+            # on a wide angle occupies more pixels after Vision downsamples it.
+            for tlabel, box in (("left", (0, 0, int(bw * 0.42), bh)),
+                                ("center", (int(bw * 0.29), 0, int(bw * 0.71), bh)),
+                                ("right", (int(bw * 0.58), 0, bw, bh))):
                 crop = band.crop(box)
-                crop = crop.resize((int(crop.width * 1.5), int(crop.height * 1.5)), Image.LANCZOS)
+                crop = crop.resize((int(crop.width * 2), int(crop.height * 2)), Image.LANCZOS)
                 buf = io.BytesIO()
                 crop.save(buf, format="JPEG", quality=92)
                 data = base64.standard_b64encode(buf.getvalue()).decode()
@@ -1124,10 +1127,11 @@ class AiDetectWorker(BaseWorker):
             return True
         return False
 
-    async def _read_jerseys_for_play(self, client, video_source: str, play: dict, tmpdir: str, idx: int) -> dict:
+    async def _read_jerseys_for_play(self, client, video_source: str, play: dict, tmpdir: str, idx: int):
+        """Returns (vision_response_dict, frames_extracted_count)."""
         ts = play.get("time_seconds")
         if ts is None:
-            return {}
+            return {}, 0
         content, got = [], 0
         for fi in range(JERSEY_FRAMES_PER_PLAY):
             fp = os.path.join(tmpdir, f"jrsy_{idx}_{fi}.jpg")
@@ -1136,33 +1140,66 @@ class AiDetectWorker(BaseWorker):
                 content.extend(self._player_crop_blocks(fp, f"Moment {fi + 1}"))
                 got += 1
         if not got:
-            return {}
+            return {}, 0
         content.append({"type": "text", "text": JERSEY_PROMPT})
-        return await self._vision_json(client, DETECT_MODEL, content, max_tokens=1024)
+        return await self._vision_json(client, DETECT_MODEL, content, max_tokens=1024), got
 
-    async def _read_jerseys(self, video_source: str, plays: list) -> int:
+    async def _read_jerseys(self, video_source: str, plays: list, game_id, org_id, job_id) -> int:
         """EAGLE EYE pass: re-read jerseys off high-res player crops for up to
-        MAX_JERSEY_PLAYS plays. Mutates plays in place. Returns count of primary reads."""
+        MAX_JERSEY_PLAYS plays. Mutates plays in place. Reports a real breakdown into
+        the Film Assistant log (worker stdout is unreliable). Returns primary reads."""
         import tempfile
         candidates = [p for p in plays if p.get("time_seconds") is not None][:MAX_JERSEY_PLAYS]
         if not candidates:
             return 0
         logger.info(f"[ai_detect] EAGLE EYE jersey pass starting on {len(candidates)} plays")
+        await log_agent_action(
+            game_id=game_id, organization_id=str(org_id), job_id=job_id,
+            phase="jersey_read", level="info",
+            action=f"EAGLE EYE jersey pass: high-res re-read on {len(candidates)} plays",
+            reason="Re-extracting each play at high resolution and zooming on the players to read numbers the wide bulk frame is too small to catch.",
+        )
         client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
         sem = asyncio.Semaphore(JERSEY_PARALLEL)
-        read = 0
+        stats = {"extracted": 0, "model_saw": 0, "accepted": 0}
         with tempfile.TemporaryDirectory() as tmp:
             async def run(i, p):
-                nonlocal read
                 async with sem:
                     try:
-                        if self._apply_jersey_reads(p, await self._read_jerseys_for_play(client, video_source, p, tmp, i)):
-                            read += 1
+                        resp, got = await self._read_jerseys_for_play(client, video_source, p, tmp, i)
+                        if got:
+                            stats["extracted"] += 1
+                        seen = [pp.get("jersey") for pp in (resp.get("players") or [])]
+                        seen.append(resp.get("primary_jersey"))
+                        if any(str(n or "").strip() for n in seen):
+                            stats["model_saw"] += 1
+                        if self._apply_jersey_reads(p, resp):
+                            stats["accepted"] += 1
                     except Exception as e:
                         logger.warning(f"[ai_detect] jersey read failed play {i}: {e}")
             await asyncio.gather(*[run(i, p) for i, p in enumerate(candidates)], return_exceptions=True)
-        logger.info(f"[ai_detect] EAGLE EYE read a primary jersey on {read}/{len(candidates)} plays")
-        return read
+        n = len(candidates)
+        # Honest, IN-APP diagnosis of exactly where the pass succeeds or fails, so we
+        # never have to guess from the (unreliable) worker logs again.
+        if stats["accepted"]:
+            diag = f"Read a jersey number on {stats['accepted']} of {n} plays."
+        elif stats["extracted"] == 0:
+            diag = "Could not extract high-res frames for these plays (a video/format issue), so no jerseys were read."
+        elif stats["model_saw"] == 0:
+            diag = ("High-res crops were extracted, but not a single number was legible even zoomed in. That is a "
+                    "film-resolution limit, a wide press-box/sideline angle simply doesn't carry enough pixels on the "
+                    "jersey. A tighter end-zone or sideline angle is what unlocks jersey reading.")
+        else:
+            diag = (f"The model made out a number on {stats['model_saw']} plays, but none cleared the confidence bar, "
+                    "so nothing was accepted rather than guessed at.")
+        await log_agent_action(
+            game_id=game_id, organization_id=str(org_id), job_id=job_id,
+            phase="jersey_read", level=("success" if stats["accepted"] else "info"),
+            action=f"EAGLE EYE jersey read: {stats['accepted']}/{n} plays got a number",
+            reason=diag, detail=stats,
+        )
+        logger.info(f"[ai_detect] EAGLE EYE {stats}")
+        return stats["accepted"]
 
     @staticmethod
     def _parse_json(raw: str) -> dict:
