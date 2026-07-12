@@ -73,8 +73,9 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None),
     payload = await request.body()
     try:
         event = stripe.Webhook.construct_event(payload, stripe_signature, settings.STRIPE_WEBHOOK_SECRET)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        # Generic 400: don't echo Stripe's verification internals to the caller.
+        raise HTTPException(status_code=400, detail="Invalid webhook signature")
 
     et = event["type"]
     data = event["data"]["object"]

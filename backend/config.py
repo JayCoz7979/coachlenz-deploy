@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     RESEND_DOMAIN: str = "cosbyaisolutions.com"
     EMAIL_FROM: str = "CoachLenz <noreply@cosbyaisolutions.com>"
     ADMIN_EMAIL: str = "info@cosbyaisolutions.com"
+    # Comma-separated allowlist of platform super-admin emails. This is the ONLY
+    # thing (besides an org's admin_level) that unlocks the /admin/* surface, which
+    # can edit ANY org's plan/entitlements. Default empty = no email is admin until
+    # set. e.g. ADMIN_EMAILS="aiwithjaycoz@gmail.com".
+    ADMIN_EMAILS: str = ""
     # Where replies to the founder welcome email land. Empty -> jay@<RESEND_DOMAIN>.
     # Set this env to a monitored inbox (e.g. a Gmail) so "just reply" actually reaches Jay.
     FOUNDER_REPLY_TO: str = ""

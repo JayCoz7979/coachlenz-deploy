@@ -15,7 +15,10 @@ async def local_upload(key: str, request: Request):
     if not _use_local():
         raise HTTPException(status_code=404)
     data = await request.body()
-    save_local_file(key, data)
+    try:
+        save_local_file(key, data)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid file key")
     return {"key": key, "size": len(data)}
 
 
@@ -23,7 +26,10 @@ async def local_upload(key: str, request: Request):
 async def local_serve(key: str):
     if not _use_local():
         raise HTTPException(status_code=404)
-    data = read_local_file(key)
+    try:
+        data = read_local_file(key)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid file key")
     if data is None:
         raise HTTPException(status_code=404, detail="File not found")
     mime, _ = mimetypes.guess_type(key)

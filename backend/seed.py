@@ -32,11 +32,19 @@ async def seed():
         db.add(org)
         await db.flush()
 
+        # Fail closed: never seed the super-admin with the committed placeholder
+        # password. This account has admin_level="super" (full /admin/* access).
+        admin_pw = os.environ.get("ADMIN_PASSWORD", "")
+        if not admin_pw or admin_pw == "ChangeMeNow!" or len(admin_pw) < 12:
+            raise SystemExit(
+                "Refusing to seed the super-admin: set a strong ADMIN_PASSWORD env "
+                "(>= 12 chars, not the placeholder) before running the seed."
+            )
         user = User(
             organization_id=org.id,
             name="Jay Cosby",
             email="info@cosbyaisolutions.com",
-            hashed_password=hash_password(os.environ.get("ADMIN_PASSWORD", "ChangeMeNow!")),
+            hashed_password=hash_password(admin_pw),
             role="owner",
             email_verified=True,
         )

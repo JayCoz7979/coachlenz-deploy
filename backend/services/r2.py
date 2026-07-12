@@ -1,11 +1,34 @@
 import boto3
 import os
+import re
 from datetime import datetime, timedelta
 from botocore.config import Config
 from backend.config import settings
 
 LOCAL_STORAGE_DIR = "/tmp/coachlenz-files"
 _r2_available = None
+
+_SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def safe_object_name(filename: str) -> str:
+    """Reduce a user-supplied filename to a safe object-key segment: strip any
+    path components (basename), allow only [A-Za-z0-9._-], and cap length. Stops
+    key injection / path traversal via the filename when building 'games/<org>/.../<name>'."""
+    base = os.path.basename((filename or "").replace("\\", "/"))
+    base = _SAFE_NAME_RE.sub("_", base).lstrip(".") or "file"
+    return base[:180]
+
+
+def _safe_local_path(key: str) -> str:
+    """Resolve `key` under LOCAL_STORAGE_DIR and refuse anything that escapes it.
+    Without this, a key like '../../etc/passwd' on the unauthenticated /files/{key:path}
+    endpoints is an arbitrary host-file read/write in local (no-R2) mode."""
+    base = os.path.realpath(LOCAL_STORAGE_DIR)
+    path = os.path.realpath(os.path.join(base, key.replace("/", os.sep)))
+    if path != base and not path.startswith(base + os.sep):
+        raise ValueError("Invalid file key")
+    return path
 
 
 def _use_local() -> bool:
@@ -73,7 +96,7 @@ def generate_presigned_download_url(key: str, expires_in: int = 604800) -> str:
 
 def delete_object(key: str):
     if _use_local():
-        path = os.path.join(LOCAL_STORAGE_DIR, key.replace("/", os.sep))
+        path = _safe_local_path(key)
         if os.path.exists(path):
             os.remove(path)
         return
@@ -86,14 +109,14 @@ def get_download_expiry() -> datetime:
 
 
 def save_local_file(key: str, data: bytes):
-    path = os.path.join(LOCAL_STORAGE_DIR, key.replace("/", os.sep))
+    path = _safe_local_path(key)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "wb") as f:
         f.write(data)
 
 
 def read_local_file(key: str) -> bytes | None:
-    path = os.path.join(LOCAL_STORAGE_DIR, key.replace("/", os.sep))
+    path = _safe_local_path(key)
     if not os.path.exists(path):
         return None
     with open(path, "rb") as f:

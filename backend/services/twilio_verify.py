@@ -4,10 +4,13 @@ itself, so nothing is persisted locally. Degrades with a clear 503 when Twilio i
 not configured (so onboarding surfaces "phone verification isn't set up" instead
 of a stack trace).
 """
+import logging
 import re
 from fastapi import HTTPException
 
 from backend.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 def phone_verification_configured() -> bool:
@@ -47,7 +50,10 @@ def send_sms_code(phone: str):
             to=normalize_phone(phone), channel="sms"
         )
     except Exception as e:  # invalid number, unverified trial number, etc.
-        raise HTTPException(status_code=400, detail=f"Couldn't send the code to that number: {str(e)[:160]}")
+        # Log the upstream detail server-side; return a generic message so Twilio
+        # account/config internals aren't disclosed to the caller.
+        logger.warning("Twilio send failed: %s", str(e)[:300])
+        raise HTTPException(status_code=400, detail="We couldn't text a code to that number. Check it and try again.")
 
 
 def check_sms_code(phone: str, code: str) -> bool:
@@ -59,5 +65,6 @@ def check_sms_code(phone: str, code: str) -> bool:
             to=normalize_phone(phone), code=code
         )
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Couldn't verify that code: {str(e)[:160]}")
+        logger.warning("Twilio verify failed: %s", str(e)[:300])
+        raise HTTPException(status_code=400, detail="We couldn't verify that code. Request a new one and try again.")
     return getattr(result, "status", None) == "approved"

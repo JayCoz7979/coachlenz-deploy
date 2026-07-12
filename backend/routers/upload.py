@@ -11,7 +11,7 @@ from backend.models.organization import Organization
 from backend.models.game import Game
 from backend.models.job import Job
 from backend.services.auth import get_current_user, get_current_org
-from backend.services.r2 import generate_presigned_upload_url, upload_fileobj
+from backend.services.r2 import generate_presigned_upload_url, upload_fileobj, safe_object_name
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
@@ -31,7 +31,7 @@ async def presign_upload(body: UploadRequest, user: User = Depends(get_current_u
     game = result.scalar_one_or_none()
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
-    key = game.r2_key or f"games/{org.id}/{game.id}/{body.file_name}"
+    key = game.r2_key or f"games/{org.id}/{game.id}/{safe_object_name(body.file_name)}"
     presigned = generate_presigned_upload_url(key, body.content_type)
     await db.execute(update(Game).where(Game.id == body.game_id).values(r2_key=key, file_size_bytes=body.file_size_bytes))
     await db.commit()
@@ -52,7 +52,7 @@ async def upload_file_proxy(
     game = result.scalar_one_or_none()
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
-    key = game.r2_key or f"games/{org.id}/{game.id}/{file.filename}"
+    key = game.r2_key or f"games/{org.id}/{game.id}/{safe_object_name(file.filename)}"
     try:
         # boto3 upload_fileobj is blocking — run it off the event loop.
         await run_in_threadpool(upload_fileobj, key, file.file, file.content_type or "video/mp4")

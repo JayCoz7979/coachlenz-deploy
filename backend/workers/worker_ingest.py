@@ -90,6 +90,11 @@ class IngestWorker(BaseWorker):
     async def _ingest_from_url_inner(self, game_id: str, source_url: str, source_type: str) -> dict:
         logger.info(f"[ingest] downloading {source_type} for game {game_id}")
 
+        # SSRF guard, re-checked at the sink (defense in depth vs. a tampered job
+        # payload or a future caller that skipped the API-boundary check).
+        from backend.utils.url_guard import validate_public_http_url
+        validate_public_http_url(source_url)
+
         async with AsyncSessionLocal() as db:
             await db.execute(update(Game).where(Game.id == game_id).values(status="downloading"))
             await db.commit()
@@ -201,7 +206,9 @@ class IngestWorker(BaseWorker):
             proc = None
             last_error = "unknown error"
             for extra in client_attempts:
-                cmd = base_cmd + extra + [download_target]
+                # `--` terminates option parsing so a URL beginning with "-" can't
+                # be misread by yt-dlp as a flag (argument injection).
+                cmd = base_cmd + extra + ["--", download_target]
                 try:
                     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
                 except subprocess.TimeoutExpired:
