@@ -12,6 +12,7 @@ from backend.models.job import Job
 from backend.services.auth import get_current_user, get_current_org
 from backend.services.trial import can_upload_game, is_trial_active
 from backend.services.sports import assert_sport_allowed
+from backend.utils.url_guard import validate_public_http_url
 
 router = APIRouter(prefix="/ingest", tags=["ingest"])
 
@@ -73,6 +74,13 @@ async def ingest_from_url(
     # Sport lock: a client can only analyze film for the sport(s) their plan
     # includes (chosen at onboarding). Warns instead of silently mis-analyzing.
     assert_sport_allowed(org, body.sport)
+
+    # SSRF guard: the server will fetch this URL with yt-dlp/ffprobe. Reject
+    # non-http(s) schemes and any private/internal/metadata destination.
+    try:
+        validate_public_http_url(body.url)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     source_type = detect_source_type(body.url)
 

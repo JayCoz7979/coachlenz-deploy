@@ -12,6 +12,7 @@ from backend.services.trial import TRIAL_DAYS
 from backend.services.email_service import send_welcome_email, send_password_reset_email, send_email_verification_code
 from backend.services import twilio_verify
 from backend.utils.timeutils import to_naive_utc
+from backend.ratelimit import limiter
 import uuid
 import secrets
 import hashlib
@@ -21,6 +22,11 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 # Where the reset link points (the app the coach signs into).
 APP_URL = "https://app.coachlenz.com"
+
+
+# A real bcrypt hash compared against on the login "user not found" path so that
+# path costs the same as a wrong-password path (defeats timing-based enumeration).
+_DUMMY_BCRYPT_HASH = hash_password("timing-equalizer-not-a-real-password")
 
 
 def _sha256(s: str) -> str:
@@ -46,6 +52,7 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 @router.post("/register")
+@limiter.limit("5/minute")
 async def register(body: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)):
     risk = get_risk_score(body.email)
     if risk >= 80:
@@ -102,10 +109,15 @@ async def register(body: RegisterRequest, request: Request, db: AsyncSession = D
     return {"access_token": access, "refresh_token": refresh, "token_type": "bearer"}
 
 @router.post("/login")
-async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("10/minute")
+async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == body.email, User.is_active == True))
     user = result.scalar_one_or_none()
     if not user or not verify_password(body.password, user.hashed_password):
+        # Constant-ish time: run a bcrypt compare even when the user is missing so
+        # the response time can't be used to enumerate valid emails.
+        if not user:
+            verify_password(body.password, _DUMMY_BCRYPT_HASH)
         raise HTTPException(status_code=401, detail="Invalid credentials")
     await db.execute(update(User).where(User.id == user.id).values(last_login_at=datetime.utcnow()))
     await db.commit()
@@ -142,7 +154,8 @@ class ChangePasswordRequest(BaseModel):
 
 
 @router.post("/forgot-password")
-async def forgot_password(body: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("5/minute")
+async def forgot_password(request: Request, body: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
     """Email a single-use, 1-hour reset link. Always returns 200 with the same
     message whether or not the email exists (no account enumeration)."""
     result = await db.execute(select(User).where(User.email == body.email, User.is_active == True))
@@ -160,7 +173,8 @@ async def forgot_password(body: ForgotPasswordRequest, db: AsyncSession = Depend
 
 
 @router.post("/reset-password")
-async def reset_password(body: ResetPasswordRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("10/minute")
+async def reset_password(request: Request, body: ResetPasswordRequest, db: AsyncSession = Depends(get_db)):
     """Consume a reset token: verify it matches an unexpired hash, set the new
     password, and clear the token (single use)."""
     _validate_password(body.new_password)
@@ -210,7 +224,8 @@ class VerifyPhoneRequest(BaseModel):
 
 
 @router.post("/send-email-code")
-async def send_email_code(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+@limiter.limit("5/minute")
+async def send_email_code(request: Request, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     if user.email_verified:
         return {"ok": True, "already_verified": True}
     # Cooldown: each send sets the expiry to now+15min. If it's still >14min out, a
@@ -233,7 +248,8 @@ async def send_email_code(user: User = Depends(get_current_user), db: AsyncSessi
 
 
 @router.post("/verify-email")
-async def verify_email(body: VerifyEmailRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+@limiter.limit("10/minute")
+async def verify_email(request: Request, body: VerifyEmailRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     if user.email_verified:
         return {"ok": True, "email_verified": True}
     code = (body.code or "").strip()
@@ -253,7 +269,8 @@ async def verify_email(body: VerifyEmailRequest, user: User = Depends(get_curren
 
 
 @router.post("/send-phone-code")
-async def send_phone_code(body: SendPhoneRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+@limiter.limit("5/minute")
+async def send_phone_code(request: Request, body: SendPhoneRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     phone = twilio_verify.normalize_phone(body.phone)
     if len(phone) < 11:
         raise HTTPException(status_code=422, detail="Enter a valid phone number.")
@@ -264,7 +281,8 @@ async def send_phone_code(body: SendPhoneRequest, user: User = Depends(get_curre
 
 
 @router.post("/verify-phone")
-async def verify_phone(body: VerifyPhoneRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+@limiter.limit("10/minute")
+async def verify_phone(request: Request, body: VerifyPhoneRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     if not user.phone:
         raise HTTPException(status_code=400, detail="Add your phone number first.")
     if not twilio_verify.check_sms_code(user.phone, (body.code or "").strip()):

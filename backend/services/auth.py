@@ -75,6 +75,35 @@ def require_role(*roles):
     return checker
 
 
+# ── Platform super-admin ─────────────────────────────────────────────────────
+# CRITICAL: `role="owner"` is a PER-ORG role — every customer is the owner of
+# their own org. It must NEVER gate the /admin/* surface (which can edit any org's
+# plan and entitlements). Platform admin = an allowlisted email OR an org whose
+# admin_level is explicitly a platform tier. Default-deny.
+_PLATFORM_ADMIN_LEVELS = {"platform", "super"}
+
+
+def _admin_email_allowlist() -> set:
+    return {e.strip().lower() for e in (settings.ADMIN_EMAILS or "").split(",") if e.strip()}
+
+
+def is_platform_admin(user: User, org: Organization) -> bool:
+    if user.email and user.email.strip().lower() in _admin_email_allowlist():
+        return True
+    return (org.admin_level or "").strip().lower() in _PLATFORM_ADMIN_LEVELS
+
+
+async def require_admin(
+    user: User = Depends(get_current_user),
+    org: Organization = Depends(get_current_org),
+) -> User:
+    """Gate for /admin/* endpoints. Returns 404 (not 403) so the admin surface
+    isn't advertised to a probing non-admin."""
+    if not is_platform_admin(user, org):
+        raise HTTPException(status_code=404, detail="Not found")
+    return user
+
+
 # ── Scouting RBAC ────────────────────────────────────────────────────────────
 # Role definitions live in scout_roles (no framework import) so they are testable
 # without the web stack; re-exported here for callers that import from auth.
