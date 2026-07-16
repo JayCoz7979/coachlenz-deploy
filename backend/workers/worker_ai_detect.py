@@ -458,6 +458,7 @@ class AiDetectWorker(BaseWorker):
                 raise ValueError(f"Game not ready for detection (status={game.status})")
             sport = (game.sport or "football").lower()
             org_id = game.organization_id
+            self._film_height = game.film_height  # gates the EAGLE EYE jersey pass
             # Team attribution context for the vision prompts (which jerseys = scouted team).
             self._team_context = _build_team_context(game.scout_jersey, game.opponent_jersey)
 
@@ -1165,6 +1166,25 @@ class AiDetectWorker(BaseWorker):
         the Film Assistant log (worker stdout is unreliable). Returns primary reads."""
         import tempfile
         import anthropic  # imported locally elsewhere; needs its own import in this method
+        # Low-res guard: EAGLE EYE re-extracts at high width, but you cannot upscale
+        # detail out of sub-HD film — a 360p jersey number is ~15px of blur. Skip the
+        # (expensive) pass and tell the coach to re-ingest in HD instead of burning
+        # API calls reading numbers that physically aren't there.
+        fh = getattr(self, "_film_height", None)
+        if fh and fh < 720:
+            logger.info(f"[ai_detect] EAGLE EYE skipped: film is {fh}p (<720p). Jersey numbers "
+                        f"are unreadable at this resolution — re-ingest in HD.")
+            try:
+                await log_agent_action(
+                    action="eagle_eye_skipped_lowres", game_id=str(game_id),
+                    organization_id=str(org_id), job_id=job_id, phase="detect",
+                    reason=(f"Film is {fh}p. Jersey numbers render too small to read; skipping the "
+                            f"high-res pass. Re-ingest this game in 720p+ for player-level tracking."),
+                    level="warning", detail={"film_height": fh},
+                )
+            except Exception:
+                pass
+            return 0
         candidates = [p for p in plays if p.get("time_seconds") is not None][:MAX_JERSEY_PLAYS]
         if not candidates:
             return 0
