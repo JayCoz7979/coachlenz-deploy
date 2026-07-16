@@ -186,7 +186,16 @@ async def capture_hudl_stream(
             )
             await context.add_init_script(STEALTH_JS)
 
-            login_cookies = os.environ.get(cookies_env, "").strip()
+            # Cookie precedence: per-org connected-account cookies (most reliable and
+            # recommended for HD private film) > global env cookies. Applied to the
+            # browser context so the authenticated session yields the HD manifest.
+            login_cookies = ((credentials or {}).get("cookies") or "").strip()
+            cookie_source = "connected-account" if login_cookies else ""
+            if not login_cookies:
+                login_cookies = os.environ.get(cookies_env, "").strip()
+                cookie_source = cookie_source or (cookies_env if login_cookies else "")
+            if login_cookies:
+                logger.info(f"[capture] applying {cookie_source} cookies for {provider} auth")
             if login_cookies:
                 pw_cookies = [
                     {"name": n, "value": v, "domain": d.lstrip("."), "path": "/"}

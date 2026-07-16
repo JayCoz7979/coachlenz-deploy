@@ -20,6 +20,8 @@ export default function ConnectionsPage() {
   const [connections, setConnections] = useState<Connection[]>([])
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [cookies, setCookies] = useState('')
+  const [mode, setMode] = useState<'cookies' | 'login'>('cookies')
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
 
@@ -35,12 +37,15 @@ export default function ConnectionsPage() {
     e.preventDefault()
     setSaving(true); setMsg(null)
     try {
-      await api.post('/connections', { provider: 'hudl', email: email.trim(), password })
-      setEmail(''); setPassword('')
-      setMsg({ kind: 'ok', text: 'Hudl account connected. You can now import private Hudl film directly.' })
+      const payload = mode === 'cookies'
+        ? { provider: 'hudl', cookies: cookies.trim() }
+        : { provider: 'hudl', email: email.trim(), password }
+      await api.post('/connections', payload)
+      setEmail(''); setPassword(''); setCookies('')
+      setMsg({ kind: 'ok', text: 'Hudl connected. Private film now imports in HD — jersey numbers become readable.' })
       load()
     } catch (err: any) {
-      setMsg({ kind: 'err', text: err?.response?.data?.detail || 'Could not connect. Check your login and try again.' })
+      setMsg({ kind: 'err', text: err?.response?.data?.detail || 'Could not connect. Check your details and try again.' })
     } finally {
       setSaving(false)
     }
@@ -94,15 +99,34 @@ export default function ConnectionsPage() {
               </div>
             ) : (
               <form onSubmit={handleConnect} className="space-y-3">
-                <div>
-                  <label className="label">Hudl email</label>
-                  <input className="input" type="email" value={email} onChange={e => setEmail(e.target.value)} required placeholder="coach@school.org" />
+                <div style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
+                  <button type="button" onClick={() => setMode('cookies')} className={mode === 'cookies' ? 'btn-primary' : 'btn-secondary'} style={{ flex: 1, fontSize: 12 }}>Paste cookies (HD)</button>
+                  <button type="button" onClick={() => setMode('login')} className={mode === 'login' ? 'btn-primary' : 'btn-secondary'} style={{ flex: 1, fontSize: 12 }}>Email &amp; password</button>
                 </div>
-                <div>
-                  <label className="label">Hudl password</label>
-                  <input className="input" type="password" value={password} onChange={e => setPassword(e.target.value)} required placeholder="••••••••" />
-                </div>
-                <button type="submit" disabled={saving || !email || !password} className="btn-primary w-full flex items-center justify-center gap-2">
+                {mode === 'cookies' ? (
+                  <div>
+                    <label className="label">Hudl cookies (Netscape format)</label>
+                    <textarea className="input" style={{ minHeight: 120, fontFamily: 'monospace', fontSize: 11 }}
+                      value={cookies} onChange={e => setCookies(e.target.value)}
+                      placeholder={'# Netscape HTTP Cookie File\n.hudl.com\tTRUE\t/\tTRUE\t...\tsession\t...'} />
+                    <div className="text-xs text-gray-500 mt-1">
+                      Log into Hudl in your browser, export cookies with a "cookies.txt" extension, and paste here. Most reliable path and required to pull HD private film.
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div>
+                      <label className="label">Hudl email</label>
+                      <input className="input" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="coach@school.org" />
+                    </div>
+                    <div>
+                      <label className="label">Hudl password</label>
+                      <input className="input" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" />
+                    </div>
+                    <div className="text-xs text-gray-500">Automated login can fail if Hudl requires two-factor. If it does, use "Paste cookies" instead.</div>
+                  </>
+                )}
+                <button type="submit" disabled={saving || (mode === 'cookies' ? !cookies.trim() : (!email || !password))} className="btn-primary w-full flex items-center justify-center gap-2">
                   {saving ? <><Loader2 size={15} style={{ animation: 'spin 1s linear infinite' }} /> Connecting…</> : 'Connect Hudl'}
                 </button>
               </form>
