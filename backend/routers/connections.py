@@ -14,7 +14,7 @@ from backend.services.encryption import encrypt_json
 
 router = APIRouter(prefix="/connections", tags=["connections"])
 
-SUPPORTED_PROVIDERS = {"hudl", "nfhs"}
+SUPPORTED_PROVIDERS = {"hudl", "nfhs", "youtube"}
 
 
 class ConnectRequest(BaseModel):

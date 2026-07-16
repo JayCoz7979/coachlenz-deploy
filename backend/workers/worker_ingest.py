@@ -109,14 +109,21 @@ class IngestWorker(BaseWorker):
         with tempfile.TemporaryDirectory() as tmpdir:
             out_template = os.path.join(tmpdir, "video.%(ext)s")
 
-            # Optional cookies file (Netscape format) supplied via env to defeat
-            # YouTube datacenter-IP gating. Written once per download to tmp.
+            # Cookies (Netscape format) authenticate the download so YouTube serves
+            # HD (720p/1080p) instead of throttling a datacenter IP to 360p — the
+            # difference between readable and unreadable jersey numbers. Precedence:
+            # the org's connected YouTube account (per-org, in-app) > global env.
             cookies_path = None
-            cookies_content = os.environ.get("YOUTUBE_COOKIES", "").strip()
+            cookies_content = ""
+            if source_type == "youtube":
+                cookies_content = await self._org_cookies(game_id, "youtube")
+            if not cookies_content:
+                cookies_content = os.environ.get("YOUTUBE_COOKIES", "").strip()
             if cookies_content:
                 cookies_path = os.path.join(tmpdir, "cookies.txt")
                 with open(cookies_path, "w", encoding="utf-8") as cf:
                     cf.write(cookies_content)
+                logger.info(f"[ingest] game {game_id}: applying {source_type} cookies for HD auth")
 
             proxy = os.environ.get("YTDLP_PROXY", "").strip()
 
@@ -303,6 +310,29 @@ class IngestWorker(BaseWorker):
             db.add(job)
             await db.commit()
         logger.info(f"[ingest] auto-detect job queued for game {game_id}")
+
+    async def _org_cookies(self, game_id: str, provider: str) -> str:
+        """Return the game's org connected-account cookies for a provider (empty if
+        none). Lets a coach paste YouTube/Hudl cookies in-app instead of a global env."""
+        try:
+            from backend.models.source_connection import SourceConnection
+            from backend.services.encryption import decrypt_json
+            async with AsyncSessionLocal() as db:
+                gres = await db.execute(select(Game).where(Game.id == game_id))
+                g = gres.scalar_one_or_none()
+                if not g:
+                    return ""
+                cres = await db.execute(select(SourceConnection).where(
+                    SourceConnection.organization_id == g.organization_id,
+                    SourceConnection.provider == provider,
+                ))
+                conn = cres.scalar_one_or_none()
+                if conn:
+                    creds = decrypt_json(conn.encrypted_credentials)
+                    return (creds.get("cookies") or "").strip()
+        except Exception as e:
+            logger.warning(f"[ingest] could not load {provider} connection: {e}")
+        return ""
 
     HD_MIN_HEIGHT = 720  # below this, jersey-number reading is unreliable
 

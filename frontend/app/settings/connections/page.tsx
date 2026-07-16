@@ -22,6 +22,9 @@ export default function ConnectionsPage() {
   const [password, setPassword] = useState('')
   const [cookies, setCookies] = useState('')
   const [mode, setMode] = useState<'cookies' | 'login'>('cookies')
+  const [ytCookies, setYtCookies] = useState('')
+  const [ytSaving, setYtSaving] = useState(false)
+  const [ytMsg, setYtMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
 
@@ -32,6 +35,25 @@ export default function ConnectionsPage() {
   const load = () => api.get('/connections').then(r => setConnections(r.data)).catch(() => {})
 
   const hudl = connections.find(c => c.provider === 'hudl')
+  const youtube = connections.find(c => c.provider === 'youtube')
+
+  const handleConnectYoutube = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setYtSaving(true); setYtMsg(null)
+    try {
+      await api.post('/connections', { provider: 'youtube', cookies: ytCookies.trim() })
+      setYtCookies('')
+      setYtMsg({ kind: 'ok', text: 'YouTube connected. YouTube imports now pull HD instead of 360p.' })
+      load()
+    } catch (err: any) {
+      setYtMsg({ kind: 'err', text: err?.response?.data?.detail || 'Could not connect. Check the cookies and try again.' })
+    } finally {
+      setYtSaving(false)
+    }
+  }
+  const handleDisconnectYoutube = async () => {
+    await api.delete('/connections/youtube'); setYtMsg(null); load()
+  }
 
   const handleConnect = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -135,6 +157,49 @@ export default function ConnectionsPage() {
             {msg && (
               <div className={`mt-3 text-sm rounded-lg p-3 ${msg.kind === 'ok' ? 'bg-green-500/10 text-green-400' : 'bg-red-400/10 text-red-400'}`}>
                 {msg.text}
+              </div>
+            )}
+          </div>
+
+          {/* YouTube card */}
+          <div className="card mt-4">
+            <div className="flex items-center gap-3 mb-4">
+              <div style={{ width: 38, height: 38, borderRadius: 8, background: 'rgba(201,168,76,0.12)', border: '1px solid rgba(201,168,76,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Link2 size={18} style={{ color: '#C9A84C' }} />
+              </div>
+              <div>
+                <div className="font-semibold">YouTube</div>
+                <div className="text-xs text-gray-400">Pull YouTube film in HD (YouTube throttles unauthenticated server downloads to 360p)</div>
+              </div>
+              {youtube && (
+                <span style={{ marginLeft: 'auto', fontSize: 11, color: '#2d8c40', display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <CheckCircle size={12} /> Connected
+                </span>
+              )}
+            </div>
+            {youtube ? (
+              <button onClick={handleDisconnectYoutube} className="btn-secondary flex items-center gap-2 text-sm">
+                <Trash2 size={14} /> Disconnect
+              </button>
+            ) : (
+              <form onSubmit={handleConnectYoutube} className="space-y-3">
+                <div>
+                  <label className="label">YouTube cookies (Netscape format)</label>
+                  <textarea className="input" style={{ minHeight: 110, fontFamily: 'monospace', fontSize: 11 }}
+                    value={ytCookies} onChange={e => setYtCookies(e.target.value)}
+                    placeholder={'# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t...'} />
+                  <div className="text-xs text-gray-500 mt-1">
+                    Log into YouTube in your browser, export cookies with a "cookies.txt" extension, and paste here. Required for HD YouTube imports on our servers.
+                  </div>
+                </div>
+                <button type="submit" disabled={ytSaving || !ytCookies.trim()} className="btn-primary w-full flex items-center justify-center gap-2">
+                  {ytSaving ? <><Loader2 size={15} style={{ animation: 'spin 1s linear infinite' }} /> Connecting…</> : 'Connect YouTube'}
+                </button>
+              </form>
+            )}
+            {ytMsg && (
+              <div className={`mt-3 text-sm rounded-lg p-3 ${ytMsg.kind === 'ok' ? 'bg-green-500/10 text-green-400' : 'bg-red-400/10 text-red-400'}`}>
+                {ytMsg.text}
               </div>
             )}
           </div>
