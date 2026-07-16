@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from pydantic import BaseModel
+from typing import Optional
 from datetime import datetime
 
 from backend.models.base import get_db
@@ -18,8 +19,12 @@ SUPPORTED_PROVIDERS = {"hudl", "nfhs"}
 
 class ConnectRequest(BaseModel):
     provider: str
-    email: str
-    password: str
+    email: Optional[str] = None
+    password: Optional[str] = None
+    # Netscape-format cookie text exported from a logged-in browser. More reliable
+    # than headless login (Hudl's bot-detection often blocks automated sign-in) and
+    # the recommended way to pull HD private film. Stored encrypted, per-org.
+    cookies: Optional[str] = None
 
 
 def _public(c: SourceConnection) -> dict:
@@ -54,10 +59,26 @@ async def connect_source(
     provider = body.provider.lower().strip()
     if provider not in SUPPORTED_PROVIDERS:
         raise HTTPException(status_code=400, detail=f"Unsupported provider: {provider}")
-    if not body.email.strip() or not body.password:
-        raise HTTPException(status_code=400, detail="Email and password are required")
 
-    encrypted = encrypt_json({"email": body.email.strip(), "password": body.password})
+    email = (body.email or "").strip()
+    has_login = bool(email and body.password)
+    cookies = (body.cookies or "").strip()
+    has_cookies = bool(cookies)
+    if not (has_login or has_cookies):
+        raise HTTPException(
+            status_code=400,
+            detail="Provide your login (email + password) or exported cookies. "
+                   "Cookies are recommended for private HD film.",
+        )
+
+    creds = {}
+    if has_login:
+        creds["email"] = email
+        creds["password"] = body.password
+    if has_cookies:
+        creds["cookies"] = cookies
+    encrypted = encrypt_json(creds)
+    account_email = email or "cookies"
 
     existing = await db.execute(
         select(SourceConnection).where(
@@ -67,7 +88,7 @@ async def connect_source(
     )
     conn = existing.scalar_one_or_none()
     if conn:
-        conn.account_email = body.email.strip()
+        conn.account_email = account_email
         conn.encrypted_credentials = encrypted
         conn.status = "connected"
         conn.last_error = None
@@ -76,7 +97,7 @@ async def connect_source(
         conn = SourceConnection(
             organization_id=org.id,
             provider=provider,
-            account_email=body.email.strip(),
+            account_email=account_email,
             encrypted_credentials=encrypted,
             status="connected",
         )
