@@ -23,6 +23,8 @@ class Game(Base):
     r2_expires_at = Column(DateTime(timezone=True))
     duration_seconds = Column(Integer)
     file_size_bytes = Column(BigInteger)
+    film_width = Column(Integer)       # ingested video resolution (see migration 021);
+    film_height = Column(Integer)      # < 720 height = low-res, jersey reading is limited
     status = Column(String, nullable=False, default="pending")
     error_message = Column(String)
     is_trial_game = Column(Boolean, nullable=False, default=False)

@@ -51,13 +51,16 @@ class IngestWorker(BaseWorker):
                 raise ValueError("Game has no R2 key — upload may not be complete yet")
 
         download_url = generate_presigned_download_url(game.r2_key, expires_in=3600)
-        duration = self._probe_duration(download_url)
+        duration, width, height = self._probe(download_url)
+        self._log_resolution(game_id, "upload", width, height)
 
         async with AsyncSessionLocal() as db:
             await db.execute(
                 update(Game).where(Game.id == game_id).values(
                     status="ready",
                     duration_seconds=int(duration),
+                    film_width=width,
+                    film_height=height,
                 )
             )
             # Auto-chain detection so an uploaded game analyzes itself end-to-end
@@ -120,9 +123,13 @@ class IngestWorker(BaseWorker):
             base_cmd = [
                 "yt-dlp",
                 "--no-playlist",
-                # Permissive selector: prefer mp4 but fall back to any best video+audio,
-                # then any single best stream. Avoids "Requested format is not available".
-                "--format", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best[ext=mp4]/best",
+                # HD-first: `-S res,fps` sorts candidates by resolution DESC so we take the
+                # highest available (1080p when reachable) instead of the 360p combined
+                # stream. The permissive `--format` still guarantees a download when only
+                # low-res is reachable; the low-res flag then tells the coach the film is
+                # too small for jersey reads (which is what starves EAGLE EYE).
+                "--format", "bv*+ba/b",
+                "-S", "res,fps,vcodec:h264,ext:mp4:m4a",
                 "--merge-output-format", "mp4",
                 "--output", out_template,
                 "--no-warnings",
@@ -234,7 +241,8 @@ class IngestWorker(BaseWorker):
             ext = os.path.splitext(video_file)[1] or ".mp4"
             r2_key = f"games/{game_id}/film{ext}"
 
-            duration = self._probe_duration(video_file)
+            duration, width, height = self._probe(video_file)
+            self._log_resolution(game_id, source_type, width, height)
 
             logger.info(f"[ingest] uploading {file_size} bytes for game {game_id}")
             async with AsyncSessionLocal() as db:
@@ -265,6 +273,8 @@ class IngestWorker(BaseWorker):
                     r2_key=r2_key,
                     file_size_bytes=file_size,
                     duration_seconds=int(duration),
+                    film_width=width,
+                    film_height=height,
                 )
             )
             await db.commit()
@@ -294,17 +304,58 @@ class IngestWorker(BaseWorker):
             await db.commit()
         logger.info(f"[ingest] auto-detect job queued for game {game_id}")
 
+    HD_MIN_HEIGHT = 720  # below this, jersey-number reading is unreliable
+
     def _probe_duration(self, path_or_url: str) -> float:
+        return self._probe(path_or_url)[0]
+
+    def _probe(self, path_or_url: str) -> tuple:
+        """Return (duration_seconds, width, height). Resolution drives the low-res
+        flag: jersey reading is gated by pixels (a 360p number renders ~15px), so we
+        record and surface it — the missing upstream piece EAGLE EYE can't fix."""
         try:
             import json
             probe = subprocess.run(
-                ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", path_or_url],
-                capture_output=True, text=True, timeout=60,
+                ["ffprobe", "-v", "quiet", "-print_format", "json",
+                 "-show_format", "-show_streams", path_or_url],
+                capture_output=True, text=True, timeout=90,
             )
             info = json.loads(probe.stdout)
-            return float(info.get("format", {}).get("duration", 0))
+            duration = float(info.get("format", {}).get("duration", 0) or 0)
+            w = h = None
+            for s in info.get("streams", []):
+                if s.get("codec_type") == "video" and s.get("width"):
+                    w, h = int(s["width"]), int(s["height"])
+                    break
+            return duration, w, h
         except Exception:
-            return 0.0
+            return 0.0, None, None
+
+    def _log_resolution(self, game_id: str, source_type: str, width, height) -> None:
+        """UATP transparency: record the ingested resolution and flag low-res film
+        so a coach knows jersey reading is limited before trusting the numbers."""
+        if not height:
+            logger.warning(f"[ingest] game {game_id}: could not read film resolution")
+            return
+        low = height < self.HD_MIN_HEIGHT
+        band = f"{width}x{height}"
+        logger.info(f"[ingest] game {game_id} ({source_type}) resolution {band}"
+                    + (f"  LOW-RES (<{self.HD_MIN_HEIGHT}p) — jersey reads limited" if low else "  (HD)"))
+        try:
+            from backend.services.agent_log import log_agent_action
+            asyncio.create_task(log_agent_action(
+                action="film_resolution",
+                game_id=str(game_id),
+                phase="ingest",
+                reason=(f"Ingested film is {band}. "
+                        + ("LOW-RES: jersey numbers render too small to read reliably — "
+                           "re-ingest in 720p+ (HD) for player-level tracking." if low
+                           else "HD: sufficient resolution for jersey-number reading.")),
+                level="warning" if low else "info",
+                detail={"width": width, "height": height, "low_res": low, "source": source_type},
+            ))
+        except Exception as e:
+            logger.warning(f"[ingest] resolution log failed: {e}")
 
 
 async def _run_ingest_and_detect():
