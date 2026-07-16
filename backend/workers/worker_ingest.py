@@ -125,7 +125,13 @@ class IngestWorker(BaseWorker):
                     cf.write(cookies_content)
                 logger.info(f"[ingest] game {game_id}: applying {source_type} cookies for HD auth")
 
+            # A residential proxy routes the download through a non-datacenter IP,
+            # which is the ONE server-side switch that gives every coach HD YouTube
+            # with zero action on their part (YouTube throttles datacenter IPs to
+            # 360p). Also applied to the Hudl browser capture below.
             proxy = os.environ.get("YTDLP_PROXY", "").strip()
+            if proxy:
+                logger.info(f"[ingest] game {game_id}: routing {source_type} through YTDLP_PROXY (residential IP)")
 
             base_cmd = [
                 "yt-dlp",
@@ -183,7 +189,7 @@ class IngestWorker(BaseWorker):
                 try:
                     cap = await capture_hudl_stream(
                         source_url, timeout_s=90, cookies_env=cookies_env,
-                        credentials=credentials, provider=source_type,
+                        credentials=credentials, provider=source_type, proxy=proxy,
                     )
                 except HudlCaptureError as e:
                     site = "NFHS Network" if source_type == "nfhs" else "Hudl"

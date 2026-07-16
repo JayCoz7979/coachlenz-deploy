@@ -149,12 +149,14 @@ async def capture_hudl_stream(
     cookies_env: str = "HUDL_COOKIES",
     credentials: dict | None = None,
     provider: str = "hudl",
+    proxy: str = "",
 ) -> dict:
     """
     Generic streaming-page capture (works for Hudl, NFHS Network, and similar
     THEOplayer/HLS sites). `cookies_env` names the env var holding a Netscape
-    cookie file; `credentials` ({email, password}) triggers an in-browser login
-    first — used for the coach's connected account.
+    cookie file; `credentials` ({email/password} and/or {cookies}) authenticates
+    the coach's connected account. `proxy` routes the browser through a residential
+    IP so Hudl/NFHS don't gate the session as a datacenter bot (higher-res streams).
     """
     from playwright.async_api import async_playwright
     from urllib.parse import urlparse
@@ -168,16 +170,19 @@ async def capture_hudl_stream(
     seen_media: set[str] = set()   # diagnostics
     total_requests = 0
 
+    launch_kwargs = {"args": [
+        "--no-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--disable-blink-features=AutomationControlled",
+        "--autoplay-policy=no-user-gesture-required",
+    ]}
+    if proxy:
+        launch_kwargs["proxy"] = {"server": proxy}
+        logger.info(f"[capture] routing {provider} capture through residential proxy")
+
     async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            args=[
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--disable-blink-features=AutomationControlled",
-                "--autoplay-policy=no-user-gesture-required",
-            ]
-        )
+        browser = await p.chromium.launch(**launch_kwargs)
         try:
             context = await browser.new_context(
                 user_agent=USER_AGENT,
