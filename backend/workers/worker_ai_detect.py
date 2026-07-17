@@ -45,7 +45,7 @@ CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "multipass-v8-eagleeye-lean"
+CODE_VERSION = "multipass-v9-reconciler-cache"
 
 # Parallel ranged extraction: one long fps=0.5 pass over a 2.75h stream times out
 # silently. Instead decode many short windows concurrently, each its own ffmpeg.
@@ -97,6 +97,32 @@ JERSEY_LEAD = 0.8             # start this many seconds BEFORE the tagged snap (
 JERSEY_PARALLEL = 2            # concurrent jersey reads — memory guardrail
 JERSEY_MIN_CONFIDENCE = 0.5    # below this we do not accept a read (never guess)
 
+# ── Reconciler (deterministic cross-field consistency) ──────────────────────
+# A cheap, model-free coordinator pass. After the pre/post merge, it flags plays
+# whose fields contradict each other (e.g. "11 personnel" with an Empty formation,
+# a Run call carrying a pass_concept, Cover 0 with a two-deep safety rotation).
+# Contradictions cap the confidence and force the play into the Opus verify + the
+# human-review queue, so a confident-looking but internally-inconsistent read never
+# reaches the tendency engine unchecked. This is the "coordinator settles the
+# disagreement between three coaches charting the same play" station.
+RECONCILER_ENABLED = True
+CONTRADICTION_CONF_CAP = 0.6   # a contradictory play cannot score above this
+
+# ── Play-grade pass (technique grading, opt-in) ─────────────────────────────
+# Net-new depth station: grades EXECUTION the tendency fields do not capture -
+# OL pass-pro / run-block win, DL/edge pressure win, QB read + eye discipline,
+# tackle quality, and coverage result (open vs blanketed) - tied to jersey where
+# the film allows. Expensive (per-play Opus) and single-camera + resolution gated,
+# so OFF by default; enabled per run via the trigger's grade=true flag once a
+# validation pass on a real game confirms quality. Feeds the Player Grades board.
+PLAY_GRADE_ENABLED = False       # opt-in per run; validate before making default
+GRADE_MODEL = "claude-opus-4-8"  # grading judgment is the hardest read
+MAX_GRADE_PLAYS = 60             # cost guardrail: grade up to N plays / game
+GRADE_PARALLEL = 2               # concurrency (memory + rate guardrail)
+GRADE_LEAD = 0.8                 # seconds before the snap to start the grade clip
+GRADE_FRAMES_PER_PLAY = 6        # frames across the play for a technique read
+GRADE_FRAME_STRIDE = 0.5         # seconds between grade frames
+
 JERSEY_PROMPT = """You have EAGLE-EYE vision. Below are HIGH-RESOLUTION zoom crops of ONE football play, sampled frame-by-frame (~0.45s apart) from just before the snap through the early run — the SAME players across consecutive moments.
 
 Your ONLY job: read the JERSEY NUMBERS. Work like a coach scrubbing the play frame by frame: a number is a blur while a player runs, but at SOME moment in this sequence a player is set, turning, or slowing and their number faces the camera clearly. READ IT FROM THAT SHARPEST MOMENT. Scan every moment for each player before you decide.
@@ -113,6 +139,26 @@ HARD RULES:
 Return ONLY JSON:
 {"primary_jersey":"<main ball-handler number or null>","primary_confidence":0.0,"players":[{"jersey":"12","team":"offense","role":"ball_carrier","confidence":0.9}]}
 If you cannot read a single number: {"primary_jersey":null,"primary_confidence":0,"players":[]}"""
+
+
+# GRADER: technique grading on ONE play. Static instructions (cached as a system
+# prompt); the play's known context is supplied in the user message.
+GRADE_PROMPT = """You are a P4/SEC quality-control coach grading EXECUTION on one football play. The frames are HIGH-RESOLUTION moments of a SINGLE play, sampled from just before the snap through the end of the play - the SAME players across consecutive moments. The play's known context (down, call, formation) is in the USER MESSAGE.
+
+Grade ONLY what the film actually shows. This is single-camera film: if the angle hides a matchup, grade it null and say so. NEVER invent a grade.
+
+Grade each as a letter A/B/C/D/F with a one-phrase reason, or null if not visible:
+- ol_grade: overall offensive-line execution (pass protection or run blocking, whichever applies).
+- dl_pressure_grade: did the defensive front win (pressure generated / gap control)? Graded from the defense's side.
+- qb_read_grade: QB decision + eye discipline (progression, look-off, ball placement). Pass plays only, else null.
+- tackle_grade: tackling on the play (form, angle, made vs missed). Null if no tackle is shown.
+- coverage_result: was the primary receiver "open", "contested", or "blanketed"? Pass plays only, else null.
+
+When you can tie execution to a VISIBLE jersey number, add per-player grades. Never guess a number.
+
+Return ONLY JSON:
+{"ol_grade":"B - held the pocket ~2.5s","dl_pressure_grade":"C - no push","qb_read_grade":"A - worked to the third read","tackle_grade":null,"coverage_result":"contested","player_grades":[{"jersey":"55","unit":"OL","grade":"B","note":"lost inside hand"}],"note":"one sentence overall","confidence":0.0}
+Use null for anything the film cannot support. confidence 0-1 = how well the angle let you grade."""
 
 
 def _build_team_context(scout_jersey: Optional[str], opponent_jersey: Optional[str]) -> str:
@@ -276,11 +322,9 @@ If zero plays: {"plays": []}"""
 # SAME plays (same play_index, same order) enriched — keeps the play set aligned.
 DETECTION_PROMPT_POSTSNAP = """You are the best post-snap film analyst alive. The frames below are the SAME consecutive moments of game film, in time order.
 
-A pre-snap pass already segmented the plays in this window. Here they are (match your reads to these by play_index — return the SAME plays, SAME play_index, SAME count, do not invent or drop any):
+A pre-snap pass already segmented the plays in this window. The list of those plays (with play_index for each) is provided in the USER MESSAGE below the frames. Match your reads to them by play_index - return the SAME plays, SAME play_index, SAME count, do not invent or drop any.
 
-{presnap_plays}
-
-YOUR ONLY JOB: for each play above, read what happened AFTER the snap from the at-snap and post-play frames. Use the SEQUENCE across frames, never a single still.
+YOUR ONLY JOB: for each of those plays, read what happened AFTER the snap from the at-snap and post-play frames. Use the SEQUENCE across frames, never a single still.
 
 For each play return:
 - play_index: echo the matching index from the list above (REQUIRED)
@@ -310,25 +354,27 @@ Return ONLY JSON: {"plays": [{"play_index": 0, "play_type": ..., ...}]}"""
 _POSTSNAP_CONCEPT_GUIDE = None
 
 
-def _postsnap_prompt(ctx: str) -> str:
+def _postsnap_guide() -> str:
+    """The static concept-classification guide appended to the post-snap system
+    prompt. Built once (cached) - it never varies per batch, so it belongs in the
+    cacheable system prompt, not the per-batch user message."""
     global _POSTSNAP_CONCEPT_GUIDE
     if _POSTSNAP_CONCEPT_GUIDE is None:
         from backend.services.tendency_engine.concept_taxonomy import postsnap_concept_guidance
         _POSTSNAP_CONCEPT_GUIDE = postsnap_concept_guidance()
-    return DETECTION_PROMPT_POSTSNAP.replace("{presnap_plays}", ctx) + "\n\n" + _POSTSNAP_CONCEPT_GUIDE
+    return _POSTSNAP_CONCEPT_GUIDE
 
 
-# PASS 3: Opus adversarially verifies ONE low-confidence merged play.
-VERIFY_PROMPT = """You are the sharpest, most skeptical film reviewer in football. An automated system produced this play read from the frames below. Your job is to REFUTE or CONFIRM it — assume it may be wrong.
+# PASS 3: Opus adversarially verifies ONE shaky (low-confidence OR internally
+# contradictory) merged play. Static instructions live here (cached as a system
+# prompt); the specific candidate read is supplied in the user message.
+VERIFY_PROMPT = """You are the sharpest, most skeptical film reviewer in football. An automated system produced a play read from the frames below; the CANDIDATE read (and any internal contradictions the reconciler flagged) is in the USER MESSAGE. Your job is to REFUTE or CONFIRM it - assume it may be wrong.
 
-Candidate read:
-{candidate}
-
-Look at the frames carefully. Correct any field you can clearly see is wrong, and ONLY change a field if the film actually supports a different value — otherwise leave it. Be honest about what the camera cannot show.
+Look at the frames carefully. Correct any field you can clearly see is wrong, and ONLY change a field if the film actually supports a different value - otherwise leave it as-is. If the user message lists a contradiction (one field disagreeing with another), resolve it by deciding which field the film actually supports. Be honest about what the camera cannot show.
 
 Return ONLY JSON with the fields you are confident about plus a final judgment:
-{{"down": ..., "distance": ..., "formation": ..., "play_type": ..., "run_pass": ..., "coverage": ..., "result": ..., "yards_gained": ..., "confidence": 0.0, "verdict": "confirmed" | "corrected" | "unreadable", "note": "one short sentence on what you changed or why you trust it"}}
-Set confidence to your HONEST final confidence after looking. Use null for anything the film cannot support."""
+{"down":null,"distance":null,"field_position":null,"hash_position":null,"formation":null,"personnel":null,"play_type":null,"run_pass":null,"run_concept":null,"pass_concept":null,"defensive_front":null,"coverage_shell":null,"coverage":null,"blitz":null,"result":null,"yards_gained":null,"confidence":0.0,"verdict":"confirmed","note":"one short sentence"}
+verdict is "confirmed" | "corrected" | "unreadable". Set confidence to your HONEST final confidence after looking. Use null for anything the film cannot support."""
 
 
 DETECTION_PROMPT_BASKETBALL = """You are the most thorough basketball film analyst in the world. Extract every possible piece of intelligence from each possession or event. Coaches depend on this data to build game plans.
@@ -443,6 +489,9 @@ class AiDetectWorker(BaseWorker):
         self._full_coverage = bool(payload.get("full"))
         # Quick test: analyze only the opening slice of film (cheap confirmation run).
         self._test_mode = bool(payload.get("test"))
+        # Technique-grading pass (opt-in): grade=true on the trigger, or the module
+        # default. Expensive per-play Opus pass, so off unless explicitly requested.
+        self._grade = bool(payload.get("grade")) or PLAY_GRADE_ENABLED
         return await self._detect_plays(game_id, dry_run=dry_run, job_id=job_id)
 
     async def _detect_plays(self, game_id: str, dry_run: bool = False, job_id=None) -> dict:
@@ -635,6 +684,16 @@ class AiDetectWorker(BaseWorker):
                     except Exception as e:
                         logger.warning(f"[ai_detect] EAGLE EYE jersey pass failed: {e}")
 
+                # GRADER (opt-in): technique grading on the highest-value plays. Like
+                # EAGLE EYE it re-extracts each play at high res, then an Opus pass
+                # grades execution (OL/DL win, QB read, tackle, coverage result) tied
+                # to jersey. Mutates deduped in place; failures never sink the run.
+                if getattr(self, "_grade", False) and sport in ("football", "flag_football") and not dry_run and deduped:
+                    try:
+                        await self._grade_plays(video_source, deduped, game_id, org_id, job_id)
+                    except Exception as e:
+                        logger.warning(f"[ai_detect] play-grade pass failed: {e}")
+
                 # ── Confidence + escalation accounting (UATP) ──────────────
                 all_confs = [p.get("confidence", 0.8) for p in deduped]
                 avg_conf = round(sum(all_confs) / len(all_confs), 2) if all_confs else None
@@ -728,6 +787,12 @@ class AiDetectWorker(BaseWorker):
                             "run_pass", "ball_carrier_jersey",
                             "confidence_presnap", "confidence_postsnap",
                             "verified", "verdict", "verify_note",
+                            # Reconciler (v9): cross-field contradiction audit
+                            "contradictions", "consistency_flag",
+                            # Play-grade pass (opt-in technique grading)
+                            "ol_grade", "dl_pressure_grade", "qb_read_grade",
+                            "tackle_grade", "coverage_result", "unit_grades",
+                            "player_grades", "grade_note", "grade_source",
                         )
 
                         # LEGAL JERSEY GUARD (basketball): HS numbers use only the
@@ -767,6 +832,10 @@ class AiDetectWorker(BaseWorker):
                                 down=p.get("down"),
                                 distance=p.get("distance"),
                                 field_position=p.get("field_position"),
+                                # First-class column that was being dropped pre-v9:
+                                # the model reads the hash but it never persisted, so
+                                # the tendency engine's hash_play_matrix was starving.
+                                hash_position=p.get("hash_position"),
                                 formation=p.get("formation"),
                                 play_type=p.get("play_type"),
                                 defensive_front=p.get("defensive_front"),
@@ -1140,6 +1209,109 @@ class AiDetectWorker(BaseWorker):
             return True
         return False
 
+    # ── GRADER (opt-in technique grading) ──────────────────────────────────
+    async def _grade_one_play(self, client, video_source: str, play: dict, tmpdir: str, idx: int):
+        """Grade ONE play's execution off high-res player crops. Returns
+        (vision_response_dict, frames_extracted_count)."""
+        ts = play.get("time_seconds")
+        if ts is None:
+            return {}, 0
+        content, got = [], 0
+        for fi in range(GRADE_FRAMES_PER_PLAY):
+            fp = os.path.join(tmpdir, f"grade_{idx}_{fi}.jpg")
+            when = float(ts) - GRADE_LEAD + fi * GRADE_FRAME_STRIDE
+            if await self._extract_hires_frame(video_source, when, fp):
+                content.append({"type": "text", "text": f"Moment {fi + 1}:"})
+                content.extend(self._player_crop_blocks(fp, f"Moment {fi + 1}"))
+                got += 1
+        if not got:
+            return {}, 0
+        ctx = {k: play.get(k) for k in ("down", "distance", "play_type", "run_pass",
+                                        "formation", "personnel", "coverage")}
+        content.append({"type": "text", "text": "PLAY CONTEXT:\n" + json.dumps(ctx, default=str)})
+        return await self._vision_json(client, GRADE_MODEL, content, max_tokens=1024,
+                                       system=self._cached_system(GRADE_PROMPT)), got
+
+    @staticmethod
+    def _apply_grade(play: dict, resp: dict) -> bool:
+        """Write technique grades onto the play (never overwrites with null). Returns
+        True if anything was applied."""
+        if not resp:
+            return False
+        applied = False
+        for k in ("ol_grade", "dl_pressure_grade", "qb_read_grade", "tackle_grade", "coverage_result"):
+            v = resp.get(k)
+            if v:
+                play[k] = v
+                applied = True
+        pg = resp.get("player_grades")
+        if isinstance(pg, list) and pg:
+            play["player_grades"] = pg
+            applied = True
+        if applied:
+            if resp.get("note"):
+                play["grade_note"] = resp["note"]
+            play["grade_source"] = "grader_v1"
+            play["unit_grades"] = {u: play.get(g) for u, g in
+                                   (("OL", "ol_grade"), ("DL", "dl_pressure_grade"), ("QB", "qb_read_grade"))
+                                   if play.get(g)}
+        return applied
+
+    async def _grade_plays(self, video_source: str, plays: list, game_id, org_id, job_id) -> int:
+        """Technique-grading pass. Re-extracts the highest-value plays at high res and
+        an Opus pass grades execution tied to jersey. Mutates plays in place; failures
+        never sink the run. Resolution-gated like EAGLE EYE."""
+        import tempfile
+        import anthropic
+        fh = getattr(self, "_film_height", None)
+        if fh and fh < 720:
+            logger.info(f"[ai_detect] GRADER skipped: film is {fh}p (<720p) — technique is not gradable.")
+            return 0
+        # Grade the plays that matter most first (scoring / explosive / 3rd-4th down).
+        def _priority(p):
+            res = (p.get("result") or "").lower()
+            s = 0
+            if res in ("touchdown", "turnover", "sack"):
+                s += 3
+            if p.get("down") in (3, 4):
+                s += 2
+            y = p.get("yards_gained")
+            if isinstance(y, (int, float)) and abs(y) >= 15:
+                s += 2
+            return s
+        candidates = sorted([p for p in plays if p.get("time_seconds") is not None],
+                            key=_priority, reverse=True)[:MAX_GRADE_PLAYS]
+        if not candidates:
+            return 0
+        await log_agent_action(
+            game_id=game_id, organization_id=str(org_id), job_id=job_id,
+            phase="play_grade", level="info",
+            action=f"Technique grading pass on {len(candidates)} plays",
+            reason="Grading execution (OL/DL win, QB read, tackle, coverage result) on the highest-value plays, tied to jersey where the film allows.",
+        )
+        client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+        sem = asyncio.Semaphore(GRADE_PARALLEL)
+        stats = {"graded": 0}
+        with tempfile.TemporaryDirectory() as tmp:
+            async def run(i, p):
+                async with sem:
+                    try:
+                        resp, got = await self._grade_one_play(client, video_source, p, tmp, i)
+                        if got and self._apply_grade(p, resp):
+                            stats["graded"] += 1
+                    except Exception as e:
+                        logger.warning(f"[ai_detect] grade failed play {i}: {e}")
+            await asyncio.gather(*[run(i, p) for i, p in enumerate(candidates)], return_exceptions=True)
+        await log_agent_action(
+            game_id=game_id, organization_id=str(org_id), job_id=job_id,
+            phase="play_grade", level="success" if stats["graded"] else "warning",
+            action=f"Graded {stats['graded']} of {len(candidates)} plays",
+            reason=("Per-play technique grades written to the play log."
+                    if stats["graded"] else "No plays could be graded from this film/angle."),
+            detail=stats,
+        )
+        return stats["graded"]
+
     async def _read_jerseys_for_play(self, client, video_source: str, play: dict, tmpdir: str, idx: int):
         """Returns (vision_response_dict, frames_extracted_count)."""
         ts = play.get("time_seconds")
@@ -1157,8 +1329,8 @@ class AiDetectWorker(BaseWorker):
                 got += 1
         if not got:
             return {}, 0
-        content.append({"type": "text", "text": JERSEY_PROMPT})
-        return await self._vision_json(client, DETECT_MODEL, content, max_tokens=1024), got
+        return await self._vision_json(client, DETECT_MODEL, content, max_tokens=1024,
+                                       system=self._cached_system(JERSEY_PROMPT)), got
 
     async def _read_jerseys(self, video_source: str, plays: list, game_id, org_id, job_id) -> int:
         """EAGLE EYE pass: re-read jerseys off high-res player crops for up to
@@ -1249,12 +1421,25 @@ class AiDetectWorker(BaseWorker):
         except Exception:
             return {}
 
-    async def _vision_json(self, client, model: str, content: list, max_tokens: int = 4096) -> dict:
-        """One vision call -> parsed JSON dict ({} on parse failure)."""
-        response = await client.messages.create(
-            model=model, max_tokens=max_tokens,
-            messages=[{"role": "user", "content": content}],
-        )
+    @staticmethod
+    def _cached_system(text: str) -> list:
+        """Build a cacheable system prompt block (ephemeral cache_control). The
+        instruction text is static per pass + game, so after the first batch it is
+        a prompt-cache HIT on every remaining batch of the film - a large input-token
+        saving that funds the extra passes. Required by the CGE prompt-caching
+        standard. Frames stay in the (uncached) user message."""
+        return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
+
+    async def _vision_json(self, client, model: str, content: list, max_tokens: int = 4096,
+                           system: Optional[list] = None) -> dict:
+        """One vision call -> parsed JSON dict ({} on parse failure). Static prompt
+        text goes in `system` (cached); the frames + any per-play dynamic text go in
+        `content` (the user message)."""
+        kwargs = dict(model=model, max_tokens=max_tokens,
+                      messages=[{"role": "user", "content": content}])
+        if system:
+            kwargs["system"] = system
+        response = await client.messages.create(**kwargs)
         return self._parse_json(response.content[0].text)
 
     def _assign_times(self, plays: list, batch) -> list:
@@ -1286,9 +1471,10 @@ class AiDetectWorker(BaseWorker):
             return await self._analyze_batch_multipass(client, batch, batch_idx)
 
         prompt = DETECTION_PROMPT_BASKETBALL if sport == "basketball" else DETECTION_PROMPT
-        prompt = getattr(self, "_team_context", "") + prompt
-        content = self._frame_content(batch) + [{"type": "text", "text": prompt}]
-        parsed = await self._vision_json(client, DETECT_MODEL, content)
+        sys_text = getattr(self, "_team_context", "") + prompt
+        content = self._frame_content(batch)
+        parsed = await self._vision_json(client, DETECT_MODEL, content,
+                                         system=self._cached_system(sys_text))
         return self._assign_times(parsed.get("plays", []), batch)
 
     # Pre-snap fields handed to the post-snap pass as alignment context.
@@ -1296,9 +1482,12 @@ class AiDetectWorker(BaseWorker):
         "play_index", "frame", "side", "down", "distance", "field_position",
         "formation", "personnel", "receiver_alignment", "st_unit",
     )
-    # Fields the verify pass / post-snap pass may overwrite on a play.
-    _VERIFY_KEYS = ("down", "distance", "formation", "play_type", "run_pass",
-                    "coverage", "result", "yards_gained")
+    # Fields the verify pass / post-snap pass may overwrite on a play. Broadened in
+    # v9 so Opus can also correct concept + defensive reads, not just the basics.
+    _VERIFY_KEYS = ("down", "distance", "field_position", "hash_position",
+                    "formation", "personnel", "play_type", "run_pass",
+                    "run_concept", "pass_concept", "defensive_front",
+                    "coverage_shell", "coverage", "blitz", "result", "yards_gained")
 
     async def _analyze_batch_multipass(self, client, batch, batch_idx: int) -> list[dict]:
         """Three-pass football detection. Pass 1 (pre-snap) segments + reads the
@@ -1306,9 +1495,10 @@ class AiDetectWorker(BaseWorker):
         Pass 3 (Opus) adversarially verifies only the low-confidence merges."""
         frames = self._frame_content(batch)
 
-        # Pass 1 — detect + pre-snap
-        p1 = await self._vision_json(client, DETECT_MODEL,
-                                     frames + [{"type": "text", "text": getattr(self, "_team_context", "") + DETECTION_PROMPT_PRESNAP}])
+        # Pass 1 — detect + pre-snap (static prompt cached in the system slot)
+        p1 = await self._vision_json(
+            client, DETECT_MODEL, frames,
+            system=self._cached_system(getattr(self, "_team_context", "") + DETECTION_PROMPT_PRESNAP))
         pre = p1.get("plays", [])
         if not pre:
             return []
@@ -1317,11 +1507,13 @@ class AiDetectWorker(BaseWorker):
 
         # Pass 2 — post-snap enrich, anchored to pass-1 plays
         ctx = json.dumps([{k: pl.get(k) for k in self._PRESNAP_CTX_KEYS} for pl in pre], default=str)
+        post_sys = getattr(self, "_team_context", "") + DETECTION_PROMPT_POSTSNAP + "\n\n" + _postsnap_guide()
         p2 = {}
         try:
             post_resp = await self._vision_json(
                 client, DETECT_MODEL,
-                frames + [{"type": "text", "text": getattr(self, "_team_context", "") + _postsnap_prompt(ctx)}])
+                frames + [{"type": "text", "text": "PRE-SNAP PLAYS (match your reads to these by play_index):\n" + ctx}],
+                system=self._cached_system(post_sys))
             p2 = {pl.get("play_index"): pl for pl in post_resp.get("plays", []) if pl.get("play_index") is not None}
         except Exception as e:
             logger.warning(f"[ai_detect] post-snap pass failed batch {batch_idx}: {e}")
@@ -1341,16 +1533,35 @@ class AiDetectWorker(BaseWorker):
             m["confidence"] = round((c_pre + float(c_post)) / 2, 2) if c_post is not None else c_pre
             merged.append(m)
 
-        # Pass 3 — Opus verifies the shakiest reads (capped for cost)
-        weak = sorted((m for m in merged if m["confidence"] < VERIFY_CONFIDENCE_THRESHOLD),
-                      key=lambda m: m["confidence"])[:MAX_VERIFY_PER_BATCH]
+        # Reconciler — model-free cross-field contradiction check. Caps a
+        # contradictory play's confidence and forces it into the verify + human
+        # review queue even if the model "sounded" sure.
+        if RECONCILER_ENABLED:
+            for m in merged:
+                notes = self._reconcile(m)
+                if notes:
+                    m["contradictions"] = notes
+                    m["consistency_flag"] = True
+                    if float(m.get("confidence") or 1.0) > CONTRADICTION_CONF_CAP:
+                        m["confidence"] = CONTRADICTION_CONF_CAP
+
+        # Pass 3 — Opus verifies the shakiest reads: low confidence OR contradictory.
+        # Contradictory plays are prioritized ahead of merely low-confidence ones.
+        weak = sorted(
+            (m for m in merged
+             if m["confidence"] < VERIFY_CONFIDENCE_THRESHOLD or m.get("consistency_flag")),
+            key=lambda m: (not m.get("consistency_flag"), m["confidence"]),
+        )[:MAX_VERIFY_PER_BATCH]
         for m in weak:
-            cand = json.dumps({k: m.get(k) for k in self._VERIFY_KEYS}, default=str)
+            cand = {k: m.get(k) for k in self._VERIFY_KEYS}
+            user_txt = "CANDIDATE READ:\n" + json.dumps(cand, default=str)
+            if m.get("contradictions"):
+                user_txt += "\n\nRECONCILER CONTRADICTIONS (resolve these):\n- " + "\n- ".join(m["contradictions"])
             try:
                 v = await self._vision_json(
                     client, VERIFY_MODEL,
-                    frames + [{"type": "text", "text": VERIFY_PROMPT.format(candidate=cand)}],
-                    max_tokens=1024)
+                    frames + [{"type": "text", "text": user_txt}],
+                    max_tokens=1024, system=self._cached_system(VERIFY_PROMPT))
             except Exception as e:
                 logger.warning(f"[ai_detect] verify pass failed batch {batch_idx}: {e}")
                 continue
@@ -1364,8 +1575,51 @@ class AiDetectWorker(BaseWorker):
             m["verified"] = True
             m["verdict"] = v.get("verdict")
             m["verify_note"] = v.get("note")
+            # Re-check consistency after Opus corrections; clear the flag if resolved.
+            if RECONCILER_ENABLED:
+                notes2 = self._reconcile(m)
+                m["contradictions"] = notes2 or None
+                m["consistency_flag"] = bool(notes2)
 
         return self._assign_times(merged, batch)
+
+    @staticmethod
+    def _reconcile(m: dict) -> list:
+        """Model-free cross-field consistency check on ONE merged play. Returns a
+        list of human-readable contradiction notes (empty list = consistent). Only
+        fires when both conflicting values are genuinely present - never on nulls,
+        so it cannot manufacture a contradiction from missing data."""
+        c = []
+        rp = (m.get("run_pass") or "").lower()
+        ptype = (m.get("play_type") or "").lower()
+        form = (m.get("formation") or "")
+        pers = str(m.get("personnel") or "").strip()
+        run_concept = m.get("run_concept")
+        pass_concept = m.get("pass_concept")
+        cov = (m.get("coverage") or m.get("coverage_shell") or "").lower()
+        saf = (m.get("safety_rotation") or m.get("safety_depth_tell") or "").lower()
+        # run/pass call vs the concept it carries
+        if rp == "run" and pass_concept and not run_concept:
+            c.append(f"run_pass=Run but a pass_concept ({pass_concept}) is set")
+        if rp == "pass" and run_concept and not pass_concept:
+            c.append(f"run_pass=Pass but a run_concept ({run_concept}) is set")
+        # run/pass call vs play_type
+        if rp == "run" and ptype in ("pass", "screen"):
+            c.append(f"run_pass=Run but play_type={m.get('play_type')}")
+        if rp == "pass" and ptype in ("run", "draw", "qb run", "option"):
+            c.append(f"run_pass=Pass but play_type={m.get('play_type')}")
+        # Empty formation implies zero backs; personnel tens-digit is the back count
+        if form.lower() == "empty" and pers[:1].isdigit() and pers[0] != "0":
+            c.append(f"formation=Empty but personnel={pers} implies a back in the backfield")
+        # single-high / Cover 0 vs a two-deep safety look
+        if ("cover 0" in cov or "cover 1" in cov) and ("two deep" in saf or "2 deep" in saf or "two-high" in saf):
+            c.append("single-high coverage but the safety look is two-deep")
+        # a scoring result cannot have lost yardage
+        res = (m.get("result") or "").lower()
+        yds = m.get("yards_gained")
+        if res == "touchdown" and isinstance(yds, (int, float)) and yds < 0:
+            c.append("result=Touchdown but yards_gained is negative")
+        return c
 
     def _derive_from_sequence(self, plays: list[dict]) -> list[dict]:
         """Fill yards_gained / result from the down-and-distance progression.
