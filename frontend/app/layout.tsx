@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
-import { Bebas_Neue, DM_Sans, DM_Mono } from 'next/font/google'
+import { Bebas_Neue, DM_Sans, DM_Mono, Syne } from 'next/font/google'
 import './globals.css'
+import './os.css'
 
 const bebasNeue = Bebas_Neue({
   subsets: ['latin'],
@@ -20,6 +21,12 @@ const dmMono = DM_Mono({
   variable: '--font-dm-mono',
 })
 
+const syne = Syne({
+  subsets: ['latin'],
+  weight: ['400', '600', '700', '800'],
+  variable: '--font-syne',
+})
+
 export const metadata: Metadata = {
   title: 'CoachLenz — AI Film Analyst OS',
   description: 'See Every Tendency. Win Every Game.',
@@ -28,7 +35,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className={`${bebasNeue.variable} ${dmSans.variable} ${dmMono.variable}`}>
+      <body className={`${bebasNeue.variable} ${dmSans.variable} ${dmMono.variable} ${syne.variable}`}>
         {children}
       </body>
     </html>

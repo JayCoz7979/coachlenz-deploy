@@ -1,55 +1,47 @@
 'use client'
 import { useEffect, useState } from 'react'
-import Sidebar from '@/components/layout/Sidebar'
-import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
-import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { FileText, Clock, CheckCircle } from 'lucide-react'
+import OSShell from '@/components/os/OSShell'
+import { useAuth } from '@/lib/auth'
 
 export default function ReportsPage() {
-  const { user, isLoading, fetchMe } = useAuth()
-  const router = useRouter()
+  const { user } = useAuth()
   const [reports, setReports] = useState<any[]>([])
+  const [loaded, setLoaded] = useState(false)
 
-  useEffect(() => { fetchMe() }, [])
-  useEffect(() => { if (!isLoading && !user) router.push('/login') }, [isLoading, user])
-  useEffect(() => { if (user) api.get('/reports').then(r => setReports(r.data)) }, [user])
+  useEffect(() => {
+    if (!user) return
+    api.get('/reports').then(r => setReports(r.data || [])).catch(() => {}).finally(() => setLoaded(true))
+  }, [user])
 
   return (
-    <div className="flex h-screen overflow-hidden">
-      <Sidebar />
-      <main className="flex-1 overflow-y-auto p-8">
-        <div className="max-w-4xl mx-auto">
-          <h2 className="text-2xl font-bold mb-6">Reports</h2>
-          <div className="space-y-3">
-            {reports.map(r => (
-              <Link key={r.id} href={`/reports/${r.id}`} style={{ textDecoration: 'none', display: 'block' }}>
-                <div className="card flex items-center justify-between" style={{ cursor: 'pointer' }}>
-                  <div className="flex items-center gap-3">
-                    <FileText size={18} style={{ color: '#C9A84C' }} />
-                    <div>
-                      <div className="font-semibold">{r.title}</div>
-                      <div className="text-sm text-gray-400 mt-1">{r.sport} · {r.report_type}</div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    {r.generated_at
-                      ? <span style={{ fontSize: 11, color: '#2d8c40', display: 'flex', alignItems: 'center', gap: 4 }}><CheckCircle size={11} /> Ready</span>
-                      : <span style={{ fontSize: 11, color: '#C9A84C', display: 'flex', alignItems: 'center', gap: 4 }}><Clock size={11} /> Processing</span>
-                    }
-                  </div>
-                </div>
-              </Link>
-            ))}
-            {reports.length === 0 && (
-              <div className="text-center text-gray-500 py-12">
-                No reports yet. Tag plays on a game film and click "Generate AI Report."
+    <OSShell title="Scout Reports">
+      <div className="sec-hdr"><div className="sec-title">📋 Scout Reports</div></div>
+      <div className="rpt-list">
+        {reports.map(r => (
+          <Link key={r.id} href={`/reports/${r.id}`} style={{ textDecoration: 'none' }}>
+            <div className="rpt-row">
+              <div className="rpt-icon">{r.report_type === 'self_scout' ? '🪞' : '📋'}</div>
+              <div className="rpt-info">
+                <div className="rpt-name">{r.title}</div>
+                <div className="rpt-meta" style={{ textTransform: 'capitalize' }}>{r.sport} · {String(r.report_type || 'opponent').replace('_', ' ')}</div>
               </div>
-            )}
+              {r.watermarked && <span className="tag tw">Trial</span>}
+              {r.generated_at
+                ? <span className="tag tg">Ready</span>
+                : <span className="tag tgo">Analyzing…</span>}
+            </div>
+          </Link>
+        ))}
+        {loaded && reports.length === 0 && (
+          <div className="ai-box" style={{ textAlign: 'center' }}>
+            No reports yet. Tag plays on a game film and generate an AI scout report, or{' '}
+            <Link href="/scout" style={{ color: 'var(--green3)' }}>start a scout →</Link>
           </div>
-        </div>
-      </main>
-    </div>
+        )}
+      </div>
+      <div className="powered">Powered by <a href="https://cosbyaisolutions.com" target="_blank" rel="noreferrer">Cosby AI Solutions</a></div>
+    </OSShell>
   )
 }
