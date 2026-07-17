@@ -751,6 +751,38 @@ class AiDetectWorker(BaseWorker):
                             valid = ("offense", "defense", "special_teams", "transition")
                             return s if s in valid else "offense"
 
+                        def _blitz(p):
+                            # Event.blitz is VARCHAR, but the deep engine's post-snap
+                            # pass returns a BOOLEAN. asyncpg rejects a bool for a
+                            # varchar column, so normalize: no-blitz -> None, blitz ->
+                            # the pressure-type label. Keeps the tendency engine's
+                            # blitz math (which lowercases the string) working, and a
+                            # plain string from the single-pass path passes through.
+                            b = p.get("blitz")
+                            if isinstance(b, bool):
+                                return (p.get("pressure_type") or "Blitz") if b else None
+                            return b
+
+                        def _int(v):
+                            # Integer columns: the model sometimes returns "3" or 3.0.
+                            try:
+                                s = str(v).strip()
+                                return int(float(s)) if s not in ("", "None", "null") else None
+                            except (ValueError, TypeError):
+                                return None
+
+                        def _s(v):
+                            # VARCHAR columns: a stray bool/number would break asyncpg.
+                            if v is None or isinstance(v, bool):
+                                return None
+                            return str(v)
+
+                        def _b(v):
+                            # BOOLEAN column: accept a bool or a "true"/"false" string.
+                            if isinstance(v, str):
+                                return v.strip().lower() in ("true", "yes", "1")
+                            return bool(v)
+
                         DEEP_FIELDS = (
                             # Football round 1
                             "run_direction", "run_concept", "pass_concept", "pass_depth",
@@ -839,25 +871,25 @@ class AiDetectWorker(BaseWorker):
                                 event_type=p.get("event_type", "shot") if sport == "basketball" else "play",
                                 side=_side(p),
                                 time_seconds=p.get("time_seconds"),
-                                down=p.get("down"),
-                                distance=p.get("distance"),
-                                field_position=p.get("field_position"),
+                                down=_int(p.get("down")),
+                                distance=_int(p.get("distance")),
+                                field_position=_s(p.get("field_position")),
                                 # First-class column that was being dropped pre-v9:
                                 # the model reads the hash but it never persisted, so
                                 # the tendency engine's hash_play_matrix was starving.
-                                hash_position=p.get("hash_position"),
-                                formation=p.get("formation"),
-                                play_type=p.get("play_type"),
-                                defensive_front=p.get("defensive_front"),
-                                coverage=p.get("coverage"),
-                                blitz=p.get("blitz"),
-                                result=p.get("result"),
-                                yards_gained=p.get("yards_gained"),
-                                personnel=p.get("personnel"),
-                                motion=p.get("motion", False),
+                                hash_position=_s(p.get("hash_position")),
+                                formation=_s(p.get("formation")),
+                                play_type=_s(p.get("play_type")),
+                                defensive_front=_s(p.get("defensive_front")),
+                                coverage=_s(p.get("coverage")),
+                                blitz=_blitz(p),
+                                result=_s(p.get("result")),
+                                yards_gained=_int(p.get("yards_gained")),
+                                personnel=_s(p.get("personnel")),
+                                motion=_b(p.get("motion")),
                                 # First-class player column (migration 013), still
                                 # mirrored in extra_data for backward compatibility.
-                                player=p.get("primary_player_jersey") or p.get("ball_carrier_jersey"),
+                                player=_s(p.get("primary_player_jersey") or p.get("ball_carrier_jersey")),
                                 extra_data={
                                     "auto_detected": True,
                                     "confidence": p.get("confidence", 0.8),
