@@ -11,6 +11,10 @@ logger = logging.getLogger(__name__)
 
 WORKER_ID = socket.gethostname()
 STUCK_THRESHOLD_MINUTES = 10  # re-queue jobs orphaned by a worker restart within 10 min
+HEARTBEAT_SECONDS = 120       # refresh a running job's lock this often so a legitimately
+                              # long job (full-game detection runs 15-20 min) is NOT re-queued
+                              # by the watchdog and double-executed. A dead worker stops
+                              # heartbeating and is still reclaimed after STUCK_THRESHOLD.
 MAX_ATTEMPTS = 3              # dead-letter after this many tries so a job that keeps
                              # killing the worker (e.g. an OOM film) can't crash-loop forever
 
@@ -54,19 +58,44 @@ class BaseWorker:
             job.locked_by = WORKER_ID
             await db.commit()
 
+        job_id = job.id
+        stop = asyncio.Event()
+
+        async def _heartbeat():
+            # Keep locked_at fresh while handle() runs so the watchdog does not
+            # re-queue (and thus double-run) a legitimately long job.
+            while not stop.is_set():
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=HEARTBEAT_SECONDS)
+                except asyncio.TimeoutError:
+                    pass
+                if stop.is_set():
+                    break
+                try:
+                    async with AsyncSessionLocal() as db:
+                        await db.execute(update(Job).where(Job.id == job_id, Job.status == "running")
+                                         .values(locked_at=datetime.utcnow()))
+                        await db.commit()
+                except Exception:
+                    pass
+
+        hb = asyncio.create_task(_heartbeat())
         try:
             # Correlate any agent logs emitted during this run with the job (UATP audit trail).
             payload = dict(job.payload or {})
-            payload["_job_id"] = str(job.id)
+            payload["_job_id"] = str(job_id)
             result = await self.handle(payload)
             async with AsyncSessionLocal() as db:
-                await db.execute(update(Job).where(Job.id == job.id).values(status="done", result=result or {}, locked_at=None))
+                await db.execute(update(Job).where(Job.id == job_id).values(status="done", result=result or {}, locked_at=None))
                 await db.commit()
         except Exception as e:
-            logger.error(f"[{self.job_type}] job {job.id} failed: {e}")
+            logger.error(f"[{self.job_type}] job {job_id} failed: {e}")
             async with AsyncSessionLocal() as db:
-                await db.execute(update(Job).where(Job.id == job.id).values(status="error", error_message=str(e), locked_at=None))
+                await db.execute(update(Job).where(Job.id == job_id).values(status="error", error_message=str(e), locked_at=None))
                 await db.commit()
+        finally:
+            stop.set()
+            hb.cancel()
 
     async def _watchdog(self):
         while True:
