@@ -10,6 +10,9 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
+// Static import so the asset is emitted to /_next/static/media (served in the
+// standalone build); the public/ folder is not bundled with output:'standalone'.
+import logo from '../../public/coachlenz-logo.png'
 
 const NAV: { section: string; items: NavItem[] }[] = [
   {
@@ -105,7 +108,7 @@ export default function OSShell({ title, children }: { title: string; children: 
       <nav className="sidebar">
         <div className="logo-block">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/coachlenz-logo.png" alt="CoachLenz"
+          <img src={logo.src} alt="CoachLenz"
                style={{ width: '100%', maxWidth: 210, height: 'auto', display: 'block' }} />
         </div>
         {NAV.map(group => {
