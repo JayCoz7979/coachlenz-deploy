@@ -65,6 +65,15 @@ JOB_TIMEOUT = 300          # per-window timeout (s); a stuck window fails alone,
 MULTIPASS_ENABLED = True
 DETECT_MODEL = "claude-sonnet-4-6"   # bulk passes (volume)
 VERIFY_MODEL = "claude-opus-4-8"     # hardest reads only (the tie-breaker)
+
+# Price table for the honest per-run cost report ($ per MILLION tokens). These are
+# the standard Sonnet / Opus tiers; adjust here if Anthropic pricing changes. The
+# TOKEN COUNTS in the cost report are measured from each API response's usage - only
+# the $ multipliers below are assumptions, so a coach sees a real, auditable number.
+MODEL_PRICING = {
+    "claude-sonnet-4-6": {"in": 3.0,  "out": 15.0, "cache_w": 3.75,  "cache_r": 0.30},
+    "claude-opus-4-8":   {"in": 15.0, "out": 75.0, "cache_w": 18.75, "cache_r": 1.50},
+}
 VERIFY_CONFIDENCE_THRESHOLD = 0.65   # merged plays below this get an Opus second look
 MAX_VERIFY_PER_BATCH = 3             # cap Opus calls per batch (cost guardrail)
 # Concurrency for the vision pass. Segments run in parallel instead of one-at-a-time.
@@ -495,6 +504,7 @@ class AiDetectWorker(BaseWorker):
         return await self._detect_plays(game_id, dry_run=dry_run, job_id=job_id)
 
     async def _detect_plays(self, game_id: str, dry_run: bool = False, job_id=None) -> dict:
+        self._usage = {}  # per-run token accounting for the cost report
         # ── Load game ──────────────────────────────────────────────────────
         async with AsyncSessionLocal() as db:
             result = await db.execute(select(Game).where(Game.id == game_id))
@@ -889,6 +899,22 @@ class AiDetectWorker(BaseWorker):
                             "failed_batches": failed_batches},
                 )
 
+                # ── Cost report (measured token usage -> $) ────────────────
+                cost = self._cost_summary()
+                per_play = round(cost["total_usd"] / total_plays, 4) if total_plays else None
+                await log_agent_action(
+                    game_id=game_id, organization_id=str(org_id), job_id=job_id,
+                    phase="cost", level="info",
+                    action=f"Run cost: ${cost['total_usd']} ({total_plays} plays"
+                           + (f", ${per_play}/play" if per_play is not None else "") + ")",
+                    reason=(f"Measured API token usage for this {getattr(self, '_multipass', False) and 'deep' or 'fast'} run"
+                            + (" with grading" if getattr(self, '_grade', False) else "")
+                            + f". CODE_VERSION={CODE_VERSION}."),
+                    detail={**cost, "per_play_usd": per_play,
+                            "grade": getattr(self, "_grade", False),
+                            "mode": "deep" if getattr(self, "_multipass", False) else "fast"},
+                )
+
         except Exception as e:
             # UATP failure transparency — say WHY, never fail silently.
             logger.error(f"[ai_detect] game {game_id} failed: {e}")
@@ -907,7 +933,8 @@ class AiDetectWorker(BaseWorker):
 
         logger.info(f"[ai_detect] game {game_id}: {total_plays} plays auto-detected")
         return {"game_id": game_id, "plays_detected": total_plays,
-                "needs_review": needs_review_count, "avg_confidence": avg_conf}
+                "needs_review": needs_review_count, "avg_confidence": avg_conf,
+                "cost": self._cost_summary()}
 
     async def _probe_duration(self, url: str, fallback: Optional[int] = None) -> float:
         """True duration via ffprobe (falls back to the DB value)."""
@@ -1440,7 +1467,35 @@ class AiDetectWorker(BaseWorker):
         if system:
             kwargs["system"] = system
         response = await client.messages.create(**kwargs)
+        self._track_usage(model, getattr(response, "usage", None))
         return self._parse_json(response.content[0].text)
+
+    def _track_usage(self, model: str, usage) -> None:
+        """Accumulate this call's token usage so the run can report a real cost."""
+        if usage is None:
+            return
+        book = getattr(self, "_usage", None)
+        if book is None:
+            book = self._usage = {}
+        d = book.setdefault(model, {"in": 0, "out": 0, "cache_w": 0, "cache_r": 0, "calls": 0})
+        d["calls"] += 1
+        d["in"] += getattr(usage, "input_tokens", 0) or 0
+        d["out"] += getattr(usage, "output_tokens", 0) or 0
+        d["cache_w"] += getattr(usage, "cache_creation_input_tokens", 0) or 0
+        d["cache_r"] += getattr(usage, "cache_read_input_tokens", 0) or 0
+
+    def _cost_summary(self) -> dict:
+        """Turn accumulated usage into a $ breakdown per model + total. Token counts
+        are measured; the $ rates come from MODEL_PRICING."""
+        book = getattr(self, "_usage", None) or {}
+        models, total = {}, 0.0
+        for model, d in book.items():
+            p = MODEL_PRICING.get(model, MODEL_PRICING["claude-sonnet-4-6"])
+            cost = (d["in"] * p["in"] + d["out"] * p["out"]
+                    + d["cache_w"] * p["cache_w"] + d["cache_r"] * p["cache_r"]) / 1_000_000
+            total += cost
+            models[model] = {**d, "cost_usd": round(cost, 4)}
+        return {"models": models, "total_usd": round(total, 4)}
 
     def _assign_times(self, plays: list, batch) -> list:
         """Confidence-gate plays and stamp each with the REAL timestamp of the frame
