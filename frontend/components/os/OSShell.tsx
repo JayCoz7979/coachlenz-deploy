@@ -104,13 +104,9 @@ export default function OSShell({ title, children }: { title: string; children: 
       {/* SIDEBAR */}
       <nav className="sidebar">
         <div className="logo-block">
-          <div className="logo-row">
-            <div className="logo-mark">CL</div>
-            <div>
-              <div className="logo-name">CoachLenz</div>
-              <div className="logo-sub">AI Film Analyst OS</div>
-            </div>
-          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/coachlenz-logo.png" alt="CoachLenz"
+               style={{ width: '100%', maxWidth: 210, height: 'auto', display: 'block' }} />
         </div>
         {NAV.map(group => {
           const items = group.items.filter(i => !i.requiresAdmin || isAdmin)
