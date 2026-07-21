@@ -1,3 +1,4 @@
+# deploy-trigger check 2026-07-21: verifies backend + worker_ingest auto-deploy from main on merge
 import asyncio
 import sentry_sdk
 from fastapi import FastAPI
