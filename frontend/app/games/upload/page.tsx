@@ -30,6 +30,22 @@ function detectSource(url: string): string {
   return 'generic'
 }
 
+// A Hudl "Download"/bulk-download email link wraps a pre-signed direct MP4 that
+// imports WITHOUT any Hudl login. Detect it so we can reassure the coach instead
+// of scaring them with the "needs a login" warning meant for watch-page links.
+function isHudlDirectDownloadLink(url: string): boolean {
+  if (!/hudl\.com/i.test(url)) return false
+  try {
+    const p = new URL(url)
+    const forward = p.searchParams.get('forward') || p.searchParams.get('url') || ''
+    const decoded = decodeURIComponent(forward)
+    return /vtemp\.hudl\.com|vg\.hudl\.com|\.mp4/i.test(decoded) ||
+      /notifications-tracking|bulkdownload|\/download/i.test(url)
+  } catch {
+    return /notifications-tracking|bulkdownload/i.test(url)
+  }
+}
+
 type Tab = 'upload' | 'url'
 
 function UploadPageInner() {
@@ -138,6 +154,7 @@ function UploadPageInner() {
   }
 
   const detectedSource = videoUrl ? detectSource(videoUrl) : null
+  const hudlDirect = videoUrl ? isHudlDirectDownloadLink(videoUrl) : false
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -165,7 +182,15 @@ function UploadPageInner() {
           </div>
 
           <div className="card space-y-4">
-            {error && tab === 'url' && /hudl|nfhs|capture/i.test(error + ' ' + videoUrl) && (
+            {error && tab === 'url' && hudlDirect && (
+              <div className="text-sm bg-yellow-400/10 border border-yellow-400/30 rounded-lg p-3 space-y-1">
+                <p className="text-yellow-300 font-medium">That Hudl download link didn't import.</p>
+                <p className="text-gray-300">Hudl download links expire quickly. Go back to the email or Hudl, generate a <span className="text-yellow-200">fresh download link</span>, and paste it again right away — no Hudl account needed.</p>
+                <p className="text-gray-400">Still stuck? Click the download in Hudl to save the video file, then use the <span className="text-gray-200">Upload File</span> tab.</p>
+                <p className="text-xs text-gray-500 mt-1">Details: {error}</p>
+              </div>
+            )}
+            {error && tab === 'url' && !hudlDirect && /hudl|nfhs|capture/i.test(error + ' ' + videoUrl) && (
               <div className="text-sm bg-yellow-400/10 border border-yellow-400/30 rounded-lg p-3 space-y-1">
                 <p className="text-yellow-300 font-medium">We couldn't pull that film automatically.</p>
                 <p className="text-gray-300">Public/shared links import directly, but this one looks like <span className="text-yellow-200">private or subscription film</span> that requires a login. Your login on your own device doesn't carry over to our server.</p>
@@ -259,9 +284,14 @@ function UploadPageInner() {
                   {detectedSource && (
                     <p className="text-xs text-brand-400 mt-1">Detected: {SOURCE_LABELS[detectedSource] || detectedSource}</p>
                   )}
-                  {/hudl\.com/i.test(videoUrl) && (
+                  {hudlDirect && (
                     <div className="mt-2 text-xs bg-green-500/10 border border-green-500/30 rounded-lg p-2.5 text-gray-300">
-                      <span className="text-green-400 font-medium">Hudl link detected.</span> We'll capture and import it automatically. For private team film, <a href="/settings/connections" className="text-green-400 underline">connect your Hudl account</a> once and it imports with one click.
+                      <span className="text-green-400 font-medium">Hudl download link detected — no Hudl account needed.</span> This link already contains the video file, so we'll import it directly. Hudl download links expire fast, so import now while it's fresh.
+                    </div>
+                  )}
+                  {/hudl\.com/i.test(videoUrl) && !hudlDirect && (
+                    <div className="mt-2 text-xs bg-green-500/10 border border-green-500/30 rounded-lg p-2.5 text-gray-300">
+                      <span className="text-green-400 font-medium">Hudl link detected.</span> We'll capture and import it automatically. <span className="text-gray-200">No Hudl account?</span> In Hudl, use <span className="text-gray-200">Download</span> on the video and paste the download link it gives you — that imports with no login. For private team film, <a href="/settings/connections" className="text-green-400 underline">connect your Hudl account</a> once and it imports with one click.
                     </div>
                   )}
                   {/nfhsnetwork\.com/i.test(videoUrl) && (
@@ -280,6 +310,14 @@ function UploadPageInner() {
                     <p><span className="text-gray-300 font-medium">Hudl:</span> Paste a Hudl share/watch link and we'll capture and import it automatically. Private team film: download from your Hudl coach account and use Upload File.</p>
                     <p><span className="text-gray-300 font-medium">Vimeo, Google Drive, Dropbox, direct video links:</span> paste the link and we'll import it.</p>
                     <p><span className="text-gray-300 font-medium">Tip:</span> Once imported, the film is copied into your CoachLenz library permanently — it stays yours even if the original link later changes.</p>
+                  </div>
+
+                  {/* No-account escape hatch — three ways in without your own Hudl login */}
+                  <div className="mt-3 text-xs bg-brand-500/5 border border-brand-500/30 rounded-lg p-3 space-y-1.5">
+                    <p className="text-brand-300 font-medium">No Hudl account? Three ways to get your film in:</p>
+                    <p><span className="text-gray-200">1. Hudl "Download" link.</span> In Hudl, open the video → <span className="text-gray-200">Download</span>. Hudl emails you a download link — paste that here. It carries the file itself, so it imports with no login.</p>
+                    <p><span className="text-gray-200">2. Upload the file.</span> Save the video to your phone or computer, then use the <span className="text-gray-200">Upload File</span> tab. Always works, any source.</p>
+                    <p><span className="text-gray-200">3. Free hosts.</span> Put the film on Google Drive, Dropbox, YouTube (unlisted), or Vimeo, set sharing to "anyone with the link," and paste that link — no Hudl required.</p>
                   </div>
                 </div>
 
