@@ -19,8 +19,70 @@ import logging
 import os
 import re
 from typing import Optional
+from urllib.parse import urlparse, parse_qs, unquote
 
 logger = logging.getLogger(__name__)
+
+# Hudl's "Download" / bulk-download exchange emails a link that wraps a direct,
+# pre-signed video file. The wrapper is a tracking/landing page that requires a
+# Hudl login; the file it forwards to (on vtemp/vg.hudl.com) does NOT. So any
+# coach a team shares film with — no Hudl account of their own — can paste that
+# email link and import. We just have to unwrap the tracking layer.
+_HUDL_REDIRECT_PARAMS = ("forward", "url", "redirect", "u", "target", "dest")
+_HUDL_DIRECT_HOSTS = ("vtemp.hudl.com", "vg.hudl.com", "vcloud.hudl.com")
+_DIRECT_VIDEO_EXT = re.compile(r"\.(mp4|mov|m4v|webm|m3u8|mpd)(\?|$)", re.IGNORECASE)
+
+
+def _looks_like_direct_video(url: str) -> bool:
+    """True if the URL points straight at a video file / manifest (no login needed)."""
+    try:
+        p = urlparse(url)
+    except Exception:
+        return False
+    if p.scheme.lower() not in ("http", "https"):
+        return False
+    host = (p.hostname or "").lower()
+    if host in _HUDL_DIRECT_HOSTS:
+        return True
+    return bool(_DIRECT_VIDEO_EXT.search(url))
+
+
+def unwrap_hudl_direct_url(url: str, _depth: int = 0) -> Optional[str]:
+    """If `url` is a Hudl tracking / bulk-download / redirect wrapper that carries a
+    forwarded direct video file, return that direct URL (which needs NO login).
+    Otherwise return None so the caller falls back to the browser capture path.
+
+    Handles the real emailed shape:
+      https://www.hudl.com/notifications-tracking/tracker/BulkDownloadReady-.../email/landing
+          ?forward=https%3a%2f%2fvtemp.hudl.com%2f.../film.mp4%3fv%3d...
+    including double-encoded values and a couple of nested redirect hops.
+    """
+    if not url or _depth > 3:
+        return None
+    try:
+        p = urlparse(url.strip())
+    except Exception:
+        return None
+    host = (p.hostname or "").lower()
+    if not host.endswith("hudl.com"):
+        return None
+    # Only unwrap tracking/redirect wrappers — a normal watch page has no forward param.
+    qs = parse_qs(p.query)
+    for key in _HUDL_REDIRECT_PARAMS:
+        for raw in qs.get(key, []):
+            candidate = unquote(raw).strip()
+            # Some links double-encode the forwarded URL.
+            if "%3a" in candidate.lower() or "%2f" in candidate.lower():
+                candidate = unquote(candidate).strip()
+            if not candidate.lower().startswith(("http://", "https://")):
+                continue
+            if _looks_like_direct_video(candidate):
+                return candidate
+            # The forward target might itself be another Hudl wrapper — recurse.
+            nested = unwrap_hudl_direct_url(candidate, _depth + 1)
+            if nested:
+                return nested
+    return None
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "

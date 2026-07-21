@@ -159,6 +159,22 @@ class IngestWorker(BaseWorker):
             # directly. We drive Chromium to load the page, capture the stream
             # URL + session cookies, then download it.
             download_target = source_url
+            # ── Hudl bulk-download / "Download" email link (NO account needed) ──
+            # These wrap a pre-signed direct MP4 (vtemp.hudl.com) that any coach the
+            # film was shared with can fetch without logging in. Unwrap it and take
+            # the plain-download path — no browser, no cookies, no connected account.
+            if source_type == "hudl":
+                from backend.services.hudl_capture import unwrap_hudl_direct_url
+                direct_url = unwrap_hudl_direct_url(source_url)
+                if direct_url:
+                    validate_public_http_url(direct_url)  # SSRF re-check on the unwrapped target
+                    download_target = direct_url
+                    source_type = "generic"  # download it like any direct file
+                    logger.info(
+                        f"[ingest] game {game_id}: unwrapped Hudl bulk-download link to a "
+                        f"direct file — importing without login/capture"
+                    )
+
             if source_type in ("hudl", "nfhs"):
                 cookies_env = "NFHS_COOKIES" if source_type == "nfhs" else "HUDL_COOKIES"
                 logger.info(f"[ingest] capturing {source_type} stream for game {game_id}")
