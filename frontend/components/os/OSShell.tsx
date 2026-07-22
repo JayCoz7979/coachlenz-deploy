@@ -10,6 +10,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
+import { SPORTS, SPORT_META } from '@/lib/sports'
 // Static import so the asset is emitted to /_next/static/media (served in the
 // standalone build); the public/ folder is not bundled with output:'standalone'.
 import logo from '../../public/coachlenz-logo.png'
@@ -62,15 +63,8 @@ interface NavItem {
   requiresAdmin?: boolean
 }
 
-const ALL_SPORTS = [
-  { key: 'football', label: 'Football', emoji: '🏈' },
-  { key: 'flag_football', label: 'Flag Football', emoji: '🚩' },
-  { key: 'baseball', label: 'Baseball', emoji: '⚾' },
-  { key: 'softball', label: 'Softball', emoji: '🥎' },
-  { key: 'volleyball', label: 'Volleyball', emoji: '🏐' },
-  { key: 'soccer', label: 'Soccer', emoji: '⚽' },
-  { key: 'basketball', label: 'Basketball', emoji: '🏀' },
-]
+// Sport tabs, sourced from the single sports list (mirrors backend CHOOSABLE_SPORTS).
+const ALL_SPORTS = SPORTS.map(k => ({ key: k as string, ...SPORT_META[k] }))
 
 const TIER_LABELS: Record<string, string> = {
   trial: 'Trial', coach: 'Coach', athletic_dept: 'Athletic Dept', district: 'District', enterprise: 'Enterprise',
