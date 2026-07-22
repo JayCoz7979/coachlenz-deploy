@@ -6,7 +6,7 @@ import api from '@/lib/api'
 import { useRouter } from 'next/navigation'
 import { Trophy, Plus } from 'lucide-react'
 
-const SPORTS = ['football','flag_football','basketball','baseball','softball','volleyball','soccer']
+import { SPORTS } from '@/lib/sports'
 
 export default function TeamsOfMonthPage() {
   const { user, isLoading, fetchMe } = useAuth()

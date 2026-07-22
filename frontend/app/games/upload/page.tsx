@@ -6,7 +6,7 @@ import api from '@/lib/api'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Suspense } from 'react'
 
-const SPORTS = ['football','flag_football','basketball','baseball','softball','volleyball','soccer']
+import { SPORTS } from '@/lib/sports'
 
 const SOURCE_LABELS: Record<string, string> = {
   youtube: 'YouTube',
