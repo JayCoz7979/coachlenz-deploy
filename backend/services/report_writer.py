@@ -815,6 +815,41 @@ def _bball_sections(scouting, tendency_summary):
             ),
         })
 
+    # ── Key Players: who to stop. Driven by player_tendencies (jersey-based,
+    # single-camera). Only when at least one legible jersey was tracked. ──
+    pt = tendency_summary.get("player_tendencies") or {}
+    if pt.get("tracked") and pt.get("players_identified", 0) > 0:
+        spec.append({
+            "heading": "Key Players - Who to Stop",
+            "insight_type": "red_zone",
+            "instructions": (
+                "Use tendency_summary.player_tendencies. by_player is ALREADY ranked by involvement (most-used first) and keyed "
+                "'team#jersey'; most_involved names their primary option. Lead with the single player to build the defensive game "
+                "plan around. Then a ranked bullet list of the top 3-5 OFFENSE players (team starts 'offense'): jersey number, role "
+                "(from roles), shot volume and FG%/eFG and three-point rate where present, and the ONE way to guard each (deny, "
+                "force left, chase off the line, make a role player beat you). Cite counts on every claim. Close with the defensive "
+                "assignment priority. Note coverage.pct as the share of possessions with a legible jersey, and state plainly that "
+                "single-camera film only tracks readable numbers - unreadable players are omitted, not guessed."
+            ),
+        })
+
+    # ── Shot Chart / Heat Map: where they score. Driven by shot_zone_map. Only
+    # when zones were actually read off the film. ──
+    szm = tendency_summary.get("shot_zone_map") or {}
+    if szm.get("zones"):
+        spec.append({
+            "heading": "Shot Chart - Where They Score (Heat Map)",
+            "insight_type": "tendency",
+            "instructions": (
+                "Use tendency_summary.shot_zone_map and shooting_overview to describe the opponent's shot heat map. Open with the "
+                "hottest_zone (best FG% with real volume) and most_frequent_zone (where they shoot most). Then a bullet per zone in "
+                "shot_zone_map.zones, ranked by attempts: 'ZONE - X/Y (FG%), Z% of their shots'. Bold the high-volume high-efficiency "
+                "zones - those are what our defense must take away. Fold in shooting_overview (three_point / paint / mid_range splits) "
+                "and the left_side_pct / right_side_pct / corner_three_pct tilt so we know which side and which spots to load to. "
+                "Close with the two zones to concede (low volume or low FG%) and the two to deny."
+            ),
+        })
+
     def has(block, key="total", minv=0):
         b = tendency_summary.get(block) or {}
         try:
