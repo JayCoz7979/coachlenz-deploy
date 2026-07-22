@@ -45,7 +45,7 @@ except ImportError as _e:  # pragma: no cover
         f"Install with: pip install fastapi aiosqlite httpx"
     )
 
-from sqlalchemy import CHAR, JSON as SAJSON, TypeDecorator  # noqa: E402
+from sqlalchemy import CHAR, JSON as SAJSON, TypeDecorator, select  # noqa: E402
 from httpx import AsyncClient, ASGITransport  # noqa: E402
 
 
@@ -73,15 +73,18 @@ from backend.models.event import Event  # noqa: E402
 from backend.models.report import TendencyReport  # noqa: E402
 from backend.models.job import Job  # noqa: E402
 from backend.models.agent_log import AgentLog  # noqa: E402
+from backend.models.clip import Clip  # noqa: E402
+from backend.models.team import Team  # noqa: E402
 from backend.services.auth import hash_password, create_access_token  # noqa: E402
 from backend.services.encryption import encrypt_json  # noqa: E402
-from backend.routers import scout_football, reports, scout, events  # noqa: E402
+from backend.routers import scout_football, reports, scout, events, games  # noqa: E402
 
 app = FastAPI()
 app.include_router(scout_football.router)
 app.include_router(reports.router)
 app.include_router(scout.router)
 app.include_router(events.router)
+app.include_router(games.router)
 
 
 @app.get("/health")
@@ -90,7 +93,8 @@ async def _health():
 
 
 TABLES = [Organization.__table__, User.__table__, Game.__table__,
-          Event.__table__, TendencyReport.__table__, Job.__table__, AgentLog.__table__]
+          Event.__table__, TendencyReport.__table__, Job.__table__, AgentLog.__table__,
+          Clip.__table__, Team.__table__]
 
 # Swap the Postgres-only types on just the tables we create.
 for _t in TABLES:
@@ -259,6 +263,63 @@ async def run():
         # cross-org / missing report guard
         r = await ac.get(f"/reports/{uuid.uuid4()}/export?format=coordinator", headers=tok("analyst"))
         check("export unknown report -> 404", r.status_code == 404)
+
+        # ── DELETE /games/{id}: film + plays + queued job + orphaned report ──
+        org_uuid = uuid.UUID(ids["org"])
+        del_gid = uuid.uuid4()
+        keep_gid = uuid.uuid4()
+        async with AsyncSessionLocal() as db:
+            db.add(Game(id=del_gid, organization_id=org_uuid, title="Delete Me",
+                        sport="football", status="ready"))
+            db.add(Event(id=uuid.uuid4(), game_id=del_gid, organization_id=org_uuid,
+                         event_type="play", side="offense"))
+            db.add(Job(id=uuid.uuid4(), organization_id=org_uuid, job_type="ingest",
+                       status="queued", payload={"game_id": str(del_gid)}))
+            # single-game report (should be deleted) + multi-game report (should survive, id pruned)
+            db.add(TendencyReport(id=uuid.uuid4(), organization_id=org_uuid,
+                                  game_ids=[str(del_gid)], sport="football",
+                                  report_type="opponent", title="Solo Report"))
+            multi_id = uuid.uuid4()
+            db.add(TendencyReport(id=multi_id, organization_id=org_uuid,
+                                  game_ids=[str(del_gid), str(keep_gid)], sport="football",
+                                  report_type="opponent", title="Multi Report"))
+            await db.commit()
+
+        # a user from a DIFFERENT org cannot delete this film (org-scoped -> 404)
+        async with AsyncSessionLocal() as db:
+            org2 = Organization(name="Other HS", slug=f"other-{uuid.uuid4().hex[:8]}", is_trial=False)
+            db.add(org2)
+            await db.flush()
+            u2 = User(organization_id=org2.id, name="Rival Coach", email=f"rival-{uuid.uuid4().hex[:6]}@x.com",
+                      hashed_password=hash_password("x"), role="owner")
+            db.add(u2)
+            await db.commit()
+            await db.refresh(u2)
+            await db.refresh(org2)
+            other_org_tok = {"Authorization": f"Bearer {create_access_token(str(u2.id), str(org2.id))}"}
+        r = await ac.delete(f"/games/{del_gid}", headers=other_org_tok)
+        check("delete film cross-org -> 404", r.status_code == 404)
+
+        r = await ac.delete(f"/games/{del_gid}", headers=tok("analyst"))
+        check("delete film 200", r.status_code == 200)
+
+        r = await ac.get(f"/games/{del_gid}", headers=tok("analyst"))
+        check("deleted film -> 404", r.status_code == 404)
+
+        async with AsyncSessionLocal() as db:
+            ev = (await db.execute(select(Event).where(Event.game_id == del_gid))).scalars().all()
+            check("deleted film's plays cascade-removed", len(ev) == 0)
+            jobs = (await db.execute(select(Job).where(Job.organization_id == org_uuid, Job.status == "queued"))).scalars().all()
+            check("queued job for deleted film removed", all(str((j.payload or {}).get("game_id")) != str(del_gid) for j in jobs))
+            reps = (await db.execute(select(TendencyReport).where(TendencyReport.organization_id == org_uuid))).scalars().all()
+            solo_gone = all(str(del_gid) not in [str(x) for x in (rp.game_ids or [])] or len(rp.game_ids) > 1 for rp in reps)
+            multi = next((rp for rp in reps if rp.id == multi_id), None)
+            check("single-game orphan report deleted", not any(rp.title == "Solo Report" for rp in reps))
+            check("multi-game report survives with id pruned",
+                  multi is not None and [str(x) for x in multi.game_ids] == [str(keep_gid)])
+
+        r = await ac.delete(f"/games/{uuid.uuid4()}", headers=tok("analyst"))
+        check("delete missing film -> 404", r.status_code == 404)
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

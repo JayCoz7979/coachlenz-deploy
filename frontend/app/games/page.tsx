@@ -18,11 +18,28 @@ export default function GamesPage() {
   const router = useRouter()
   const [games, setGames] = useState<any[]>([])
   const [loaded, setLoaded] = useState(false)
+  const [confirmId, setConfirmId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [err, setErr] = useState('')
 
   useEffect(() => {
     if (!user) return
     api.get('/games').then(r => setGames(r.data || [])).catch(() => {}).finally(() => setLoaded(true))
   }, [user])
+
+  async function doDelete(id: string) {
+    setDeletingId(id)
+    setErr('')
+    try {
+      await api.delete(`/games/${id}`)
+      setGames(gs => gs.filter(x => x.id !== id))
+      setConfirmId(null)
+    } catch {
+      setErr('Could not delete that film. Please try again.')
+    } finally {
+      setDeletingId(null)
+    }
+  }
 
   return (
     <OSShell title="Film Room">
@@ -43,10 +60,19 @@ export default function GamesPage() {
         <button className="sec-btn sec-btn-g" onClick={() => router.push('/games/upload?tab=url')} style={{ whiteSpace: 'nowrap' }}>Paste a link →</button>
       </div>
 
+      {err && <div className="ai-box" style={{ marginTop: 0, marginBottom: 12, color: 'var(--red, #d66)' }}>{err}</div>}
+
       <div className="rpt-list">
-        {games.map(g => (
-          <Link key={g.id} href={`/games/${g.id}`} style={{ textDecoration: 'none' }}>
-            <div className="rpt-row">
+        {games.map(g => {
+          const isConfirming = confirmId === g.id
+          const isDeleting = deletingId === g.id
+          return (
+            <div
+              key={g.id}
+              className="rpt-row"
+              style={{ cursor: isConfirming ? 'default' : 'pointer', opacity: isDeleting ? 0.5 : 1 }}
+              onClick={() => { if (!isConfirming && !isDeleting) router.push(`/games/${g.id}`) }}
+            >
               <div className="rpt-icon">🎬</div>
               <div className="rpt-info">
                 <div className="rpt-name">{g.title || g.opponent}</div>
@@ -57,9 +83,33 @@ export default function GamesPage() {
               </div>
               <span className="rpt-meta mono">{g.game_date ? new Date(g.game_date).toLocaleDateString() : (g.created_at ? new Date(g.created_at).toLocaleDateString() : '')}</span>
               {statusTag(g.status)}
+
+              {isConfirming ? (
+                <div onClick={e => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                  <span className="rpt-meta" style={{ whiteSpace: 'nowrap' }}>Delete permanently?</span>
+                  <button
+                    className="sec-btn"
+                    disabled={isDeleting}
+                    onClick={() => doDelete(g.id)}
+                    style={{ color: '#e56', borderColor: '#e56', whiteSpace: 'nowrap' }}
+                  >
+                    {isDeleting ? 'Deleting…' : 'Delete'}
+                  </button>
+                  <button className="sec-btn" disabled={isDeleting} onClick={() => setConfirmId(null)}>Cancel</button>
+                </div>
+              ) : (
+                <button
+                  title="Delete film"
+                  aria-label="Delete film"
+                  onClick={e => { e.stopPropagation(); setErr(''); setConfirmId(g.id) }}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#7a7a6e', padding: 6, flexShrink: 0, fontSize: 16, lineHeight: 1 }}
+                >
+                  🗑
+                </button>
+              )}
             </div>
-          </Link>
-        ))}
+          )
+        })}
         {loaded && games.length === 0 && (
           <div className="ai-box" style={{ textAlign: 'center' }}>
             No film yet.{' '}

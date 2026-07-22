@@ -94,16 +94,60 @@ async def update_game(game_id: str, body: GameUpdate, user: User = Depends(get_c
 
 @router.delete("/{game_id}")
 async def delete_game(game_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Permanently delete a film: its stored video, all tagged/detected plays and
+    clips (FK ON DELETE CASCADE), any queued processing jobs, and any tendency
+    report that was built from it. Scoped to the caller's org so a coach can only
+    delete their own film."""
     result = await db.execute(select(Game).where(Game.id == game_id, Game.organization_id == user.organization_id))
     game = result.scalar_one_or_none()
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
+
+    org_id = game.organization_id
+
+    # 1. Remove the stored video from R2 (best-effort — a missing object must not
+    #    block the DB delete, or the film becomes undeletable).
     if game.r2_key:
         from backend.services.r2 import delete_object
         try:
             delete_object(game.r2_key)
         except Exception:
             pass
+
+    gid_str = str(game_id)
+
+    # 2. Drop queued jobs that reference this game so a worker doesn't wake up and
+    #    process film that no longer exists (jobs carry game_id in their JSON payload,
+    #    not a FK, so cascade won't catch them). Filtered in Python — queued jobs are
+    #    a tiny set and this stays portable across the JSON/JSONB payload column.
+    jres = await db.execute(
+        select(Job).where(Job.organization_id == org_id, Job.status == "queued")
+    )
+    for job in jres.scalars().all():
+        if str((job.payload or {}).get("game_id")) == gid_str:
+            await db.delete(job)
+
+    # 3. Clean up tendency reports built from this film. game_ids is an ARRAY with no
+    #    FK, so nothing cascades: a single-game report becomes orphaned → delete it; a
+    #    multi-game report just drops this id so the rest survives. Normalize to str so
+    #    it matches whether the array holds UUIDs (prod) or strings.
+    from backend.models.report import TendencyReport
+    rres = await db.execute(
+        select(TendencyReport).where(TendencyReport.organization_id == org_id)
+    )
+    for report in rres.scalars().all():
+        gids = report.game_ids or []
+        if gid_str not in [str(x) for x in gids]:
+            continue
+        remaining = [x for x in gids if str(x) != gid_str]
+        if remaining:
+            report.game_ids = remaining
+        else:
+            await db.delete(report)
+
+    # 4. Delete the game itself — events, clips, and agent logs cascade at the DB.
     await db.delete(game)
     await db.commit()
+    # NOTE: trial_games_used is intentionally NOT decremented — refunding on delete
+    # would let a trial org delete-and-reupload to bypass the game limit.
     return {"ok": True}
