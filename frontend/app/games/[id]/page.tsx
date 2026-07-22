@@ -1473,6 +1473,23 @@ export default function GamePage() {
     }
   }
 
+  const [deletingFilm, setDeletingFilm] = useState(false)
+  const handleDeleteFilm = async () => {
+    if (!game) return
+    const ok = window.confirm(
+      `Delete "${game.title}"?\n\nThis permanently removes the film, every tagged and AI-detected play, and any report built from it. This cannot be undone.`
+    )
+    if (!ok) return
+    setDeletingFilm(true)
+    try {
+      await api.delete(`/games/${id}`)
+      router.push('/games')
+    } catch {
+      showToast('Could not delete this film — please try again.')
+      setDeletingFilm(false)
+    }
+  }
+
   const handleUpdate = async (eventId: string, data: Partial<TaggedEvent>) => {
     try {
       const res = await api.patch(`/events/${eventId}`, data)
@@ -1560,6 +1577,15 @@ export default function GamePage() {
                 {game.status.toUpperCase()}
               </span>
           }
+          <button
+            onClick={handleDeleteFilm}
+            disabled={deletingFilm}
+            title="Delete film"
+            aria-label="Delete film"
+            style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'none', border: '1px solid rgba(229,102,102,0.3)', color: '#e56', borderRadius: 8, padding: '4px 10px', fontSize: 12, cursor: deletingFilm ? 'default' : 'pointer', opacity: deletingFilm ? 0.5 : 1 }}
+          >
+            <Trash2 size={13} /> {deletingFilm ? 'Deleting…' : 'Delete'}
+          </button>
         </div>
 
         {/* Main content: video + sidebar */}
