@@ -7,6 +7,7 @@ import api from '@/lib/api'
 import Link from 'next/link'
 import { ChevronLeft, Loader2, FileText, AlertTriangle, TrendingUp, Shield, Zap, Target, Printer, Download, ChevronDown } from 'lucide-react'
 import FieldHeatMap from '@/components/report/FieldHeatMap'
+import BasketballShotChart from '@/components/report/BasketballShotChart'
 
 interface Section {
   heading: string
@@ -504,6 +505,14 @@ export default function ReportPage() {
             && report.summary && typeof report.summary !== 'string' && (
             <div style={{ marginBottom: 28 }}>
               <FieldHeatMap summary={report.summary} />
+            </div>
+          )}
+
+          {/* Shot chart + key players (basketball) — rendered from the report summary */}
+          {String(report.sport || '').toLowerCase() === 'basketball'
+            && report.summary && typeof report.summary !== 'string' && (
+            <div style={{ marginBottom: 28 }}>
+              <BasketballShotChart summary={report.summary} />
             </div>
           )}
 
