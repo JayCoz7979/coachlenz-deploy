@@ -45,7 +45,7 @@ CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "multipass-v9-reconciler-cache"
+CODE_VERSION = "multipass-v10-verify-framecache"
 
 # Parallel ranged extraction: one long fps=0.5 pass over a 2.75h stream times out
 # silently. Instead decode many short windows concurrently, each its own ffmpeg.
@@ -1489,6 +1489,18 @@ class AiDetectWorker(BaseWorker):
         standard. Frames stay in the (uncached) user message."""
         return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
 
+    @staticmethod
+    def _with_cache(blocks: list) -> list:
+        """Copy content blocks, marking the LAST one with cache_control so the whole
+        prefix (system + these frames) becomes a cache breakpoint. Repeated calls with
+        the identical prefix (e.g. several verify calls on one batch's frames) then bill
+        the frames at ~10% instead of full price. No effect on model output."""
+        if not blocks:
+            return blocks
+        out = list(blocks)
+        out[-1] = {**out[-1], "cache_control": {"type": "ephemeral"}}
+        return out
+
     async def _vision_json(self, client, model: str, content: list, max_tokens: int = 4096,
                            system: Optional[list] = None) -> dict:
         """One vision call -> parsed JSON dict ({} on parse failure). Static prompt
@@ -1639,6 +1651,13 @@ class AiDetectWorker(BaseWorker):
              if m["confidence"] < VERIFY_CONFIDENCE_THRESHOLD or m.get("consistency_flag")),
             key=lambda m: (not m.get("consistency_flag"), m["confidence"]),
         )[:MAX_VERIFY_PER_BATCH]
+        # Frame caching (biggest zero-quality-loss cost cut): when a batch has >=2
+        # verify calls, they share the SAME frames under the SAME verify system prompt,
+        # so mark the frames as a cached prefix. The first verify writes the cache; the
+        # rest read it at ~10% cost. Verify is ~85% of a game's spend, and it re-sends
+        # these frames per play - this collapses that duplication. A lone verify is left
+        # uncached (a single cache-write with no read would be pure overhead).
+        verify_frames = self._with_cache(frames) if len(weak) >= 2 else frames
         for m in weak:
             cand = {k: m.get(k) for k in self._VERIFY_KEYS}
             user_txt = "CANDIDATE READ:\n" + json.dumps(cand, default=str)
@@ -1647,7 +1666,7 @@ class AiDetectWorker(BaseWorker):
             try:
                 v = await self._vision_json(
                     client, VERIFY_MODEL,
-                    frames + [{"type": "text", "text": user_txt}],
+                    verify_frames + [{"type": "text", "text": user_txt}],
                     max_tokens=1024, system=self._cached_system(VERIFY_PROMPT))
             except Exception as e:
                 logger.warning(f"[ai_detect] verify pass failed batch {batch_idx}: {e}")
