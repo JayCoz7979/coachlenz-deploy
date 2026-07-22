@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import select, update, func
 from pydantic import BaseModel
 from typing import Optional
 import uuid
@@ -145,9 +145,25 @@ async def delete_game(game_id: str, user: User = Depends(get_current_user), db: 
         else:
             await db.delete(report)
 
-    # 4. Delete the game itself — events, clips, and agent logs cascade at the DB.
+    # 4. Trial slot refund — ONLY when the film delivered no analysis. The trial
+    #    limit exists to cap the expensive resource (AI detection), not the row. If a
+    #    trial coach fumbled an upload (bad link, wrong film) and it never produced a
+    #    single play, give the slot back so a mistake doesn't burn their trial. A game
+    #    that WAS analyzed (has events) is not refunded — that would let a trial org
+    #    delete-and-reupload to farm unlimited free analysis.
+    if game.is_trial_game:
+        from backend.models.event import Event
+        ev_count = await db.scalar(
+            select(func.count()).select_from(Event).where(Event.game_id == game.id)
+        )
+        if not ev_count:
+            await db.execute(
+                update(Organization)
+                .where(Organization.id == org_id, Organization.trial_games_used > 0)
+                .values(trial_games_used=Organization.trial_games_used - 1)
+            )
+
+    # 5. Delete the game itself — events, clips, and agent logs cascade at the DB.
     await db.delete(game)
     await db.commit()
-    # NOTE: trial_games_used is intentionally NOT decremented — refunding on delete
-    # would let a trial org delete-and-reupload to bypass the game limit.
     return {"ok": True}

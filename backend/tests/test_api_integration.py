@@ -45,7 +45,7 @@ except ImportError as _e:  # pragma: no cover
         f"Install with: pip install fastapi aiosqlite httpx"
     )
 
-from sqlalchemy import CHAR, JSON as SAJSON, TypeDecorator, select  # noqa: E402
+from sqlalchemy import CHAR, JSON as SAJSON, TypeDecorator, select, update  # noqa: E402
 from httpx import AsyncClient, ASGITransport  # noqa: E402
 
 
@@ -320,6 +320,43 @@ async def run():
 
         r = await ac.delete(f"/games/{uuid.uuid4()}", headers=tok("analyst"))
         check("delete missing film -> 404", r.status_code == 404)
+
+        # ── Trial slot refund: only an UNANALYZED trial film gives the slot back ──
+        async def _trial_used():
+            async with AsyncSessionLocal() as db:
+                return await db.scalar(select(Organization.trial_games_used).where(Organization.id == org_uuid))
+
+        async with AsyncSessionLocal() as db:
+            await db.execute(update(Organization).where(Organization.id == org_uuid).values(trial_games_used=2))
+            # fumbled trial upload — errored, zero plays → should refund
+            bad_gid = uuid.uuid4()
+            db.add(Game(id=bad_gid, organization_id=org_uuid, title="Bad Link",
+                        sport="football", status="error", is_trial_game=True))
+            # analyzed trial film — has a play → must NOT refund
+            good_gid = uuid.uuid4()
+            db.add(Game(id=good_gid, organization_id=org_uuid, title="Analyzed",
+                        sport="football", status="ready", is_trial_game=True))
+            db.add(Event(id=uuid.uuid4(), game_id=good_gid, organization_id=org_uuid,
+                         event_type="play", side="offense"))
+            await db.commit()
+
+        before = await _trial_used()
+        await ac.delete(f"/games/{bad_gid}", headers=tok("analyst"))
+        check("unanalyzed trial film refunds slot", (await _trial_used()) == before - 1)
+
+        mid = await _trial_used()
+        await ac.delete(f"/games/{good_gid}", headers=tok("analyst"))
+        check("analyzed trial film does NOT refund slot", (await _trial_used()) == mid)
+
+        # refund floors at 0 (never goes negative)
+        async with AsyncSessionLocal() as db:
+            await db.execute(update(Organization).where(Organization.id == org_uuid).values(trial_games_used=0))
+            zero_gid = uuid.uuid4()
+            db.add(Game(id=zero_gid, organization_id=org_uuid, title="Zero",
+                        sport="football", status="error", is_trial_game=True))
+            await db.commit()
+        await ac.delete(f"/games/{zero_gid}", headers=tok("analyst"))
+        check("trial refund floors at 0", (await _trial_used()) == 0)
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
