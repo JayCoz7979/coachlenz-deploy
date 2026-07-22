@@ -45,7 +45,7 @@ CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "multipass-v10-verify-framecache"
+CODE_VERSION = "multipass-v11-basketball-deep"
 
 # Parallel ranged extraction: one long fps=0.5 pass over a 2.75h stream times out
 # silently. Instead decode many short windows concurrently, each its own ffmpeg.
@@ -386,6 +386,36 @@ Return ONLY JSON with the fields you are confident about plus a final judgment:
 verdict is "confirmed" | "corrected" | "unreadable". Set confidence to your HONEST final confidence after looking. Use null for anything the film cannot support."""
 
 
+# Deep-basketball verify (Opus). Basketball is continuous, so the deep path keeps the
+# rich single-pass read and adds the SAME depth layer football gets - reconcile + verify.
+VERIFY_PROMPT_BB = """You are the sharpest, most skeptical basketball film reviewer alive. An automated system produced a possession read from the frames below; the CANDIDATE read (and any contradictions the reconciler flagged) is in the USER MESSAGE. REFUTE or CONFIRM it - assume it may be wrong.
+
+Look at the frames carefully. Correct any field you can clearly see is wrong, and ONLY change a field if the film actually supports a different value. If the user message lists a contradiction, resolve it by deciding which value the film supports (for example, was it truly a 3 or a shot at the rim). Be honest about what the fixed camera cannot show.
+
+Return ONLY JSON with the fields you are confident about plus a judgment:
+{"side":null,"event_type":null,"result":null,"play_action":null,"shot_zone":null,"shot_type":null,"screen_type":null,"defensive_scheme":null,"confidence":0.0,"verdict":"confirmed","note":"one short sentence"}
+verdict is "confirmed" | "corrected" | "unreadable". Use null for anything the film cannot support."""
+
+
+# Deep-basketball technique grading (Opus, opt-in), the basketball analog of the
+# football grade pass.
+GRADE_PROMPT_BASKETBALL = """You are a college basketball quality-control coach grading EXECUTION on one possession. The frames are HIGH-RESOLUTION moments of a single possession; the known context (action, result) is in the USER MESSAGE.
+
+Grade ONLY what the film shows. Fixed single-camera film: if the angle hides a matchup, grade it null and say so. NEVER invent a grade.
+
+Grade each as a letter A/B/C/D/F with a one-phrase reason, or null if not visible:
+- shot_selection_grade: was it a good shot for the offense (open, in rhythm, right shooter)? null if no shot taken.
+- decision_grade: ball-handler / passer decision-making (found the open man, forced it, took care of the ball).
+- on_ball_defense_grade: primary on-ball defender (containment, closeout, contest).
+- screen_grade: quality of the screen set (angle, contact, timing). null if no screen.
+
+When you can tie execution to a VISIBLE jersey number, add per-player grades. Never guess a number.
+
+Return ONLY JSON:
+{"shot_selection_grade":"B - open catch-and-shoot in rhythm","decision_grade":"A - hit the roller on time","on_ball_defense_grade":"C - beaten off the dribble","screen_grade":null,"player_grades":[{"jersey":"12","unit":"offense","grade":"B","note":"good relocation"}],"note":"one sentence overall","confidence":0.0}
+Use null for anything the film cannot support. confidence 0-1 = how well the angle let you grade."""
+
+
 DETECTION_PROMPT_BASKETBALL = """You are the most thorough basketball film analyst in the world. Extract every possible piece of intelligence from each possession or event. Coaches depend on this data to build game plans.
 
 FRAMES: Consecutive moments from basketball game film. Each frame cluster typically covers one possession or key event.
@@ -517,6 +547,7 @@ class AiDetectWorker(BaseWorker):
                 raise ValueError(f"Game not ready for detection (status={game.status})")
             sport = (game.sport or "football").lower()
             org_id = game.organization_id
+            self._sport = sport  # lets the grade pass pick the right prompt/context
             self._film_height = game.film_height  # gates the EAGLE EYE jersey pass
             # Team attribution context for the vision prompts (which jerseys = scouted team).
             self._team_context = _build_team_context(game.scout_jersey, game.opponent_jersey)
@@ -698,7 +729,7 @@ class AiDetectWorker(BaseWorker):
                 # EAGLE EYE it re-extracts each play at high res, then an Opus pass
                 # grades execution (OL/DL win, QB read, tackle, coverage result) tied
                 # to jersey. Mutates deduped in place; failures never sink the run.
-                if getattr(self, "_grade", False) and sport in ("football", "flag_football") and not dry_run and deduped:
+                if getattr(self, "_grade", False) and sport in ("football", "flag_football", "basketball") and not dry_run and deduped:
                     try:
                         await self._grade_plays(video_source, deduped, game_id, org_id, job_id)
                     except Exception as e:
@@ -835,6 +866,9 @@ class AiDetectWorker(BaseWorker):
                             "ol_grade", "dl_pressure_grade", "qb_read_grade",
                             "tackle_grade", "coverage_result", "unit_grades",
                             "player_grades", "grade_note", "grade_source",
+                            # Basketball technique grades
+                            "shot_selection_grade", "decision_grade",
+                            "on_ball_defense_grade", "screen_grade",
                         )
 
                         # LEGAL JERSEY GUARD (basketball): HS numbers use only the
@@ -1285,20 +1319,27 @@ class AiDetectWorker(BaseWorker):
                 got += 1
         if not got:
             return {}, 0
-        ctx = {k: play.get(k) for k in ("down", "distance", "play_type", "run_pass",
-                                        "formation", "personnel", "coverage")}
+        if getattr(self, "_sport", "") == "basketball":
+            ctx = {k: play.get(k) for k in ("play_action", "result", "shot_zone", "shot_type", "defensive_scheme")}
+            gprompt = GRADE_PROMPT_BASKETBALL
+        else:
+            ctx = {k: play.get(k) for k in ("down", "distance", "play_type", "run_pass",
+                                            "formation", "personnel", "coverage")}
+            gprompt = GRADE_PROMPT
         content.append({"type": "text", "text": "PLAY CONTEXT:\n" + json.dumps(ctx, default=str)})
         return await self._vision_json(client, GRADE_MODEL, content, max_tokens=1024,
-                                       system=self._cached_system(GRADE_PROMPT)), got
+                                       system=self._cached_system(gprompt)), got
 
     @staticmethod
     def _apply_grade(play: dict, resp: dict) -> bool:
-        """Write technique grades onto the play (never overwrites with null). Returns
-        True if anything was applied."""
+        """Write technique grades onto the play (never overwrites with null). Handles
+        both football (ol/dl/qb/tackle/coverage) and basketball (shot-selection/decision/
+        on-ball-defense/screen) grade keys. Returns True if anything was applied."""
         if not resp:
             return False
         applied = False
-        for k in ("ol_grade", "dl_pressure_grade", "qb_read_grade", "tackle_grade", "coverage_result"):
+        for k in ("ol_grade", "dl_pressure_grade", "qb_read_grade", "tackle_grade", "coverage_result",
+                  "shot_selection_grade", "decision_grade", "on_ball_defense_grade", "screen_grade"):
             v = resp.get(k)
             if v:
                 play[k] = v
@@ -1311,9 +1352,9 @@ class AiDetectWorker(BaseWorker):
             if resp.get("note"):
                 play["grade_note"] = resp["note"]
             play["grade_source"] = "grader_v1"
-            play["unit_grades"] = {u: play.get(g) for u, g in
-                                   (("OL", "ol_grade"), ("DL", "dl_pressure_grade"), ("QB", "qb_read_grade"))
-                                   if play.get(g)}
+            units = (("OL", "ol_grade"), ("DL", "dl_pressure_grade"), ("QB", "qb_read_grade"),
+                     ("SHOT", "shot_selection_grade"), ("DEC", "decision_grade"), ("DEF", "on_ball_defense_grade"))
+            play["unit_grades"] = {u: play.get(g) for u, g in units if play.get(g)}
         return applied
 
     async def _grade_plays(self, video_source: str, plays: list, game_id, org_id, job_id) -> int:
@@ -1330,6 +1371,7 @@ class AiDetectWorker(BaseWorker):
         def _priority(p):
             res = (p.get("result") or "").lower()
             s = 0
+            # Football: scoring / explosive / 3rd-4th down.
             if res in ("touchdown", "turnover", "sack"):
                 s += 3
             if p.get("down") in (3, 4):
@@ -1337,6 +1379,11 @@ class AiDetectWorker(BaseWorker):
             y = p.get("yards_gained")
             if isinstance(y, (int, float)) and abs(y) >= 15:
                 s += 2
+            # Basketball: shots, turnovers, steals, blocks, late-clock possessions.
+            if (p.get("event_type") or "").lower() in ("shot", "turnover", "steal", "block"):
+                s += 2
+            if "late" in (p.get("shot_clock_range") or "").lower():
+                s += 1
             return s
         candidates = sorted([p for p in plays if p.get("time_seconds") is not None],
                             key=_priority, reverse=True)[:MAX_GRADE_PLAYS]
@@ -1566,8 +1613,11 @@ class AiDetectWorker(BaseWorker):
         client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
 
         # Per-run flag set from the job's detection_mode (falls back to the global).
-        if getattr(self, "_multipass", MULTIPASS_ENABLED) and sport in ("football", "flag_football"):
+        deep = getattr(self, "_multipass", MULTIPASS_ENABLED)
+        if deep and sport in ("football", "flag_football"):
             return await self._analyze_batch_multipass(client, batch, batch_idx)
+        if deep and sport == "basketball":
+            return await self._analyze_batch_basketball_deep(client, batch, batch_idx)
 
         prompt = DETECTION_PROMPT_BASKETBALL if sport == "basketball" else DETECTION_PROMPT
         sys_text = getattr(self, "_team_context", "") + prompt
@@ -1587,6 +1637,9 @@ class AiDetectWorker(BaseWorker):
                     "formation", "personnel", "play_type", "run_pass",
                     "run_concept", "pass_concept", "defensive_front",
                     "coverage_shell", "coverage", "blitz", "result", "yards_gained")
+    # Basketball fields the deep verify pass may correct.
+    _VERIFY_KEYS_BB = ("side", "event_type", "result", "play_action", "shot_zone",
+                       "shot_type", "screen_type", "defensive_scheme")
 
     async def _analyze_batch_multipass(self, client, batch, batch_idx: int) -> list[dict]:
         """Three-pass football detection. Pass 1 (pre-snap) segments + reads the
@@ -1688,6 +1741,84 @@ class AiDetectWorker(BaseWorker):
                 m["consistency_flag"] = bool(notes2)
 
         return self._assign_times(merged, batch)
+
+    async def _analyze_batch_basketball_deep(self, client, batch, batch_idx: int) -> list[dict]:
+        """Deep basketball. Basketball is continuous, so instead of a risky pre/post
+        re-split it keeps the rich single-pass possession read and adds the SAME depth
+        layer football gets: a model-free reconciler plus an Opus adversarial verify on
+        the shaky possessions. Reuses the verify loop, frame cache, and confidence math."""
+        frames = self._frame_content(batch)
+        parsed = await self._vision_json(
+            client, DETECT_MODEL, frames,
+            system=self._cached_system(getattr(self, "_team_context", "") + DETECTION_PROMPT_BASKETBALL))
+        plays = parsed.get("plays", [])
+        if not plays:
+            return []
+        for pl in plays:
+            pl.setdefault("confidence", 0.7)
+
+        # Reconciler: cap contradictory possessions and force them into the verify queue.
+        if RECONCILER_ENABLED:
+            for m in plays:
+                notes = self._reconcile_basketball(m)
+                if notes:
+                    m["contradictions"] = notes
+                    m["consistency_flag"] = True
+                    if float(m.get("confidence") or 1.0) > CONTRADICTION_CONF_CAP:
+                        m["confidence"] = CONTRADICTION_CONF_CAP
+
+        # Opus verifies the shakiest reads (low confidence OR contradictory), capped.
+        weak = sorted(
+            (m for m in plays
+             if float(m.get("confidence") or 0) < VERIFY_CONFIDENCE_THRESHOLD or m.get("consistency_flag")),
+            key=lambda m: (not m.get("consistency_flag"), float(m.get("confidence") or 0)),
+        )[:MAX_VERIFY_PER_BATCH]
+        verify_frames = self._with_cache(frames) if len(weak) >= 2 else frames
+        for m in weak:
+            cand = {k: m.get(k) for k in self._VERIFY_KEYS_BB}
+            user_txt = "CANDIDATE READ:\n" + json.dumps(cand, default=str)
+            if m.get("contradictions"):
+                user_txt += "\n\nRECONCILER CONTRADICTIONS (resolve these):\n- " + "\n- ".join(m["contradictions"])
+            try:
+                v = await self._vision_json(
+                    client, VERIFY_MODEL,
+                    verify_frames + [{"type": "text", "text": user_txt}],
+                    max_tokens=1024, system=self._cached_system(VERIFY_PROMPT_BB))
+            except Exception as e:
+                logger.warning(f"[ai_detect] bball verify failed batch {batch_idx}: {e}")
+                continue
+            if not v:
+                continue
+            for k in self._VERIFY_KEYS_BB:
+                if v.get(k) is not None:
+                    m[k] = v[k]
+            if v.get("confidence") is not None:
+                m["confidence"] = round(float(v["confidence"]), 2)
+            m["verified"] = True
+            m["verdict"] = v.get("verdict")
+            m["verify_note"] = v.get("note")
+            if RECONCILER_ENABLED:
+                notes2 = self._reconcile_basketball(m)
+                m["contradictions"] = notes2 or None
+                m["consistency_flag"] = bool(notes2)
+
+        return self._assign_times(plays, batch)
+
+    @staticmethod
+    def _reconcile_basketball(m: dict) -> list:
+        """Model-free consistency check on ONE basketball possession. Only fires when
+        both conflicting values are genuinely present."""
+        c = []
+        zone = (m.get("shot_zone") or "")
+        stype = (m.get("shot_type") or "").lower()
+        is_three = ("3" in zone) or ("3-point" in stype)
+        rim = ("Restricted" in zone) or ("Paint" in zone) or ("layup" in stype) \
+            or ("dunk" in stype) or ("tip-in" in stype)
+        if is_three and rim:
+            c.append("shot reads as a 3 but the zone/type is at the rim")
+        if ("layup" in stype or "dunk" in stype) and "3" in zone:
+            c.append("shot_type is a layup/dunk but shot_zone is a 3")
+        return c
 
     @staticmethod
     def _reconcile(m: dict) -> list:
