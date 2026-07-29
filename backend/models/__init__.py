@@ -18,3 +18,4 @@ from .source_connection import SourceConnection
 from .agent_log import AgentLog
 from .roster import RosterPlayer
 from .usage import AnalysisUsage, CoachUsageLimit
+from .grade_annotation import GradeAnnotation
