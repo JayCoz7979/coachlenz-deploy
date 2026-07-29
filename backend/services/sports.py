@@ -28,19 +28,23 @@ SPORT_LABELS = {
     "baseball": "Baseball",
 }
 
-# How many sports each plan tier may lock in. First tier = ONE sport.
-# Unknown tiers default to 1 (the safest, most-restrictive assumption).
+# How many sports each BILLING tier may lock in at onboarding. The live billing
+# tiers are coach / athletic_dept / district (see billing.PRICE_MAP) plus the
+# contact-sales `enterprise` and the `trial`. Per the published plans (the Coach
+# plan lists "All sports"; higher plans are "Everything in Coach/..."), every PAID
+# tier unlocks all live sports; only the 2-game trial is single-sport.
+#
+# This MUST stay in sync with billing.PRICE_MAP: a paid tier missing here silently
+# falls through to DEFAULT_SPORT_LIMIT (1) and caps a paying org at one sport
+# (this was bug I-1). test_tier_billing_coverage.py enforces the invariant.
+# Unknown tiers still default to 1 (safest, most-restrictive).
+ALL_SPORTS = len(CHOOSABLE_SPORTS)  # "All sports" == every sport with a live engine
 TIER_SPORT_LIMITS = {
-    "trial": 1,
-    "starter": 1,
-    "tier1": 1,
-    "pro": 2,
-    "tier2": 2,
-    "premium": 3,
-    "elite": 99,
-    "enterprise": 99,
-    "tier3": 99,
-    "unlimited": 99,
+    "trial": 1,                    # 2-game trial: one sport
+    "coach": ALL_SPORTS,           # Coach plan explicitly includes "All sports"
+    "athletic_dept": ALL_SPORTS,   # "Everything in Coach" + multi-team
+    "district": ALL_SPORTS,        # "Everything in Athletic Dept" + district-wide
+    "enterprise": ALL_SPORTS,      # "Everything in District" (contact sales)
 }
 DEFAULT_SPORT_LIMIT = 1
 

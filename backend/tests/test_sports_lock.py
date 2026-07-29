@@ -8,6 +8,7 @@ from fastapi import HTTPException
 
 from backend.services.sports import (
     max_sports_for_tier, sport_allowed, assert_sport_allowed, chosen_sports,
+    CHOOSABLE_SPORTS,
 )
 
 
@@ -16,14 +17,15 @@ def ORG(tier="trial", sports=None):
 
 
 def run():
-    # ── tier -> how many sports ──────────────────────────────────────────────
-    assert max_sports_for_tier("trial") == 1
-    assert max_sports_for_tier("starter") == 1
-    assert max_sports_for_tier("pro") == 2
-    assert max_sports_for_tier("elite") == 99
+    # ── tier -> how many sports (real billing vocabulary) ────────────────────
+    all_sports = len(CHOOSABLE_SPORTS)
+    assert max_sports_for_tier("trial") == 1, "trial is single-sport"
+    assert max_sports_for_tier("coach") == all_sports, "Coach plan includes All sports"
+    assert max_sports_for_tier("athletic_dept") == all_sports
+    assert max_sports_for_tier("district") == all_sports
     assert max_sports_for_tier("who_knows") == 1, "unknown tier defaults to 1 (most restrictive)"
     assert max_sports_for_tier(None) == 1
-    print("  tier limits: trial/starter=1, pro=2, elite=99, unknown=1  OK")
+    print(f"  tier limits: trial=1, coach/athletic_dept/district=all({all_sports}), unknown=1  OK")
 
     # ── not yet locked (empty) = allow everything (legacy / pre-onboarding) ──
     fresh = ORG(sports=[])
@@ -32,7 +34,7 @@ def run():
     print("  empty chosen_sports -> unrestricted (backward compatible)  OK")
 
     # ── locked to basketball: basketball allowed, football warned ────────────
-    bball = ORG(tier="starter", sports=["basketball"])
+    bball = ORG(tier="coach", sports=["basketball"])
     assert sport_allowed(bball, "basketball")
     assert not sport_allowed(bball, "football")
     assert_sport_allowed(bball, "basketball")  # allowed
@@ -46,7 +48,7 @@ def run():
     print(f"  locked to basketball -> football blocked (403): \"{raised.detail[:70]}...\"  OK")
 
     # ── two-sport plan honored ──────────────────────────────────────────────
-    both = ORG(tier="pro", sports=["basketball", "football"])
+    both = ORG(tier="coach", sports=["basketball", "football"])
     assert_sport_allowed(both, "basketball")
     assert_sport_allowed(both, "football")
     try:
