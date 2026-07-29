@@ -88,6 +88,21 @@ def require_role(*roles):
     return checker
 
 
+def require_permission(capability: str):
+    """Capability-based gate (Track 5.1 RBAC). Prefer this over require_role for new
+    endpoints: the role->capability policy lives in services.permissions."""
+    from backend.services.permissions import has_permission
+
+    async def checker(user: User = Depends(get_current_user)):
+        if not has_permission(user.role, capability):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Your role ({user.role or 'member'}) doesn't allow this action.",
+            )
+        return user
+    return checker
+
+
 # ── Platform super-admin ─────────────────────────────────────────────────────
 # CRITICAL: `role="owner"` is a PER-ORG role — every customer is the owner of
 # their own org. It must NEVER gate the /admin/* surface (which can edit any org's

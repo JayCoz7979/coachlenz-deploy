@@ -17,8 +17,13 @@ from backend.models.team import Team
 from backend.models.game import Game
 from backend.models.event import Event
 from backend.models.roster import RosterPlayer
-from backend.services.auth import get_current_user
+from backend.services.auth import get_current_user, require_permission
+from backend.services.permissions import CAN_MANAGE_ROSTER
 from backend.services.roster import parse_roster_csv, resolve_jersey, normalize_jersey
+
+# Managing the roster (add/edit/remove/upload/clone) requires the can_manage_roster
+# capability (head coach, coordinators, owner). Reads stay open to any org member.
+_require_manage = Depends(require_permission(CAN_MANAGE_ROSTER))
 
 router = APIRouter(prefix="/rosters", tags=["rosters"])
 
@@ -74,7 +79,7 @@ async def list_roster(team_id: str, user: User = Depends(get_current_user), db: 
 
 
 @router.post("/{team_id}/players")
-async def add_player(team_id: str, body: PlayerIn, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def add_player(team_id: str, body: PlayerIn, user: User = _require_manage, db: AsyncSession = Depends(get_db)):
     await _team_or_404(team_id, user, db)
     jersey = normalize_jersey(body.jersey_number)
     if not jersey:
@@ -93,7 +98,7 @@ async def add_player(team_id: str, body: PlayerIn, user: User = Depends(get_curr
 
 
 @router.post("/{team_id}/upload")
-async def upload_roster_csv(team_id: str, body: CsvIn, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def upload_roster_csv(team_id: str, body: CsvIn, user: User = _require_manage, db: AsyncSession = Depends(get_db)):
     """Upsert a roster from CSV (columns: jersey_number, first_name, last_name,
     position, grade_year — common header spellings accepted). Existing jerseys are
     updated in place; new ones are inserted."""
@@ -122,7 +127,7 @@ async def upload_roster_csv(team_id: str, body: CsvIn, user: User = Depends(get_
 
 
 @router.patch("/{team_id}/players/{player_id}")
-async def edit_player(team_id: str, player_id: str, body: PlayerPatch, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def edit_player(team_id: str, player_id: str, body: PlayerPatch, user: User = _require_manage, db: AsyncSession = Depends(get_db)):
     await _team_or_404(team_id, user, db)
     res = await db.execute(select(RosterPlayer).where(
         RosterPlayer.id == player_id, RosterPlayer.team_id == team_id,
@@ -137,7 +142,7 @@ async def edit_player(team_id: str, player_id: str, body: PlayerPatch, user: Use
 
 
 @router.delete("/{team_id}/players/{player_id}")
-async def remove_player(team_id: str, player_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def remove_player(team_id: str, player_id: str, user: User = _require_manage, db: AsyncSession = Depends(get_db)):
     await _team_or_404(team_id, user, db)
     res = await db.execute(select(RosterPlayer).where(
         RosterPlayer.id == player_id, RosterPlayer.team_id == team_id,
@@ -151,7 +156,7 @@ async def remove_player(team_id: str, player_id: str, user: User = Depends(get_c
 
 
 @router.post("/{team_id}/clone-to/{target_team_id}")
-async def clone_roster(team_id: str, target_team_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def clone_roster(team_id: str, target_team_id: str, user: User = _require_manage, db: AsyncSession = Depends(get_db)):
     """Copy this roster to another team (e.g. a new season). Jerseys already present
     on the target are left untouched."""
     await _team_or_404(team_id, user, db)
