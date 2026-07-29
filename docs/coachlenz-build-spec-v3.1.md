@@ -122,9 +122,10 @@ UATP v1.3 (mandatory on all analysis runs)                          [VERIFIED]
 13. **AI models:** claude-sonnet-4-6 for bulk passes, claude-opus-4-8 for verify/grade. **[CORRECTED — replaces "sonnet-only", which contradicted the Track 1.2 Opus-verify requirement]**
 14. **Footer** on every surface: "Powered by Cosby AI Solutions" -> cosbyaisolutions.com. [VERIFIED]
 15. **Never commit directly to main.** Feature branches only, conventional commits.
-16. **Update CHANGELOG.md / TODO.md / LESSONS.md / TEST-LOG.md after meaningful changes.** Note: these tracking files do not yet exist in the repo; create them or drop the rule.
-17. **CGE session standard:** top 20% severity issues per session, actual fix code on every finding.
-18. **Team Analysis** is the named authority for all gap findings.
+16. **CGE session standard:** top 20% severity issues per session, actual fix code on every finding.
+17. **Team Analysis** is the named authority for all gap findings.
+
+*(v3.0's separate CHANGELOG/TODO/LESSONS/TEST-LOG tracking-file rule is dropped: those files do not exist in this repo and the rule was unenforceable.)*
 
 ---
 
