@@ -28,10 +28,14 @@ def create_access_token(user_id: str, org_id: str) -> str:
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm="HS256")
 
-def create_refresh_token(user_id: str) -> str:
+def create_refresh_token(user_id: str, token_version: int = 0) -> str:
     payload = {
         "sub": user_id,
         "type": "refresh",
+        # Snapshot of the user's token_version at issue time. /auth/refresh rejects
+        # the token once the user's stored token_version moves past this (logout,
+        # password change, password reset), revoking every refresh token at once.
+        "tv": int(token_version or 0),
         "exp": datetime.utcnow() + timedelta(days=30),
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm="HS256")
