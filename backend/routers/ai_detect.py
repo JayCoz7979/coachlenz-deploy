@@ -11,6 +11,8 @@ from backend.models.event import Event
 from backend.models.agent_log import AgentLog
 from backend.services.auth import get_current_user, get_current_org
 from backend.services.sports import assert_sport_allowed
+from backend.models.usage import AnalysisUsage, CoachUsageLimit
+from backend.services.usage import month_start, over_limit
 from backend.utils.timeutils import to_naive_utc
 
 router = APIRouter(prefix="/games", tags=["ai-detect"])
@@ -318,6 +320,21 @@ async def trigger_auto_detect(
     if existing.scalar_one_or_none():
         return {"status": "already_queued", "game_id": game_id}
 
+    # Per-coach monthly cap (AD-set on athletic_dept/district plans). Absent row or
+    # 0 = unlimited. Counted per calendar month; blocks a NEW run at the cap.
+    lres = await db.execute(select(CoachUsageLimit).where(
+        CoachUsageLimit.organization_id == user.organization_id,
+        CoachUsageLimit.user_id == user.id))
+    limit_row = lres.scalar_one_or_none()
+    if limit_row and limit_row.monthly_run_limit > 0:
+        cres = await db.execute(select(func.count()).select_from(AnalysisUsage).where(
+            AnalysisUsage.user_id == user.id,
+            AnalysisUsage.created_at >= month_start(datetime.utcnow())))
+        if over_limit(cres.scalar_one() or 0, limit_row.monthly_run_limit):
+            raise HTTPException(status_code=402, detail=(
+                f"You've used your {limit_row.monthly_run_limit} analyses for this month. "
+                f"Ask your athletic director to raise your limit."))
+
     job = Job(
         organization_id=user.organization_id,
         job_type="ai_detect",
@@ -326,6 +343,12 @@ async def trigger_auto_detect(
                  "full": bool(full), "test": bool(test), "grade": bool(grade)},
     )
     db.add(job)
+    # Attribute this run to the coach for the AD usage dashboard.
+    db.add(AnalysisUsage(
+        organization_id=user.organization_id, user_id=user.id,
+        sport=(game.sport or "football"),
+        analysis_type=("deep_grade" if grade else ("deep" if mode == "deep" else "fast")),
+    ))
     await db.commit()
     await db.refresh(job)
 
