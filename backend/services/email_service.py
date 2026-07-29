@@ -80,6 +80,23 @@ async def send_password_reset_email(to: str, name: str, reset_url: str):
     })
 
 
+async def send_staff_invite_email(to: str, name: str, inviter_name: str, org_name: str, invite_url: str):
+    resend.Emails.send({
+        "from": FROM,
+        "to": to,
+        "subject": f"You've been added to {org_name} on CoachLenz",
+        "html": (
+            f"<p>Hi {name},</p>"
+            f"<p>{inviter_name} added you to <strong>{org_name}</strong>'s staff on CoachLenz. "
+            f"Click below to set your password and get started. This invite expires in 7 days.</p>"
+            f"<p><a href='{invite_url}' style='display:inline-block;background:#1a5c2a;color:#fff;"
+            f"padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:600'>Accept Invite</a></p>"
+            f"<p style='color:#666;font-size:13px'>If you weren't expecting this, you can ignore this email.</p>"
+            f"<p>Powered by <a href='https://cosbyaisolutions.com'>Cosby AI Solutions</a></p>"
+        ),
+    })
+
+
 async def send_referral_credit_email(to: str, name: str, credit_amount: str):
     resend.Emails.send({
         "from": FROM,
