@@ -105,7 +105,7 @@ async def register(body: RegisterRequest, request: Request, db: AsyncSession = D
         pass
 
     access = create_access_token(str(user.id), str(org.id))
-    refresh = create_refresh_token(str(user.id))
+    refresh = create_refresh_token(str(user.id), user.token_version)
     return {"access_token": access, "refresh_token": refresh, "token_type": "bearer"}
 
 @router.post("/login")
@@ -122,7 +122,7 @@ async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends
     await db.execute(update(User).where(User.id == user.id).values(last_login_at=datetime.utcnow()))
     await db.commit()
     access = create_access_token(str(user.id), str(user.organization_id))
-    refresh = create_refresh_token(str(user.id))
+    refresh = create_refresh_token(str(user.id), user.token_version)
     return {"access_token": access, "refresh_token": refresh, "token_type": "bearer"}
 
 @router.post("/refresh")
@@ -134,8 +134,25 @@ async def refresh_token(body: RefreshRequest, db: AsyncSession = Depends(get_db)
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+    # Revocation check: a refresh token is only valid while its snapshot matches the
+    # user's current token_version. Logout / password change / reset bump the version,
+    # which invalidates every refresh token issued before it.
+    if int(payload.get("tv", 0)) != int(user.token_version or 0):
+        raise HTTPException(status_code=401, detail="Session expired. Please sign in again.")
     access = create_access_token(str(user.id), str(user.organization_id))
     return {"access_token": access, "token_type": "bearer"}
+
+
+@router.post("/logout")
+async def logout(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Revoke every refresh token for this user by bumping token_version. The client
+    should also discard its stored tokens; the short-lived access token then expires
+    on its own within 30 minutes."""
+    await db.execute(
+        update(User).where(User.id == user.id).values(token_version=User.token_version + 1)
+    )
+    await db.commit()
+    return {"ok": True, "message": "Signed out on all devices."}
 
 
 # ── Password reset (forgot password) ─────────────────────────────────────────
@@ -189,6 +206,9 @@ async def reset_password(request: Request, body: ResetPasswordRequest, db: Async
     user.hashed_password = hash_password(body.new_password)
     user.reset_token_hash = None
     user.reset_token_expires = None
+    # Revoke every existing refresh token (e.g. one an attacker may hold) now that
+    # the password has changed.
+    user.token_version = (user.token_version or 0) + 1
     await db.commit()
     return {"ok": True, "message": "Password reset. Sign in with your new password."}
 
@@ -205,9 +225,14 @@ async def change_password(
     _validate_password(body.new_password)
     if body.new_password == body.current_password:
         raise HTTPException(status_code=422, detail="New password must be different from the current one.")
-    await db.execute(update(User).where(User.id == user.id).values(hashed_password=hash_password(body.new_password)))
+    # Change the password AND revoke all existing refresh tokens (all other devices)
+    # in one write by bumping token_version.
+    await db.execute(update(User).where(User.id == user.id).values(
+        hashed_password=hash_password(body.new_password),
+        token_version=User.token_version + 1,
+    ))
     await db.commit()
-    return {"ok": True, "message": "Password updated."}
+    return {"ok": True, "message": "Password updated. You'll need to sign in again on other devices."}
 
 
 # ── Onboarding identity verification (email + phone, chargeback protection) ───

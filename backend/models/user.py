@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from .base import Base
@@ -18,6 +18,9 @@ class User(Base):
     email_verified = Column(Boolean, nullable=False, default=False)
     avatar_url = Column(String)
     is_active = Column(Boolean, nullable=False, default=True)
+    # Bumped on logout / password change / password reset to revoke all previously
+    # issued refresh tokens (they embed this value; /auth/refresh checks it).
+    token_version = Column(Integer, nullable=False, default=0, server_default="0")
     last_login_at = Column(DateTime(timezone=True))
     # Single-use password-reset token (SHA-256 hash of the emailed token) + expiry.
     reset_token_hash = Column(String)
