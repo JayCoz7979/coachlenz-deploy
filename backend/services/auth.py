@@ -41,12 +41,21 @@ def create_refresh_token(user_id: str, token_version: int = 0) -> str:
     return jwt.encode(payload, settings.SECRET_KEY, algorithm="HS256")
 
 def decode_token(token: str) -> dict:
-    try:
-        return jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    # Grace-window key rotation: verify against the current SECRET_KEY first, then
+    # the previous one (if set) so tokens signed before a rotation still validate.
+    # An expired token is expired under any key -> report it without trying others.
+    keys = [settings.SECRET_KEY]
+    if settings.SECRET_KEY_PREVIOUS:
+        keys.append(settings.SECRET_KEY_PREVIOUS)
+    for i, key in enumerate(keys):
+        try:
+            return jwt.decode(token, key, algorithms=["HS256"])
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(status_code=401, detail="Token expired")
+        except jwt.InvalidTokenError:
+            if i == len(keys) - 1:
+                raise HTTPException(status_code=401, detail="Invalid token")
+            continue
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
