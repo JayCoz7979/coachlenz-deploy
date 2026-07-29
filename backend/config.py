@@ -8,6 +8,12 @@ class Settings(BaseSettings):
 
     # Auth
     SECRET_KEY: str
+    # Grace-window key rotation: set this to the OLD SECRET_KEY when you rotate.
+    # New tokens are signed with SECRET_KEY; decode_token still accepts tokens
+    # signed with SECRET_KEY_PREVIOUS so no one is logged out mid-rotation. Drop it
+    # after the refresh-token lifetime (30 days) has elapsed. See
+    # CREDENTIAL_ROTATION_SCHEDULE.md.
+    SECRET_KEY_PREVIOUS: str = ""
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
@@ -72,6 +78,11 @@ class Settings(BaseSettings):
 
     # Encryption
     FERNET_KEY: str = ""
+    # Grace-window key rotation: comma-separated OLD Fernet keys. Data is encrypted
+    # with FERNET_KEY (the new primary) but decrypted against FERNET_KEY + these, so
+    # rotating the key never orphans already-encrypted data. Drop an old key once all
+    # data has been re-encrypted. See CREDENTIAL_ROTATION_SCHEDULE.md.
+    FERNET_KEYS_PREVIOUS: str = ""
 
     # Admin
     ADMIN_PASSWORD: str = "ChangeMeNow!"
