@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, LargeBinary
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, LargeBinary, Integer
 from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
 from .base import Base
 
@@ -17,6 +17,11 @@ class TendencyReport(Base):
     prose_sections = Column(JSONB, default=list)
     is_trial = Column(Boolean, nullable=False, default=False)
     watermarked = Column(Boolean, nullable=False, default=False)
+    # Read-only public share link. Null until a coach enables sharing; the token is
+    # the capability and share_expires_at gates it (7-day default, 30-day max).
+    share_token = Column(String, unique=True)
+    share_expires_at = Column(DateTime(timezone=True))
+    share_view_count = Column(Integer, nullable=False, default=0, server_default="0")
     generated_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
