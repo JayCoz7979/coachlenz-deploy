@@ -16,3 +16,4 @@ from .coach import CoachProfile, CoachMove, AdminPermission, AdminAuditLog
 from .survey import SurveyPrompt, SurveyResponse
 from .source_connection import SourceConnection
 from .agent_log import AgentLog
+from .roster import RosterPlayer
