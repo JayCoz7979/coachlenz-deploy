@@ -4,11 +4,13 @@ from sqlalchemy import select, func, update, and_, or_
 from datetime import datetime, timedelta
 from backend.models.base import get_db
 from backend.models.user import User
+from backend.models.organization import Organization
 from backend.models.game import Game
 from backend.models.job import Job
 from backend.models.event import Event
 from backend.models.agent_log import AgentLog
-from backend.services.auth import get_current_user
+from backend.services.auth import get_current_user, get_current_org
+from backend.services.sports import assert_sport_allowed
 from backend.utils.timeutils import to_naive_utc
 
 router = APIRouter(prefix="/games", tags=["ai-detect"])
@@ -260,6 +262,7 @@ async def trigger_auto_detect(
     test: bool = False,  # quick test: analyze only the opening minutes (pennies)
     grade: bool = False, # opt-in technique-grading pass (OL/DL/QB/tackle/coverage), Opus per-play
     user: User = Depends(get_current_user),
+    org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db),
 ):
     """Queue an AI play-detection job for a game that is already ingested (status=ready).
@@ -273,6 +276,14 @@ async def trigger_auto_detect(
     game = result.scalar_one_or_none()
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
+
+    # Sport lock on the EXPENSIVE path. Film import is already guarded, but the
+    # analysis trigger is where Opus COGS is actually spent (deep = 3-pass +
+    # per-play verify). A legacy/mis-tagged game outside the plan's locked sport
+    # must 403 here BEFORE a job is queued, or a single-sport plan could burn
+    # deep-analysis cost on a sport it never paid for.
+    assert_sport_allowed(org, game.sport or "football")
+
     if game.status not in ("ready", "analyzing"):
         raise HTTPException(
             status_code=400,
