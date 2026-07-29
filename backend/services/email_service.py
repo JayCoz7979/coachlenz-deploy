@@ -97,6 +97,24 @@ async def send_staff_invite_email(to: str, name: str, inviter_name: str, org_nam
     })
 
 
+async def send_recruiting_profile_email(to: str, player_name: str, coach_name: str, org_name: str, profile_url: str):
+    resend.Emails.send({
+        "from": FROM,
+        "to": to,
+        "subject": f"Recruiting profile: {player_name} ({org_name})",
+        "html": (
+            f"<p>Hi,</p>"
+            f"<p>{coach_name} from <strong>{org_name}</strong> shared a recruiting profile "
+            f"for <strong>{player_name}</strong> with you on CoachLenz — highlights and "
+            f"key details, no login required.</p>"
+            f"<p><a href='{profile_url}' style='display:inline-block;background:#1a5c2a;color:#fff;"
+            f"padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:600'>View Profile</a></p>"
+            f"<p style='color:#666;font-size:13px'>This link expires on the date set by the coach.</p>"
+            f"<p>Powered by <a href='https://cosbyaisolutions.com'>Cosby AI Solutions</a></p>"
+        ),
+    })
+
+
 async def send_referral_credit_email(to: str, name: str, credit_amount: str):
     resend.Emails.send({
         "from": FROM,

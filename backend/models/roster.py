@@ -23,6 +23,11 @@ class RosterPlayer(Base):
     position = Column(String)
     grade_year = Column(String)
     is_active = Column(Boolean, nullable=False, default=True)
+    # Recruiting Board: opt-in per player. A shareable, no-login profile for college
+    # scouts; token-gated with an expiry (30-day default, 90-day max).
+    recruiting_enabled = Column(Boolean, nullable=False, default=False)
+    recruiting_token = Column(String, unique=True)
+    recruiting_expires_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 

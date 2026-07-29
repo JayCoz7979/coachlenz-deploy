@@ -17,6 +17,8 @@ class Clip(Base):
     r2_url = Column(String)
     r2_expires_at = Column(DateTime(timezone=True))
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    # Set when a coach marks this clip as a player's recruiting highlight.
+    recruiting_player_id = Column(UUID(as_uuid=True), ForeignKey("roster_players.id", ondelete="SET NULL"))
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
 
     game = relationship("Game", back_populates="clips")
