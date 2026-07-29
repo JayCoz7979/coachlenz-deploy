@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Response
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 from pydantic import BaseModel
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timedelta
+import secrets
 from backend.models.base import get_db
 from backend.models.user import User
 from backend.models.organization import Organization
@@ -12,8 +13,21 @@ from backend.models.event import Event
 from backend.models.job import Job
 from backend.services.auth import get_current_user, get_current_org
 from backend.services.encryption import decrypt_json
+from backend.utils.timeutils import to_naive_utc
 
 router = APIRouter(prefix="/reports", tags=["reports"])
+
+SHARE_DEFAULT_DAYS = 7
+SHARE_MAX_DAYS = 30
+
+
+def clamp_share_days(days) -> int:
+    """Share links live 7 days by default, 30 max. Anything unparseable -> default."""
+    try:
+        d = int(days)
+    except (TypeError, ValueError):
+        d = SHARE_DEFAULT_DAYS
+    return max(1, min(SHARE_MAX_DAYS, d))
 
 class ReportCreate(BaseModel):
     title: str
@@ -168,6 +182,90 @@ async def export_report_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="report-{report_id}-plays.csv"'},
     )
+
+
+@router.post("/{report_id}/share")
+async def create_report_share(
+    report_id: str,
+    expires_in_days: int = SHARE_DEFAULT_DAYS,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Enable (or extend) a read-only public share link for this report. Returns a
+    capability token; the link expires in `expires_in_days` (7 default, 30 max)."""
+    result = await db.execute(select(TendencyReport).where(
+        TendencyReport.id == report_id, TendencyReport.organization_id == user.organization_id))
+    report = result.scalar_one_or_none()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    days = clamp_share_days(expires_in_days)
+    if not report.share_token:
+        report.share_token = secrets.token_urlsafe(24)
+    report.share_expires_at = datetime.utcnow() + timedelta(days=days)
+    report.share_view_count = report.share_view_count or 0
+    await db.commit()
+    return {
+        "share_token": report.share_token,
+        "expires_at": report.share_expires_at.isoformat(),
+        "expires_in_days": days,
+        # Path the frontend renders as the public, no-login share page.
+        "share_path": f"/reports/{report_id}/share/{report.share_token}",
+    }
+
+
+@router.delete("/{report_id}/share")
+async def revoke_report_share(
+    report_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Immediately kill the public share link for this report."""
+    result = await db.execute(select(TendencyReport).where(
+        TendencyReport.id == report_id, TendencyReport.organization_id == user.organization_id))
+    report = result.scalar_one_or_none()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    report.share_token = None
+    report.share_expires_at = None
+    await db.commit()
+    return {"ok": True, "message": "Share link revoked."}
+
+
+@router.get("/{report_id}/share/{token}")
+async def view_shared_report(report_id: str, token: str, db: AsyncSession = Depends(get_db)):
+    """Public, no-login, read-only view of a shared report. Gated by the capability
+    token and its expiry. No player names appear in a report payload (jersey numbers
+    and tendencies only), so nothing identifiable is exposed here."""
+    result = await db.execute(select(TendencyReport).where(
+        TendencyReport.id == report_id, TendencyReport.share_token == token))
+    report = result.scalar_one_or_none()
+    if not report or not report.share_token:
+        raise HTTPException(status_code=404, detail="This share link is invalid.")
+    if not report.share_expires_at or datetime.utcnow() > to_naive_utc(report.share_expires_at):
+        raise HTTPException(status_code=410, detail="This share link has expired.")
+
+    await db.execute(update(TendencyReport).where(TendencyReport.id == report.id).values(
+        share_view_count=TendencyReport.share_view_count + 1))
+    await db.commit()
+
+    summary = None
+    if report.summary_json:
+        try:
+            summary = decrypt_json(report.summary_json)
+        except Exception:
+            summary = None
+    return {
+        "id": str(report.id),
+        "title": report.title,
+        "sport": report.sport,
+        "report_type": report.report_type,
+        "watermarked": report.watermarked,
+        "sections": report.prose_sections or [],
+        "summary": summary,
+        "generated_at": report.generated_at.isoformat() if report.generated_at else None,
+        "shared": True,
+    }
 
 
 @router.delete("/{report_id}")
