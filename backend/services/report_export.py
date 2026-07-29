@@ -14,9 +14,75 @@ Each format returns the SAME normalized shape ({title, subtitle, blocks:[{headin
 body}], ...}) so a single print/PDF renderer serves all four. No framework import
 here - it stays unit-testable.
 """
+import csv
+import io
 from typing import Dict, Any, List, Optional
 
 EXPORT_FORMATS = ("coordinator", "position", "head_coach", "player")
+
+# ── Play-level CSV export ────────────────────────────────────────────────────
+# A flat, one-row-per-play sheet for coaches who want the tags in a spreadsheet.
+# Columns are stable (this is a data contract other tools parse); test_report_export
+# guards the schema.
+CSV_COLUMNS = [
+    "play_number", "down", "distance", "formation", "personnel", "play_type",
+    "result", "concept", "blitz", "coverage", "jersey_numbers",
+    "confidence_score", "timestamp",
+]
+
+
+def _blank(v: Any) -> Any:
+    return "" if v is None else v
+
+
+def _fmt_timestamp(seconds: Any) -> str:
+    """Film position as m:ss (coach-readable). Blank when unknown."""
+    if seconds is None:
+        return ""
+    try:
+        s = int(float(seconds))
+    except (TypeError, ValueError):
+        return ""
+    return f"{s // 60}:{s % 60:02d}"
+
+
+def _jersey_numbers(event: Any) -> str:
+    """Semicolon-joined legible jerseys from extra_data.players, falling back to the
+    play's primary actor (Event.player)."""
+    extra = getattr(event, "extra_data", None) or {}
+    nums = [str(p.get("jersey")) for p in (extra.get("players") or [])
+            if isinstance(p, dict) and p.get("jersey")]
+    if nums:
+        return ";".join(nums)
+    return str(getattr(event, "player", "") or "")
+
+
+def plays_to_csv(events) -> str:
+    """Flatten play Events into the CSV_COLUMNS schema. Pure: accepts any objects
+    with the Event attributes (real rows or test stubs), returns the CSV text."""
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(CSV_COLUMNS)
+    for i, e in enumerate(events, start=1):
+        extra = getattr(e, "extra_data", None) or {}
+        concept = extra.get("run_concept") or extra.get("pass_concept") or ""
+        conf = extra.get("confidence")
+        writer.writerow([
+            i,
+            _blank(getattr(e, "down", None)),
+            _blank(getattr(e, "distance", None)),
+            _blank(getattr(e, "formation", None)),
+            _blank(getattr(e, "personnel", None)),
+            _blank(getattr(e, "play_type", None)),
+            _blank(getattr(e, "result", None)),
+            concept,
+            _blank(getattr(e, "blitz", None)),
+            _blank(getattr(e, "coverage", None)),
+            _jersey_numbers(e),
+            "" if conf is None else round(float(conf), 3),
+            _fmt_timestamp(getattr(e, "time_seconds", None)),
+        ])
+    return buf.getvalue()
 
 # A position coach preparing OUR unit needs the OPPONENT tendencies that bear on
 # that matchup. Map each unit to the section keywords that matter to it.

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel
@@ -8,6 +8,7 @@ from backend.models.base import get_db
 from backend.models.user import User
 from backend.models.organization import Organization
 from backend.models.report import TendencyReport
+from backend.models.event import Event
 from backend.models.job import Job
 from backend.services.auth import get_current_user, get_current_org
 from backend.services.encryption import decrypt_json
@@ -129,6 +130,44 @@ async def export_report(
         fmt=format, unit=unit, player=player,
     )
     return payload
+
+
+@router.get("/{report_id}/export/csv")
+async def export_report_csv(
+    report_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Every tagged play in this report's games as a flat CSV (one row per play).
+    Columns are the stable report_export.CSV_COLUMNS contract."""
+    from backend.services.report_export import plays_to_csv
+
+    result = await db.execute(select(TendencyReport).where(
+        TendencyReport.id == report_id, TendencyReport.organization_id == user.organization_id))
+    report = result.scalar_one_or_none()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    game_ids = report.game_ids or []
+    events = []
+    if game_ids:
+        ev = await db.execute(
+            select(Event)
+            .where(
+                Event.game_id.in_(game_ids),
+                Event.organization_id == user.organization_id,   # defense in depth
+                Event.event_type != "scout_meta",
+            )
+            .order_by(Event.game_id, Event.time_seconds.asc())
+        )
+        events = ev.scalars().all()
+
+    csv_text = plays_to_csv(events)
+    return Response(
+        content=csv_text,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="report-{report_id}-plays.csv"'},
+    )
 
 
 @router.delete("/{report_id}")
