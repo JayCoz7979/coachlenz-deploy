@@ -8,6 +8,7 @@ from backend.models.user import User
 from backend.models.organization import Organization
 from backend.services.auth import get_current_user, get_current_org, hash_password, verify_password
 from backend.services.trial import is_trial_active, get_trial_days_remaining
+from backend.services.permissions import role_permissions
 
 router = APIRouter(prefix="/me", tags=["me"])
 
@@ -18,6 +19,8 @@ async def get_me(user: User = Depends(get_current_user), org: Organization = Dep
         "name": user.name,
         "email": user.email,
         "role": user.role,
+        # Capabilities for this role, so the UI can show/hide actions (Track 5.1).
+        "permissions": sorted(role_permissions(user.role)),
         "phone": user.phone,
         "phone_verified": user.phone_verified,
         "avatar_url": user.avatar_url,
