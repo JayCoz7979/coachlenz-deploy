@@ -4,7 +4,7 @@ import { usePathname } from 'next/navigation'
 import { useAuth } from '@/lib/auth'
 import {
   LayoutDashboard, Users, Film, FileText, Settings,
-  Trophy, UserCircle, Share2, ShieldCheck, LogOut, Upload, Link2, Target,
+  Trophy, UserCircle, Share2, ShieldCheck, LogOut, Upload, Link2, Target, ClipboardList,
 } from 'lucide-react'
 
 const NAV_SECTIONS = [
@@ -22,6 +22,7 @@ const NAV_SECTIONS = [
     label: 'Organization',
     items: [
       { href: '/teams', label: 'Teams', icon: Users },
+      { href: '/roster', label: 'Rosters', icon: ClipboardList },
       { href: '/coaches', label: 'Coach Tenure', icon: UserCircle, requiresTenure: true },
       { href: '/teams-of-month', label: 'Teams of Month', icon: Trophy },
     ],
