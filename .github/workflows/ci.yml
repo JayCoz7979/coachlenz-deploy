@@ -79,6 +79,30 @@ jobs:
         # via httpx ASGITransport. No external services required.
         run: pytest -m integration -p no:cacheprovider -ra
 
+  frontend:
+    name: frontend (typecheck + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      # package-lock.json is gitignored in this repo, so `npm ci` (and the npm cache,
+      # which keys on the lockfile) can't be used. Install fresh from package.json.
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+        working-directory: frontend
+      # `next build` runs TypeScript checking as part of the build (next.config forbids
+      # ignoreBuildErrors) and generates next-env.d.ts, so it gates typecheck + build
+      # exactly as the Railway deploy does. A standalone `tsc` fails on a fresh checkout
+      # because next-env.d.ts (image module types) is gitignored.
+      - name: Build (typechecks)
+        run: npm run build
+        working-directory: frontend
+        env:
+          # A build-time public fallback; the real value is set on the Railway service.
+          NEXT_PUBLIC_API_URL: https://coachlenz-backend-production.up.railway.app
+
 # NOTE (deferred, tracked): a coverage gate (--cov-fail-under=70) is intentionally
 # NOT enabled yet. Total backend coverage today is well below 70%, so a hard gate
 # would be red-on-arrival — worse than an honest green gate. Ratchet it up as the
