@@ -6,7 +6,7 @@ import { useAuth } from '@/lib/auth'
 import logo from '../../public/coachlenz-logo.png'
 import {
   LayoutDashboard, Users, Film, FileText, Settings,
-  Trophy, UserCircle, Share2, ShieldCheck, LogOut, Upload, Link2, Target, ClipboardList, Award, UserPlus,
+  Trophy, UserCircle, Share2, ShieldCheck, LogOut, Upload, Link2, Target, ClipboardList, Award, UserPlus, BarChart3,
 } from 'lucide-react'
 
 const NAV_SECTIONS = [
@@ -27,6 +27,7 @@ const NAV_SECTIONS = [
       { href: '/teams', label: 'Teams', icon: Users },
       { href: '/roster', label: 'Rosters', icon: ClipboardList },
       { href: '/staff', label: 'Staff', icon: UserPlus, requiresPermission: 'can_invite_staff' },
+      { href: '/ad', label: 'Usage Dashboard', icon: BarChart3, requiresAdTier: true },
       { href: '/coaches', label: 'Coach Tenure', icon: UserCircle, requiresTenure: true },
       { href: '/teams-of-month', label: 'Teams of Month', icon: Trophy },
     ],
@@ -84,6 +85,7 @@ export default function Sidebar() {
             if ((item as any).requiresTenure && !user?.organization?.has_coach_tenure_access) return false
             if ((item as any).requiresAdmin && !user?.organization?.admin_level) return false
             if ((item as any).requiresPermission && !user?.permissions?.includes((item as any).requiresPermission)) return false
+            if ((item as any).requiresAdTier && !['athletic_dept', 'district'].includes(user?.organization?.subscription_tier || '')) return false
             return true
           })
           if (!visible.length) return null
