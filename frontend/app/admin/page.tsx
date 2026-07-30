@@ -4,7 +4,7 @@ import Sidebar from '@/components/layout/Sidebar'
 import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
 import { useRouter } from 'next/navigation'
-import { ShieldCheck, Users, AlertTriangle } from 'lucide-react'
+import { ShieldCheck, Users, AlertTriangle, Trash2 } from 'lucide-react'
 
 export default function AdminPage() {
   const { user, isLoading, fetchMe } = useAuth()
@@ -29,6 +29,16 @@ export default function AdminPage() {
   async function toggleTenure(orgId: string, current: boolean) {
     await api.patch(`/admin/orgs/${orgId}`, { has_coach_tenure_access: !current })
     setOrgs(o => o.map(x => x.id === orgId ? { ...x, has_coach_tenure_access: !current } : x))
+  }
+
+  async function deleteOrg(orgId: string, name: string) {
+    if (!confirm(`Permanently delete "${name}" and ALL of its data (users, film, reports, roster)? This cannot be undone.`)) return
+    try {
+      await api.delete(`/admin/orgs/${orgId}`)
+      setOrgs(o => o.filter(x => x.id !== orgId))
+    } catch (e: any) {
+      alert(e.response?.data?.detail || 'Could not delete organization.')
+    }
   }
 
   return (
@@ -62,6 +72,9 @@ export default function AdminPage() {
                       <td className="py-3">{o.has_coach_tenure_access ? <span className="text-brand-400">On</span> : <span className="text-gray-500">Off</span>}</td>
                       <td className="py-3 text-center">
                         <button onClick={() => toggleTenure(o.id, o.has_coach_tenure_access)} className="text-xs btn-secondary py-1">{o.has_coach_tenure_access ? 'Disable Tenure' : 'Enable Tenure'}</button>
+                        {o.id !== user?.organization?.id && (
+                          <button onClick={() => deleteOrg(o.id, o.name)} title="Delete organization and all its data" className="text-xs text-red-400 hover:text-red-300 ml-3 inline-flex items-center gap-1"><Trash2 size={13} /> Delete</button>
+                        )}
                       </td>
                     </tr>
                   ))}
