@@ -32,6 +32,10 @@ class Event(Base):
     # shooter / tackler jersey). Mirrors extra_data.primary_player_jersey, which is
     # still read as a fallback for older rows. See migration 013.
     player = Column(String)
+    # Coach film-room marks: star a play as a highlight and/or attach a short note.
+    # Both travel with the event and feed the play log, cut-ups, and reports.
+    is_highlight = Column(Boolean, nullable=False, default=False)
+    coach_note = Column(String)
     extra_data = Column(JSONB, default=dict)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
 
