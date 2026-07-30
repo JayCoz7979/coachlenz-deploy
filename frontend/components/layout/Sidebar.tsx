@@ -2,6 +2,8 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useAuth } from '@/lib/auth'
+// Static import so the asset serves under output:'standalone' (public/ is not bundled).
+import logo from '../../public/coachlenz-logo.png'
 import {
   LayoutDashboard, Users, Film, FileText, Settings,
   Trophy, UserCircle, Share2, ShieldCheck, LogOut, Upload, Link2, Target, ClipboardList,
@@ -56,19 +58,9 @@ export default function Sidebar() {
     >
       {/* Logo block */}
       <div style={{ padding: '16px 14px 12px', borderBottom: '1px solid var(--border)' }}>
-        <Link href="/dashboard" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none' }}>
-          <div style={{
-            width: 36, height: 36, borderRadius: 9, flexShrink: 0,
-            background: 'linear-gradient(135deg, var(--green), var(--green2))',
-            boxShadow: '0 4px 14px rgba(45,80,22,0.5)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}>
-            <span style={{ fontFamily: 'var(--font-syne,sans-serif)', fontSize: 13, fontWeight: 800, color: '#fff' }}>CL</span>
-          </div>
-          <div>
-            <div style={{ fontFamily: 'var(--font-syne,sans-serif)', fontSize: 16, fontWeight: 800, color: '#fff', lineHeight: '1.2' }}>CoachLenz</div>
-            <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 1 }}>AI Film Analyst OS</div>
-          </div>
+        <Link href="/dashboard" style={{ display: 'block', textDecoration: 'none' }}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={logo.src} alt="CoachLenz" style={{ width: '100%', maxWidth: 210, height: 'auto', display: 'block' }} />
         </Link>
         {user?.organization?.is_trial && (
           <div style={{
