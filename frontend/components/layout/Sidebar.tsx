@@ -6,7 +6,7 @@ import { useAuth } from '@/lib/auth'
 import logo from '../../public/coachlenz-logo.png'
 import {
   LayoutDashboard, Users, Film, FileText, Settings,
-  Trophy, UserCircle, Share2, ShieldCheck, LogOut, Upload, Link2, Target, ClipboardList,
+  Trophy, UserCircle, Share2, ShieldCheck, LogOut, Upload, Link2, Target, ClipboardList, Award,
 } from 'lucide-react'
 
 const NAV_SECTIONS = [
@@ -18,6 +18,7 @@ const NAV_SECTIONS = [
       { href: '/games/upload?tab=url', label: 'Import Film', icon: Upload },
       { href: '/scout', label: 'Scout Opponent', icon: Target },
       { href: '/reports', label: 'Reports', icon: FileText },
+      { href: '/grades', label: 'Player Grades', icon: Award },
     ],
   },
   {
