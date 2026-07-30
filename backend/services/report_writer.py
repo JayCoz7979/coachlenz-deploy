@@ -105,6 +105,7 @@ RULES:
 - Defensive data = the OPPONENT on defense — advise how OUR OFFENSE should attack
 - Lead with the most exploitable finding in each section, not the most common one
 - "Exploitable" means a tendency that is both strong (high %) AND has a counter-strategy
+- If the data includes coach_flagged_plays, those are the COACH'S OWN notes on specific plays. Reproduce the coach's notes VERBATIM in the designated section — they are authoritative first-hand observations, not numbers to verify, so the "no invented stats" rule does not apply to the coach's own words. Never fabricate a note that isn't there.
 
 SECTION FORMATS (write for a coach scanning fast before a game, NOT an essay):
 - Start each section with ONE short lead sentence, the single biggest takeaway.
@@ -128,6 +129,7 @@ RULES:
 - Defensive data = opponent on defense — advise how OUR OFFENSE should attack them
 - Lead with the most exploitable finding in each section
 - "Exploitable" means a tendency that is both strong AND has a clear counter
+- If the data includes coach_flagged_plays, those are the COACH'S OWN notes on specific plays. Reproduce the coach's notes VERBATIM in the designated section — they are authoritative first-hand observations, not numbers to verify, so the "no invented stats" rule does not apply to the coach's own words. Never fabricate a note that isn't there.
 
 SECTION FORMATS (write for a coach scanning fast before a game, NOT an essay):
 - Start each section with ONE short lead sentence, the single biggest takeaway.
@@ -137,6 +139,40 @@ SECTION FORMATS (write for a coach scanning fast before a game, NOT an essay):
 - Default to bullets. Only use a short paragraph for the one-line lead, never walls of text.
 - Call out hot zones AND cold zones, each as its own bullet.
 """
+
+
+COACH_NOTES_INSIGHT = "coach_notes"
+
+
+def _coach_notes_spec() -> Dict[str, Any]:
+    """The section that surfaces the coach's own flagged plays + notes. Appended only
+    when tendency_summary carries coach_flagged_plays (see _maybe_coach_notes)."""
+    return {
+        "heading": "Coach's Flagged Plays & Notes",
+        "insight_type": COACH_NOTES_INSIGHT,
+        "instructions": (
+            "Use tendency_summary.coach_flagged_plays — the plays THIS coach personally starred "
+            "or annotated while watching film, already in chronological order. Open with one "
+            "sentence: how many plays the coach flagged and that this section is their own read. "
+            "Then one bullet per flagged play: '- **[clock] — [tag]**' followed by the coach's "
+            "note VERBATIM when one is present. The coach's notes are authoritative first-hand "
+            "observations — reproduce them exactly, never reword, stat-check, second-guess, or "
+            "invent, and keep the given order. If a play's note is empty, list it as a key / "
+            "highlighted moment with no added commentary."
+        ),
+    }
+
+
+def _maybe_coach_notes(sections_spec: List[Dict[str, Any]], tendency_summary: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Append the coach's-notes spec when the coach flagged any plays, keeping a
+    trailing 'Scout's Note' transparency section last."""
+    if not tendency_summary.get("coach_flagged_plays"):
+        return sections_spec
+    if sections_spec and str(sections_spec[-1].get("heading", "")).startswith("Scout's Note"):
+        sections_spec.insert(-1, _coach_notes_spec())
+    else:
+        sections_spec.append(_coach_notes_spec())
+    return sections_spec
 
 
 async def generate_prose_sections(
@@ -460,6 +496,8 @@ async def generate_prose_sections(
         ),
     })
 
+    _maybe_coach_notes(sections_spec, tendency_summary)
+
     # Build the prompt
     section_outline = "\n".join(
         f"{i+1}. \"{s['heading']}\" (insight_type: \"{s['insight_type']}\")\n   Instructions: {s['instructions']}"
@@ -560,6 +598,8 @@ async def _generate_self_scout_sections(tendency_summary, scouting, plays,
             ),
         },
     ]
+
+    _maybe_coach_notes(sections_spec, tendency_summary)
 
     section_outline = "\n".join(
         f"{i+1}. \"{s['heading']}\" (insight_type: \"{s['insight_type']}\")\n   Instructions: {s['instructions']}"
@@ -906,6 +946,7 @@ def _bball_sections(scouting, tendency_summary):
             "angle could NOT see. If blind_spot_count is 0 and confidence is high, say so in one sentence. Never overstate certainty."
         ),
     })
+    _maybe_coach_notes(spec, tendency_summary)
     return spec
 
 

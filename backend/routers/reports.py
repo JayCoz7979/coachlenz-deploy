@@ -255,13 +255,20 @@ async def view_shared_report(report_id: str, token: str, db: AsyncSession = Depe
             summary = decrypt_json(report.summary_json)
         except Exception:
             summary = None
+    # The coach's own notes are free text that may name players; the public, no-login
+    # view is jersey/tendency only, so drop the coach's-notes section and the raw
+    # flagged-play data from the shared payload (keeps the "no player names" guarantee).
+    public_sections = [s for s in (report.prose_sections or [])
+                       if (s or {}).get("insight_type") != "coach_notes"]
+    if isinstance(summary, dict):
+        summary = {k: v for k, v in summary.items() if k != "coach_flagged_plays"}
     return {
         "id": str(report.id),
         "title": report.title,
         "sport": report.sport,
         "report_type": report.report_type,
         "watermarked": report.watermarked,
-        "sections": report.prose_sections or [],
+        "sections": public_sections,
         "summary": summary,
         "generated_at": report.generated_at.isoformat() if report.generated_at else None,
         "shared": True,

@@ -7,6 +7,7 @@ from backend.models.report import TendencyReport
 from backend.models.event import Event
 from backend.services.tendency_engine import run_tendency_engine
 from backend.services.report_writer import generate_prose_sections
+from backend.services.coach_notes import collect_flagged_plays
 from backend.services.encryption import encrypt_json
 from backend.services.agent_log import log_agent_action, confidence_band
 from sqlalchemy import select, update, or_
@@ -31,6 +32,11 @@ class ReportsWorker(BaseWorker):
             events = events_result.scalars().all()
 
         tendency_summary = await run_tendency_engine(report.sport, events)
+        # Fold the coach's own starred plays + notes into the report context so their
+        # first-hand reads surface in the generated report (not lost in aggregation).
+        flagged = collect_flagged_plays(events)
+        if flagged:
+            tendency_summary["coach_flagged_plays"] = flagged
         prose_sections = await generate_prose_sections(
             sport=report.sport,
             tendency_summary=tendency_summary,
@@ -65,7 +71,8 @@ class ReportsWorker(BaseWorker):
             ),
             confidence=conf,
             level="success",
-            detail={"report_id": str(report_id), "sections": len(prose_sections), "events": len(events)},
+            detail={"report_id": str(report_id), "sections": len(prose_sections),
+                    "events": len(events), "coach_flagged_plays": len(flagged)},
         )
 
         async with AsyncSessionLocal() as db:
