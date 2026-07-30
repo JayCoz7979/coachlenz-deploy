@@ -623,12 +623,11 @@ export default function ReportPage() {
                     order.forEach(([k, label]) => {
                       if (typeof s[k] === 'number') counts.push({ label, value: s[k] })
                     })
-                    // Fallback: any other scalar fields
-                    Object.entries(s).forEach(([k, v]) => {
-                      if (typeof v !== 'object' && !order.find(o => o[0] === k)) {
-                        counts.push({ label: k.replace(/_/g, ' '), value: v })
-                      }
-                    })
+                    // Only the curated headline counts above. We deliberately do NOT
+                    // dump every remaining scalar: single-cam detection surfaces
+                    // unreliable raw counts (timeouts, steals, blocks it mislabels from
+                    // stoppages) that read as authoritative headline stats when they are
+                    // not. Per-category detail (with its confidence) lives in the sections.
                     return (
                       <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap' }}>
                         {counts.map(c => (
