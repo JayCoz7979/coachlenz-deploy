@@ -20,6 +20,7 @@ from backend.models.roster import RosterPlayer
 from backend.services.auth import get_current_user, require_permission
 from backend.services.permissions import CAN_MANAGE_ROSTER
 from backend.services.roster import parse_roster_csv, resolve_jersey, normalize_jersey
+from backend.services.player_stats import aggregate_player_stats, top_play_types
 
 # Managing the roster (add/edit/remove/upload/clone) requires the can_manage_roster
 # capability (head coach, coordinators, owner). Reads stay open to any org member.
@@ -70,12 +71,50 @@ async def _roster(team_id: str, org_id, db: AsyncSession):
     return res.scalars().all()
 
 
+async def team_season_events(team_id: str, org_id, db: AsyncSession):
+    """Every real play Event across a team's games (the team scopes one season).
+    Used to derive per-player season stats on demand. scout_meta rows excluded."""
+    gres = await db.execute(select(Game.id).where(
+        Game.team_id == team_id, Game.organization_id == org_id))
+    game_ids = [gid for gid in gres.scalars().all()]
+    if not game_ids:
+        return [], 0
+    eres = await db.execute(select(Event).where(
+        Event.game_id.in_(game_ids), Event.organization_id == org_id,
+        Event.event_type != "scout_meta"))
+    return eres.scalars().all(), len(game_ids)
+
+
+_ZERO_STATS = {"plays": 0, "primary_plays": 0, "total_yards": 0, "games": 0,
+               "by_play_type": {}, "by_role": {}}
+
+
 @router.get("/{team_id}")
 async def list_roster(team_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     team = await _team_or_404(team_id, user, db)
     players = await _roster(team_id, user.organization_id, db)
     return {"team_id": str(team.id), "team": team.name, "season": team.season,
             "sport": team.sport, "players": [_player_out(p) for p in players]}
+
+
+@router.get("/{team_id}/stats")
+async def roster_stats(team_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Per-player season stats for a team, derived from its games' plays. Every roster
+    player is returned (players with no tagged plays yet show zeros), most-involved
+    first. Powers the roster Stats view and the recruiting profile numbers."""
+    team = await _team_or_404(team_id, user, db)
+    players = await _roster(team_id, user.organization_id, db)
+    events, games_analyzed = await team_season_events(team_id, user.organization_id, db)
+    agg = aggregate_player_stats(events)
+
+    rows = []
+    for p in players:
+        line = agg.get(normalize_jersey(p.jersey_number)) or dict(_ZERO_STATS)
+        rows.append({**_player_out(p), "stats": line, "top_play_types": top_play_types(line)})
+    rows.sort(key=lambda r: (-r["stats"]["plays"], r["jersey_number"]))
+
+    return {"team_id": str(team.id), "team": team.name, "season": team.season,
+            "sport": team.sport, "games_analyzed": games_analyzed, "players": rows}
 
 
 @router.post("/{team_id}/players")

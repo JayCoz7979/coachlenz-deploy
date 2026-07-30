@@ -25,6 +25,8 @@ from backend.services.auth import get_current_user, get_current_org, require_per
 from backend.services.permissions import CAN_MANAGE_ROSTER
 from backend.utils.timeutils import to_naive_utc
 from backend.services.email_service import send_recruiting_profile_email
+from backend.services.player_stats import stat_line_for, top_play_types
+from backend.routers.roster import team_season_events
 
 router = APIRouter(prefix="/recruiting", tags=["recruiting"])
 
@@ -78,6 +80,25 @@ async def _highlights(player_id, org_id, db: AsyncSession):
 def _clip_out(c: Clip) -> dict:
     return {"id": str(c.id), "title": c.title, "start_time": c.start_time,
             "end_time": c.end_time, "url": c.r2_url}
+
+
+async def _recruiting_stats(p: RosterPlayer, org_id, highlights_count: int, db: AsyncSession):
+    """Season stats block for a recruiting profile: highlight count plus real
+    per-player numbers derived from the player's team games. A player with no team or
+    no tagged plays yet reports zeros (still a valid, if empty, profile)."""
+    events = []
+    team_id = getattr(p, "team_id", None)
+    if team_id:
+        events, _ = await team_season_events(str(team_id), org_id, db)
+    line = stat_line_for(events, p.jersey_number)
+    stats = {
+        "highlights_count": highlights_count,
+        "plays": line["plays"],
+        "primary_plays": line["primary_plays"],
+        "total_yards": line["total_yards"],
+        "games": line["games"],
+    }
+    return stats, top_play_types(line)
 
 
 @router.post("/players/{player_id}/enable")
@@ -141,6 +162,7 @@ async def coach_view(player_id: str, user: User = Depends(get_current_user),
     """Coach's view of a player's recruiting profile + highlights + share status."""
     p = await _player(player_id, user.organization_id, db)
     clips = await _highlights(p.id, user.organization_id, db)
+    stats, tops = await _recruiting_stats(p, user.organization_id, len(clips), db)
     return {
         "player": {"id": str(p.id), "name": f"{p.first_name} {p.last_name or ''}".strip(),
                    "position": p.position, "grade_year": p.grade_year, "jersey_number": p.jersey_number},
@@ -148,7 +170,8 @@ async def coach_view(player_id: str, user: User = Depends(get_current_user),
         "recruiting_expires_at": p.recruiting_expires_at.isoformat() if p.recruiting_expires_at else None,
         "share_path": (f"/recruiting/share/{p.recruiting_token}" if p.recruiting_token else None),
         "highlights": [_clip_out(c) for c in clips],
-        "stats": {"highlights_count": len(clips)},
+        "stats": stats,
+        "top_play_types": tops,
     }
 
 
@@ -179,10 +202,12 @@ async def public_profile(token: str, db: AsyncSession = Depends(get_db)):
     if not p.recruiting_expires_at or datetime.utcnow() > to_naive_utc(p.recruiting_expires_at):
         raise HTTPException(status_code=410, detail="This recruiting link has expired.")
     clips = await _highlights(p.id, p.organization_id, db)
+    stats, tops = await _recruiting_stats(p, p.organization_id, len(clips), db)
     return {
         "name": f"{p.first_name} {p.last_name or ''}".strip(),
         "position": p.position, "grade_year": p.grade_year,
         "highlights": [_clip_out(c) for c in clips],
-        "stats": {"highlights_count": len(clips)},
+        "stats": stats,
+        "top_play_types": tops,
         "shared": True,
     }
