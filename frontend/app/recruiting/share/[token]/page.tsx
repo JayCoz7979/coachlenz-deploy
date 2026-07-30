@@ -9,7 +9,8 @@ interface Profile {
   position: string | null
   grade_year: string | null
   highlights: Highlight[]
-  stats: { highlights_count: number }
+  stats: { highlights_count: number; plays: number; primary_plays: number; total_yards: number; games: number }
+  top_play_types: { play_type: string; count: number }[]
 }
 
 export default function SharedRecruitingProfile() {
@@ -51,8 +52,17 @@ export default function SharedRecruitingProfile() {
               </p>
             </div>
             <div className="card mb-6">
-              <div className="text-sm text-gray-400">Highlights</div>
-              <div className="text-2xl font-bold text-gray-100">{profile.stats.highlights_count}</div>
+              <div className="text-sm text-gray-400 mb-3">Season stats</div>
+              <div className="grid grid-cols-5 gap-2 text-center">
+                <div><div className="text-2xl font-bold text-gray-100 tabular-nums">{profile.stats.plays}</div><div className="text-xs text-gray-500">Plays</div></div>
+                <div><div className="text-2xl font-bold text-gray-100 tabular-nums">{profile.stats.primary_plays}</div><div className="text-xs text-gray-500">Primary</div></div>
+                <div><div className="text-2xl font-bold text-gray-100 tabular-nums">{profile.stats.total_yards}</div><div className="text-xs text-gray-500">Yards</div></div>
+                <div><div className="text-2xl font-bold text-gray-100 tabular-nums">{profile.stats.games}</div><div className="text-xs text-gray-500">Games</div></div>
+                <div><div className="text-2xl font-bold text-gray-100 tabular-nums">{profile.stats.highlights_count}</div><div className="text-xs text-gray-500">Highlights</div></div>
+              </div>
+              {profile.top_play_types.length > 0 && (
+                <p className="text-xs text-gray-500 mt-3 text-center">Most involved on: {profile.top_play_types.map((t) => `${t.play_type} (${t.count})`).join(', ')}</p>
+              )}
             </div>
             <div className="space-y-3">
               {profile.highlights.map((h) => (

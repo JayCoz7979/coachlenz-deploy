@@ -16,7 +16,8 @@ interface Profile {
   recruiting_expires_at: string | null
   share_path: string | null
   highlights: Highlight[]
-  stats: { highlights_count: number }
+  stats: { highlights_count: number; plays: number; primary_plays: number; total_yards: number; games: number }
+  top_play_types: { play_type: string; count: number }[]
 }
 interface Clip { id: string; game_id: string; title: string | null; start_time: number; end_time: number }
 
@@ -151,6 +152,21 @@ export default function RecruitingPage() {
                         <button onClick={disable} className="text-xs text-red-400 hover:underline">Turn off public profile</button>
                       </div>
                     )}
+                  </div>
+
+                  {/* Season stats */}
+                  <div className="card mb-6">
+                    <div className="font-semibold mb-3">Season stats</div>
+                    <div className="grid grid-cols-4 gap-3 text-center">
+                      <div><div className="text-2xl font-bold tabular-nums">{profile.stats.plays}</div><div className="text-xs text-gray-400">Plays</div></div>
+                      <div><div className="text-2xl font-bold tabular-nums">{profile.stats.primary_plays}</div><div className="text-xs text-gray-400">Primary</div></div>
+                      <div><div className="text-2xl font-bold tabular-nums">{profile.stats.total_yards}</div><div className="text-xs text-gray-400">Yards</div></div>
+                      <div><div className="text-2xl font-bold tabular-nums">{profile.stats.games}</div><div className="text-xs text-gray-400">Games</div></div>
+                    </div>
+                    {profile.top_play_types.length > 0 && (
+                      <p className="text-xs text-gray-500 mt-3">Most involved on: {profile.top_play_types.map(t => `${t.play_type} (${t.count})`).join(', ')}</p>
+                    )}
+                    <p className="text-xs text-gray-600 mt-2">Derived from tagged plays across this team&apos;s analyzed games.</p>
                   </div>
 
                   {/* Highlights */}
