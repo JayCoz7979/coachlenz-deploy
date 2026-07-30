@@ -1,5 +1,5 @@
 'use client'
-import { useState, type CSSProperties } from 'react'
+import { type CSSProperties } from 'react'
 
 // Basketball shot heat map + key players, rendered from the report's already-computed
 // tendency summary (shot_zone_map / shooting_overview / player_tendencies). No backend
@@ -19,18 +19,6 @@ function _quality(t: number) {
   const c = Math.max(0, Math.min(1, t))
   return c < 0.5 ? _mix('#b45c5c', GOLD, c * 2) : _mix(GOLD, '#2d8c40', (c - 0.5) * 2)
 }
-// low -> high volume ramp (dark -> gold).
-function _volume(t: number) {
-  return _mix('#3a3a30', GOLD, Math.max(0, Math.min(1, t)))
-}
-
-type Metric = 'volume' | 'fg'
-
-const toggleBtn = (on: boolean): CSSProperties => ({
-  flex: 1, padding: '5px 10px', fontSize: 11, fontWeight: 700, cursor: 'pointer',
-  borderRadius: 4, border: '1px solid ' + (on ? GOLD : 'rgba(255,255,255,0.12)'),
-  background: on ? 'rgba(201,168,76,0.15)' : 'transparent', color: on ? GOLD : '#9a9a8e',
-})
 
 function roleLabel(p: any): string {
   const t = p.shot_tendency
@@ -42,8 +30,6 @@ function roleLabel(p: any): string {
 }
 
 export default function BasketballShotChart({ summary }: { summary: any }) {
-  const [metric, setMetric] = useState<Metric>('volume')
-
   const szm = summary?.shot_zone_map || {}
   const zones: Record<string, any> = szm.zones || {}
   const so = summary?.shooting_overview || {}
@@ -59,7 +45,6 @@ export default function BasketballShotChart({ summary }: { summary: any }) {
     .slice(0, 5)
 
   const card: CSSProperties = { background: '#2e2e2e', borderRadius: 6, padding: '20px 24px', border: '1px solid rgba(255,255,255,0.06)' }
-  const legend = metric === 'volume' ? 'Shade = share of their shots' : 'Red = cold, green = hot (FG%)'
 
   return (
     <div style={card}>
@@ -70,28 +55,35 @@ export default function BasketballShotChart({ summary }: { summary: any }) {
 
       {hasZones ? (
         <>
-          {/* Metric toggle */}
-          <div style={{ display: 'flex', gap: 4, margin: '12px 0 6px', maxWidth: 240 }}>
-            <button onClick={() => setMetric('volume')} style={toggleBtn(metric === 'volume')}>Volume</button>
-            <button onClick={() => setMetric('fg')} style={toggleBtn(metric === 'fg')}>FG %</button>
+          {/* Dual-encoded legend: bar length = volume, bar color = FG% (both shown at once). */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', margin: '12px 0 6px', fontSize: 10, color: '#9a9a8e' }}>
+            <span><b style={{ color: '#d8d8cc' }}>Bar length</b> = shot volume</span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <b style={{ color: '#d8d8cc' }}>Color</b> = FG%
+              <span style={{ display: 'inline-block', width: 60, height: 8, borderRadius: 2, background: 'linear-gradient(90deg,#b45c5c,#C9A84C,#2d8c40)' }} />
+              <span>cold → hot</span>
+            </span>
           </div>
-          <div style={{ fontSize: 10, color: '#7a7a6e', marginBottom: 14 }}>{legend}. Bar length = shot volume. Empty zones had no readable shots on this film.</div>
+          <div style={{ fontSize: 10, color: '#7a7a6e', marginBottom: 14 }}>Empty zones had no readable shots on this film.</div>
 
-          {/* Zone bars */}
+          {/* Zone bars — length is volume, fill color is FG% */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {zoneRows.map(([zone, z]: any) => {
               const w = (z.attempts || 0) / maxAtt
-              const color = metric === 'fg' ? _quality((z.fg_pct || 0) / 100) : _volume(w)
+              const color = _quality((z.fg_pct || 0) / 100)
               return (
                 <div key={zone} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <div style={{ width: 140, flexShrink: 0, fontSize: 11, color: '#d8d8cc', textAlign: 'right' }}>{zone}</div>
                   <div style={{ flex: 1, height: 20, background: 'rgba(255,255,255,0.04)', borderRadius: 3, position: 'relative', overflow: 'hidden' }}>
                     <div style={{ height: '100%', width: `${Math.max(6, w * 100)}%`, background: color, borderRadius: 3 }} />
-                    <span style={{ position: 'absolute', left: 8, top: 2, fontSize: 11, fontWeight: 700, color: '#1c1c1c', mixBlendMode: 'difference', filter: 'invert(1)' }}>
-                      {z.made}/{z.attempts} · {z.fg_pct}%
-                    </span>
                   </div>
-                  <div style={{ width: 44, flexShrink: 0, fontSize: 10, color: '#7a7a6e', textAlign: 'right' }}>{z.pct_of_all_shots}%</div>
+                  {/* Numbers live outside the bar so they read cleanly over any fill color:
+                      volume (made/attempts + share of all shots) and FG%. */}
+                  <div style={{ width: 132, flexShrink: 0, display: 'flex', justifyContent: 'flex-end', gap: 8, fontSize: 11 }}>
+                    <span style={{ color: '#d8d8cc' }}>{z.made}/{z.attempts}</span>
+                    <span style={{ color: '#7a7a6e' }}>{z.pct_of_all_shots}%</span>
+                    <span style={{ width: 42, textAlign: 'right', fontWeight: 700, color }}>{z.fg_pct}%</span>
+                  </div>
                 </div>
               )
             })}
