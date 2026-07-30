@@ -17,6 +17,7 @@ from backend.models.organization import Organization
 from backend.models.usage import AnalysisUsage, CoachUsageLimit
 from backend.services.auth import get_current_user, get_current_org
 from backend.services.usage import aggregate_usage, usage_to_csv, month_start
+from backend.services.inactivity import compute_inactive_coaches, clamp_days, DEFAULT_INACTIVE_DAYS
 
 router = APIRouter(prefix="/ad", tags=["ad"])
 
@@ -149,3 +150,29 @@ async def set_limit(body: LimitIn, org: Organization = Depends(require_ad_accoun
                                monthly_run_limit=body.monthly_run_limit))
     await db.commit()
     return {"ok": True, "user_id": body.user_id, "monthly_run_limit": body.monthly_run_limit}
+
+
+@router.get("/inactive-coaches")
+async def inactive_coaches(
+    days: int = Query(DEFAULT_INACTIVE_DAYS, ge=1, le=365),
+    org: Organization = Depends(require_ad_account),
+    viewer: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Coaches in this org with no activity (last login or last analysis run) in the
+    last `days` days, plus seats that were never used. The viewer (the AD) is
+    excluded. Pull-based: always accurate whenever the dashboard is opened."""
+    d = clamp_days(days)
+    users = await _org_users(db, org.id)
+    res = await db.execute(select(AnalysisUsage.user_id, AnalysisUsage.created_at).where(
+        AnalysisUsage.organization_id == org.id))
+    usage_rows = res.all()
+    now = datetime.utcnow()
+    coaches = compute_inactive_coaches(users, usage_rows, now, d, exclude_user_id=str(viewer.id))
+    return {
+        "days": d,
+        "as_of": now.isoformat(),
+        "total_coaches": max(0, len(users) - 1),
+        "inactive_count": len(coaches),
+        "inactive": coaches,
+    }

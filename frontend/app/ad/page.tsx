@@ -5,7 +5,7 @@ import Link from 'next/link'
 import Sidebar from '@/components/layout/Sidebar'
 import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
-import { Download } from 'lucide-react'
+import { Download, AlertTriangle, CheckCircle2 } from 'lucide-react'
 
 interface Coach {
   user_id: string; name: string; email: string; role: string
@@ -19,6 +19,14 @@ interface Usage {
   by_type: Record<string, number>
   coaches: Coach[]
 }
+interface InactiveCoach {
+  user_id: string; name: string; email: string; role: string
+  last_active_at: string | null; days_inactive: number | null; never_active: boolean
+}
+interface Inactive {
+  days: number; as_of: string; total_coaches: number; inactive_count: number
+  inactive: InactiveCoach[]
+}
 
 const AD_TIERS = ['athletic_dept', 'district']
 
@@ -29,17 +37,22 @@ export default function AdDashboardPage() {
   const [loading, setLoading] = useState(false)
   const [limitEdits, setLimitEdits] = useState<Record<string, string>>({})
   const [msg, setMsg] = useState('')
+  const [inactive, setInactive] = useState<Inactive | null>(null)
+  const [days, setDays] = useState(14)
 
   const isAd = AD_TIERS.includes(user?.organization?.subscription_tier || '')
 
   useEffect(() => { fetchMe() }, [])
   useEffect(() => { if (!isLoading && !user) router.push('/login') }, [isLoading, user])
-  useEffect(() => { if (isAd) load() }, [isAd])
+  useEffect(() => { if (isAd) { load(); loadInactive() } }, [isAd])
 
   function flash(t: string) { setMsg(t); setTimeout(() => setMsg(''), 3000) }
   async function load() {
     setLoading(true)
     try { const r = await api.get('/ad/usage'); setUsage(r.data) } catch {} finally { setLoading(false) }
+  }
+  async function loadInactive(d = days) {
+    try { const r = await api.get(`/ad/inactive-coaches?days=${d}`); setInactive(r.data) } catch {}
   }
   async function saveLimit(userId: string) {
     const raw = limitEdits[userId]
@@ -89,6 +102,48 @@ export default function AdDashboardPage() {
           </div>
 
           {msg && <div className="mb-4 text-sm bg-brand-500/10 border border-brand-500/30 text-brand-400 rounded p-2">{msg}</div>}
+
+          {inactive && (
+            <div className="card mb-6">
+              <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+                <div className="flex items-center gap-2">
+                  {inactive.inactive.length === 0
+                    ? <CheckCircle2 size={18} className="text-brand-400" />
+                    : <AlertTriangle size={18} className="text-gold" />}
+                  <h3 className="font-semibold">Coach activity</h3>
+                  <span className="text-xs text-gray-500">no login or analysis in {inactive.days} days</span>
+                </div>
+                <select value={days} onChange={e => { const d = Number(e.target.value); setDays(d); loadInactive(d) }}
+                  className="input py-1 text-xs" style={{ width: 'auto' }}>
+                  {[7, 14, 30, 60].map(d => <option key={d} value={d}>{d} days</option>)}
+                </select>
+              </div>
+              {inactive.inactive.length === 0 ? (
+                <p className="text-sm text-brand-400">
+                  {inactive.total_coaches === 0 ? 'No other coaches on this account yet.' : `All ${inactive.total_coaches} coaches have been active in the last ${inactive.days} days.`}
+                </p>
+              ) : (
+                <>
+                  <div className="space-y-2">
+                    {inactive.inactive.map(c => (
+                      <div key={c.user_id} className="flex items-center justify-between border-b border-gray-800/60 pb-2">
+                        <div>
+                          <div className="text-sm">{c.name}</div>
+                          <div className="text-xs text-gray-500">{c.email} · {c.role}</div>
+                        </div>
+                        <span className={`text-xs px-2 py-1 rounded ${c.never_active ? 'bg-red-400/10 text-red-400' : 'bg-gold/10 text-gold'}`}>
+                          {c.never_active ? 'Never used' : `${c.days_inactive}d inactive`}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-600 mt-3">
+                    {inactive.inactive_count} of {inactive.total_coaches} coaches flagged. Activity counts a login or an analysis run.
+                  </p>
+                </>
+              )}
+            </div>
+          )}
 
           {loading || !usage ? (
             <p className="text-gray-400">Loading…</p>
