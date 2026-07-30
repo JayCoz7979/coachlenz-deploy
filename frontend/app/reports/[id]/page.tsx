@@ -5,7 +5,7 @@ import Sidebar from '@/components/layout/Sidebar'
 import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
 import Link from 'next/link'
-import { ChevronLeft, Loader2, FileText, AlertTriangle, TrendingUp, Shield, Zap, Target, Printer, Download, ChevronDown, Share2, Star } from 'lucide-react'
+import { ChevronLeft, Loader2, FileText, AlertTriangle, TrendingUp, Shield, Zap, Target, Printer, Download, ChevronDown, Share2, Star, Trash2 } from 'lucide-react'
 import FieldHeatMap from '@/components/report/FieldHeatMap'
 import BasketballShotChart from '@/components/report/BasketballShotChart'
 
@@ -155,6 +155,7 @@ export default function ReportPage() {
   const [polling, setPolling] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [retrying, setRetrying] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   // Still generating = explicit 'generating' status, or (older payloads) no result yet
   // and not flagged failed. A failed report must NOT keep polling.
   const stillGenerating = (r: any) => (r?.status ? r.status === 'generating' : !r?.generated_at)
@@ -387,6 +388,13 @@ export default function ReportPage() {
     finally { setRetrying(false) }
   }
 
+  const handleDeleteReport = async () => {
+    if (!window.confirm('Delete this report permanently? This cannot be undone.')) return
+    setDeleting(true)
+    try { await api.delete(`/reports/${id}`); router.push('/reports') }
+    catch { setDeleting(false) }
+  }
+
   if (report?.status === 'failed') {
     return (
       <div className="flex h-screen overflow-hidden">
@@ -402,6 +410,10 @@ export default function ReportPage() {
               {retrying && <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />} Try again
             </button>
             <Link href="/reports" style={{ color: '#7a7a6e', fontSize: 13, textDecoration: 'none' }}>Back to reports</Link>
+            <button onClick={handleDeleteReport} disabled={deleting}
+              style={{ background: 'transparent', color: '#e07070', border: 'none', fontSize: 13, cursor: 'pointer' }}>
+              Delete report
+            </button>
           </div>
         </main>
       </div>
@@ -554,6 +566,18 @@ export default function ReportPage() {
                 </div>
               </>
             )}
+            <button
+              onClick={handleDeleteReport}
+              disabled={deleting}
+              title="Delete this report"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6, background: 'transparent', color: '#e07070',
+                border: '1px solid rgba(224,112,112,0.35)', borderRadius: 4, padding: '7px 12px', fontSize: 12,
+                fontWeight: 700, cursor: 'pointer', letterSpacing: '0.04em',
+              }}
+            >
+              {deleting ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Trash2 size={14} />} Delete
+            </button>
           </div>
         </div>
 
@@ -569,7 +593,7 @@ export default function ReportPage() {
                 AI is analyzing your film...
               </div>
               <div style={{ fontSize: 13, color: '#7a7a6e' }}>
-                This usually takes 30–90 seconds. The page will update automatically.
+                This can take a few minutes for a full game. The page will update automatically.
               </div>
             </div>
           )}
