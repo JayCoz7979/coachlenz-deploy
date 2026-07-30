@@ -20,6 +20,11 @@ MAX_ATTEMPTS = 3              # dead-letter after this many tries so a job that 
 
 class BaseWorker:
     job_type: str
+    # How long a "running" job may go without a heartbeat before the watchdog re-queues
+    # it as orphaned. Default is conservative for long, possibly non-idempotent jobs
+    # (detection/ingest). A short, idempotent job (reports) overrides this lower so an
+    # orphaned run recovers in minutes, not ~10.
+    stuck_threshold_minutes: int = STUCK_THRESHOLD_MINUTES
 
     async def run_forever(self):
         logger.info(f"[{self.job_type}] worker starting")
@@ -50,8 +55,16 @@ class BaseWorker:
                 job.status = "error"
                 job.error_message = f"Gave up after {MAX_ATTEMPTS} failed attempts (job kept failing)."
                 job.locked_at = None
+                dead_payload = dict(job.payload or {})
+                dead_reason = job.error_message
                 await db.commit()
                 logger.error(f"[{self.job_type}] job {job.id} dead-lettered after {MAX_ATTEMPTS} attempts")
+                # Tell the domain object it failed (e.g. mark the report failed) so the
+                # UI stops spinning — the worker may have died before handle() could.
+                try:
+                    await self.on_dead_letter(dead_payload, dead_reason)
+                except Exception as e:
+                    logger.error(f"[{self.job_type}] on_dead_letter failed: {e}")
                 return
             job.status = "running"
             job.locked_at = datetime.utcnow()
@@ -98,10 +111,11 @@ class BaseWorker:
             hb.cancel()
 
     async def _watchdog(self):
+        # Sweep once immediately on start (so a redeploy reclaims already-stale jobs
+        # without waiting a full cycle), then every 60s.
         while True:
-            await asyncio.sleep(60)
             try:
-                cutoff = datetime.utcnow() - timedelta(minutes=STUCK_THRESHOLD_MINUTES)
+                cutoff = datetime.utcnow() - timedelta(minutes=self.stuck_threshold_minutes)
                 async with AsyncSessionLocal() as db:
                     await db.execute(
                         update(Job)
@@ -111,6 +125,13 @@ class BaseWorker:
                     await db.commit()
             except Exception as e:
                 logger.error(f"[{self.job_type}] watchdog error: {e}")
+            await asyncio.sleep(60)
+
+    async def on_dead_letter(self, payload: dict, reason: str) -> None:
+        """Called when a job is given up on (dead-lettered) after MAX_ATTEMPTS. Default
+        no-op; a worker overrides this to record the failure on its domain object (e.g.
+        mark the report failed) so a user isn't left staring at an infinite spinner."""
+        return None
 
     async def handle(self, payload: dict) -> dict:
         raise NotImplementedError
