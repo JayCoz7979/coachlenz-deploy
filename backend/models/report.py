@@ -23,5 +23,9 @@ class TendencyReport(Base):
     share_expires_at = Column(DateTime(timezone=True))
     share_view_count = Column(Integer, nullable=False, default=0, server_default="0")
     generated_at = Column(DateTime(timezone=True))
+    # Set when generation errors (Anthropic usage limit, API error, crash). Real
+    # reason for founder/admin/logs; the coach sees only a generic message. failed =
+    # error_reason set AND generated_at null; cleared on a successful (re)generation.
+    error_reason = Column(String)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)

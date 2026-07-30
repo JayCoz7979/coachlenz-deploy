@@ -45,6 +45,27 @@ async def send_report_ready_email(to: str, name: str, report_title: str, report_
         "html": f"<p>Hi {name},</p><p>Your tendency report <strong>{report_title}</strong> is ready.</p><p><a href='{report_url}'>View Report</a></p><p>Powered by <a href='https://cosbyaisolutions.com'>Cosby AI Solutions</a></p>",
     })
 
+async def send_report_failure_alert(to: str, report_title: str, reason: str):
+    """Ops alert to the founder/admin when report generation fails (e.g. the Anthropic
+    usage limit). Internal, not customer-facing; caller best-efforts the send. The
+    coach only ever sees a generic message, so this is where the real reason surfaces."""
+    import html as _html
+    resend.Emails.send({
+        "from": FOUNDER_FROM,
+        "reply_to": FOUNDER_REPLY_TO,
+        "to": to,
+        "subject": f"[CoachLenz] Report generation failing: {report_title}",
+        "html": (
+            f"<p>A scouting report failed to generate.</p>"
+            f"<p><b>Report:</b> {_html.escape(report_title or '')}</p>"
+            f"<p><b>Reason:</b> {_html.escape(reason or '')}</p>"
+            f"<p>If this is an API usage limit, raise or top up the limit in the Anthropic Console "
+            f"for the CoachLenz production API key. Coaches are shown a generic "
+            f"&ldquo;try again in a few minutes&rdquo; message until this clears.</p>"
+        ),
+    })
+
+
 async def send_email_verification_code(to: str, name: str, code: str):
     resend.Emails.send({
         "from": FROM,

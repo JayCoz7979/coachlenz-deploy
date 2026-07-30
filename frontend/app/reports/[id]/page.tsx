@@ -25,6 +25,8 @@ interface Report {
   sections: Section[]
   summary: any
   generated_at: string | null
+  status?: 'ready' | 'failed' | 'generating'
+  message?: string | null
 }
 
 const menuItem: CSSProperties = {
@@ -152,6 +154,10 @@ export default function ReportPage() {
   const [report, setReport] = useState<Report | null>(null)
   const [polling, setPolling] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [retrying, setRetrying] = useState(false)
+  // Still generating = explicit 'generating' status, or (older payloads) no result yet
+  // and not flagged failed. A failed report must NOT keep polling.
+  const stillGenerating = (r: any) => (r?.status ? r.status === 'generating' : !r?.generated_at)
 
   useEffect(() => { fetchMe() }, [])
   useEffect(() => { if (!isLoading && !user) router.push('/login') }, [isLoading, user])
@@ -161,8 +167,7 @@ export default function ReportPage() {
     const load = () => api.get(`/reports/${id}`).then(r => {
       setReport(r.data)
       setLoadError(null)
-      if (!r.data.generated_at) setPolling(true)
-      else setPolling(false)
+      setPolling(stillGenerating(r.data))
     }).catch((e: any) => {
       // Without this, a failed load left the page spinning forever.
       setPolling(false)
@@ -177,7 +182,7 @@ export default function ReportPage() {
     const t = setInterval(() => {
       api.get(`/reports/${id}`).then(r => {
         setReport(r.data)
-        if (r.data.generated_at) { setPolling(false) }
+        if (!stillGenerating(r.data)) { setPolling(false) }
       }).catch(() => {
         // Transient poll failure: stop the loop so it can't spin silently. A
         // still-generating report recovers on the next page load.
@@ -371,6 +376,37 @@ export default function ReportPage() {
   const POSITION_UNITS: { code: string; label: string }[] = report?.sport === 'basketball'
     ? [{ code: 'G', label: 'Guards' }, { code: 'W', label: 'Wings' }, { code: 'B', label: 'Bigs' }]
     : ['OL', 'DL', 'WR', 'DB', 'QB', 'LB', 'RB', 'ST'].map(c => ({ code: c, label: c }))
+
+  const retry = async () => {
+    setRetrying(true)
+    try {
+      await api.post(`/reports/${id}/retry`)
+      setReport(r => (r ? { ...r, status: 'generating', message: null } : r))
+      setPolling(true)
+    } catch { /* stay on the failed screen; the user can try again */ }
+    finally { setRetrying(false) }
+  }
+
+  if (report?.status === 'failed') {
+    return (
+      <div className="flex h-screen overflow-hidden">
+        <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+        <Sidebar />
+        <main className="flex-1 flex flex-col items-center justify-center gap-4 px-6 text-center">
+          <AlertTriangle size={26} style={{ color: '#C9A84C' }} />
+          <p style={{ color: '#f8f6f0', fontSize: 16, fontWeight: 700 }}>Report couldn&apos;t be generated</p>
+          <p style={{ color: '#7a7a6e', maxWidth: 440 }}>{report.message || 'This report could not be generated. Please try again in a few minutes.'}</p>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 4 }}>
+            <button onClick={retry} disabled={retrying}
+              style={{ background: '#1B4332', color: '#fff', padding: '8px 18px', borderRadius: 8, fontWeight: 600, display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+              {retrying && <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />} Try again
+            </button>
+            <Link href="/reports" style={{ color: '#7a7a6e', fontSize: 13, textDecoration: 'none' }}>Back to reports</Link>
+          </div>
+        </main>
+      </div>
+    )
+  }
 
   if (!report) {
     return (

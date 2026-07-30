@@ -13,6 +13,7 @@ from backend.models.event import Event
 from backend.models.job import Job
 from backend.services.auth import get_current_user, get_current_org
 from backend.services.encryption import decrypt_json
+from backend.services.report_failures import report_status, CLIENT_FAILURE_MESSAGE
 from backend.utils.timeutils import to_naive_utc
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -40,7 +41,7 @@ class ReportCreate(BaseModel):
 async def list_reports(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(TendencyReport).where(TendencyReport.organization_id == user.organization_id).order_by(TendencyReport.created_at.desc()))
     reports = result.scalars().all()
-    return [{"id": str(r.id), "title": r.title, "sport": r.sport, "report_type": r.report_type, "is_trial": r.is_trial, "watermarked": r.watermarked, "generated_at": r.generated_at.isoformat() if r.generated_at else None} for r in reports]
+    return [{"id": str(r.id), "title": r.title, "sport": r.sport, "report_type": r.report_type, "is_trial": r.is_trial, "watermarked": r.watermarked, "generated_at": r.generated_at.isoformat() if r.generated_at else None, "status": report_status(r.generated_at, r.error_reason)} for r in reports]
 
 @router.post("")
 async def create_report(body: ReportCreate, user: User = Depends(get_current_user), org: Organization = Depends(get_current_org), db: AsyncSession = Depends(get_db)):
@@ -97,7 +98,30 @@ async def get_report(report_id: str, user: User = Depends(get_current_user), db:
         "sections": sections,
         "summary": summary,
         "generated_at": report.generated_at.isoformat() if report.generated_at else None,
+        # status = ready | failed | generating. On failure the coach sees only a generic
+        # message; the real reason (error_reason) stays server-side for the founder.
+        "status": report_status(report.generated_at, report.error_reason),
+        "message": (CLIENT_FAILURE_MESSAGE if (report.error_reason and not report.generated_at) else None),
     }
+
+
+@router.post("/{report_id}/retry")
+async def retry_report(report_id: str, user: User = Depends(get_current_user),
+                       org: Organization = Depends(get_current_org), db: AsyncSession = Depends(get_db)):
+    """Re-queue a failed report generation (clears the failure and enqueues a fresh
+    job). Only meaningful for a report that failed and hasn't since generated."""
+    result = await db.execute(select(TendencyReport).where(
+        TendencyReport.id == report_id, TendencyReport.organization_id == user.organization_id))
+    report = result.scalar_one_or_none()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    if report.generated_at:
+        return {"ok": True, "status": "ready"}  # already done, nothing to retry
+    report.error_reason = None
+    db.add(Job(organization_id=org.id, job_type="report", payload={"report_id": str(report.id)}))
+    await db.commit()
+    return {"ok": True, "status": "generating"}
+
 
 @router.get("/{report_id}/export")
 async def export_report(
