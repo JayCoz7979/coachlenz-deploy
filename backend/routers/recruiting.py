@@ -26,6 +26,7 @@ from backend.services.permissions import CAN_MANAGE_ROSTER
 from backend.utils.timeutils import to_naive_utc
 from backend.services.email_service import send_recruiting_profile_email
 from backend.services.player_stats import stat_line_for, top_play_types
+from backend.services.playback import clip_playback
 from backend.routers.roster import team_season_events
 
 router = APIRouter(prefix="/recruiting", tags=["recruiting"])
@@ -75,11 +76,6 @@ async def _highlights(player_id, org_id, db: AsyncSession):
         Clip.recruiting_player_id == player_id, Clip.organization_id == org_id
     ).order_by(Clip.created_at))
     return res.scalars().all()
-
-
-def _clip_out(c: Clip) -> dict:
-    return {"id": str(c.id), "title": c.title, "start_time": c.start_time,
-            "end_time": c.end_time, "url": c.r2_url}
 
 
 async def _recruiting_stats(p: RosterPlayer, org_id, highlights_count: int, db: AsyncSession):
@@ -169,7 +165,7 @@ async def coach_view(player_id: str, user: User = Depends(get_current_user),
         "recruiting_enabled": p.recruiting_enabled,
         "recruiting_expires_at": p.recruiting_expires_at.isoformat() if p.recruiting_expires_at else None,
         "share_path": (f"/recruiting/share/{p.recruiting_token}" if p.recruiting_token else None),
-        "highlights": [_clip_out(c) for c in clips],
+        "highlights": await clip_playback(clips, user.organization_id, db),
         "stats": stats,
         "top_play_types": tops,
     }
@@ -206,7 +202,7 @@ async def public_profile(token: str, db: AsyncSession = Depends(get_db)):
     return {
         "name": f"{p.first_name} {p.last_name or ''}".strip(),
         "position": p.position, "grade_year": p.grade_year,
-        "highlights": [_clip_out(c) for c in clips],
+        "highlights": await clip_playback(clips, p.organization_id, db),
         "stats": stats,
         "top_play_types": tops,
         "shared": True,

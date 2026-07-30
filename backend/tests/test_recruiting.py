@@ -23,6 +23,9 @@ class _Result:
         items = self.value if isinstance(self.value, list) else ([] if self.value is None else [self.value])
         return SimpleNamespace(all=lambda: items)
 
+    def all(self):
+        return self.value if isinstance(self.value, list) else ([] if self.value is None else [self.value])
+
 
 class _FakeDB:
     def __init__(self, results):
@@ -104,11 +107,14 @@ def test_recruiting_highlight_queues_for_board():
 def test_scout_link_no_login_required():
     p = _player(recruiting_enabled=True, recruiting_token="tok",
                 recruiting_expires_at=datetime.utcnow() + timedelta(days=10))
-    clips = [SimpleNamespace(id="cl1", title="TD run", start_time=1.0, end_time=6.0, r2_url="u")]
-    out = asyncio.run(rec.public_profile("tok", db=_FakeDB([_Result(p), _Result(clips)])))
+    clips = [SimpleNamespace(id="cl1", game_id="g1", title="TD run", start_time=1.0, end_time=6.0)]
+    # RosterPlayer by token, highlight clips, then the parent-game key lookup for
+    # fresh playback URLs (game g1 has no film key yet -> url None).
+    out = asyncio.run(rec.public_profile("tok", db=_FakeDB([_Result(p), _Result(clips), _Result([("g1", None)])])))
     assert out["shared"] is True
     assert out["name"] == "Darius M"           # name IS shown (opt-in recruiting)
     assert out["stats"]["highlights_count"] == 1
+    assert out["highlights"][0]["url"] is None  # presigned on read; no film key yet
 
 
 def test_public_profile_expired_is_410():

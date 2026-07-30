@@ -94,6 +94,19 @@ def generate_presigned_download_url(key: str, expires_in: int = 604800) -> str:
     )
 
 
+def safe_download_url(key: str, expires_in: int = 604800):
+    """A freshly presigned download URL for `key`, or None when there's no key or R2
+    can't be reached. Never raises: a stale or unavailable clip URL must never 500 a
+    share page — the caller shows 'video unavailable' instead. Presigning on read (vs
+    storing a URL) is what keeps long-lived share links playable past the old expiry."""
+    if not key:
+        return None
+    try:
+        return generate_presigned_download_url(key, expires_in=expires_in)
+    except Exception:
+        return None
+
+
 def delete_object(key: str):
     if _use_local():
         path = _safe_local_path(key)
