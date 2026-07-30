@@ -113,6 +113,26 @@ POSITION_UNITS: Dict[str, Dict[str, Any]] = {
            "hint": "Their kicking game, return threat, and fake tendencies."},
 }
 
+# Basketball has no football-style position coaches; the practical unit split a staff
+# thinks in is Guards / Wings / Bigs. Keywords map each to the basketball report
+# sections that bear on that group (headings like "Ball Screen Defense", "Shot Chart",
+# "Free Throws", "Systems, Press & Press-Break", "Key Players").
+BASKETBALL_UNITS: Dict[str, Dict[str, Any]] = {
+    "G": {"label": "Guards",
+          "keywords": ["ball screen", "press", "defensive scheme", "situational", "late-game", "systems", "game plan"],
+          "hint": "Their ball-screen actions, press and press-break, and defensive scheme - how your guards attack and defend on the ball."},
+    "W": {"label": "Wings",
+          "keywords": ["shot chart", "key players", "offensive system", "situational", "special situations"],
+          "hint": "Their shot chart, key perimeter scorers, and offensive sets - what your wings take away and where to hunt shots."},
+    "B": {"label": "Bigs",
+          "keywords": ["shot chart", "ball screen", "free throw", "inbound", "key players", "installable game plan"],
+          "hint": "Their paint scoring, ball-screen coverage, free-throw targets, and inbounds - your bigs' coverage and rebounding plan."},
+}
+
+
+def _units_for_sport(sport: Optional[str]) -> Dict[str, Dict[str, Any]]:
+    return BASKETBALL_UNITS if (sport or "").strip().lower() == "basketball" else POSITION_UNITS
+
 
 def _sections(report: Dict[str, Any]) -> List[Dict[str, Any]]:
     return [s for s in (report.get("sections") or []) if isinstance(s, dict)]
@@ -147,7 +167,7 @@ def _coordinator(report: Dict[str, Any]) -> Dict[str, Any]:
 # ── position: one unit's slice ───────────────────────────────────────────────
 def _position(report: Dict[str, Any], unit: Optional[str]) -> Dict[str, Any]:
     unit = (unit or "").upper()
-    spec = POSITION_UNITS.get(unit)
+    spec = _units_for_sport(report.get("sport")).get(unit)
     secs = _sections(report)
     if not spec:
         # Unknown unit: give the exploitable-pattern sections as a safe default.

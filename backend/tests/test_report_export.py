@@ -6,7 +6,9 @@ player_tendencies) and asserts each format returns the right, non-empty slice.
 
 Run:  python -m backend.tests.test_report_export
 """
-from backend.services.report_export import build_export, POSITION_UNITS
+from backend.services.report_export import (
+    build_export, POSITION_UNITS, BASKETBALL_UNITS, _units_for_sport,
+)
 
 
 REPORT = {
@@ -110,6 +112,69 @@ def run():
 
     assert set(POSITION_UNITS) >= {"OL", "DL", "WR", "DB", "QB", "LB", "RB", "ST"}
     print("\nALL REPORT EXPORT ASSERTIONS PASSED")
+
+
+# ── pytest-collected cases (the run() above is the legacy football smoke) ──────
+
+BBALL_REPORT = {
+    "title": "Basketball Scouting Report: Coon Rapids",
+    "sport": "basketball",
+    "report_type": "opponent",
+    "watermarked": False,
+    "generated_at": "2026-07-30T18:00:00",
+    "sections": [
+        {"heading": "Key Players - Who to Stop", "insight_type": "red_zone", "body": "#31 initiates."},
+        {"heading": "Shot Chart - Where They Score (Heat Map)", "insight_type": "tendency", "body": "Restricted area heavy."},
+        {"heading": "Film Depth - Ball Screen Defense Attack Plan", "insight_type": "defense", "body": "They drop."},
+        {"heading": "Free Throws - Strategic Foul Targets & Box-Outs", "insight_type": "defense", "body": "#4 shoots 48%."},
+        {"heading": "Systems, Press & Press-Break (coach-tagged)", "insight_type": "tendency", "body": "2-2-1 press."},
+        {"heading": "Situational Tendencies - Coordinator Statements", "insight_type": "tendency", "body": "BLOB stack."},
+    ],
+    "summary": {"total_plays": 265, "scouting": {"report_status": "FINAL"}},
+}
+
+
+def _hstr(payload):
+    return " | ".join(b["heading"] for b in payload["blocks"])
+
+
+def test_units_for_sport_selects_the_right_map():
+    assert _units_for_sport("basketball") is BASKETBALL_UNITS
+    assert _units_for_sport("football") is POSITION_UNITS
+    assert _units_for_sport(None) is POSITION_UNITS  # default to football
+
+
+def test_basketball_units_are_guards_wings_bigs():
+    assert set(BASKETBALL_UNITS) == {"G", "W", "B"}
+
+
+def test_basketball_guards_brief_focuses_on_ball_screen_and_systems():
+    g = build_export(BBALL_REPORT, "position", unit="G")
+    h = _hstr(g)
+    assert g["subtitle"].endswith("Guards")
+    assert "Ball Screen" in h and "Systems" in h
+    assert "Free Throws" not in h and "Shot Chart" not in h  # not a guards concern here
+
+
+def test_basketball_bigs_brief_focuses_on_paint_and_free_throws():
+    b = build_export(BBALL_REPORT, "position", unit="B")
+    h = _hstr(b)
+    assert b["subtitle"].endswith("Bigs")
+    assert "Free Throws" in h and "Shot Chart" in h
+    assert "Systems, Press" not in h  # bigs brief drops the press/press-break section
+
+
+def test_football_units_not_used_for_basketball_report():
+    # An OL request on a basketball report is unknown -> safe fallback, not a football slice.
+    out = build_export(BBALL_REPORT, "position", unit="OL")
+    assert out["blocks"], "must never hand back an empty brief"
+    assert "Offensive Line" not in out.get("subtitle", "")
+
+
+def test_football_position_brief_still_works():
+    o = build_export(REPORT, "position", unit="OL")
+    assert "Fronts & Pressure" in _hstr(o)
+    assert o["subtitle"].endswith("Offensive Line")
 
 
 if __name__ == "__main__":

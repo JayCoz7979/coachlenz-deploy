@@ -366,7 +366,11 @@ export default function ReportPage() {
       alert('Could not build that export.')
     } finally { setExporting('') }
   }
-  const POSITION_UNITS = ['OL', 'DL', 'WR', 'DB', 'QB', 'LB', 'RB', 'ST']
+  // Position-coach brief units are sport-specific: basketball groups by Guards /
+  // Wings / Bigs, football by unit. Codes match backend report_export unit maps.
+  const POSITION_UNITS: { code: string; label: string }[] = report?.sport === 'basketball'
+    ? [{ code: 'G', label: 'Guards' }, { code: 'W', label: 'Wings' }, { code: 'B', label: 'Bigs' }]
+    : ['OL', 'DL', 'WR', 'DB', 'QB', 'LB', 'RB', 'ST'].map(c => ({ code: c, label: c }))
 
   if (!report) {
     return (
@@ -461,7 +465,7 @@ export default function ReportPage() {
                       <div style={{ fontSize: 10, color: '#7a7a6e', letterSpacing: '0.1em', padding: '8px 8px 4px' }}>POSITION COACH BRIEF</div>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: '0 4px 4px' }}>
                         {POSITION_UNITS.map(u => (
-                          <button key={u} onClick={() => exportFormat('position', u)} style={unitChip}>{u}</button>
+                          <button key={u.code} onClick={() => exportFormat('position', u.code)} style={unitChip}>{u.label}</button>
                         ))}
                       </div>
                       <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', marginTop: 6, paddingTop: 6 }}>
