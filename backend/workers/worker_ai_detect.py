@@ -45,7 +45,7 @@ CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "multipass-v11-basketball-deep"
+CODE_VERSION = "multipass-v12-grade-memory-fix"
 
 # Parallel ranged extraction: one long fps=0.5 pass over a 2.75h stream times out
 # silently. Instead decode many short windows concurrently, each its own ffmpeg.
@@ -127,10 +127,16 @@ CONTRADICTION_CONF_CAP = 0.6   # a contradictory play cannot score above this
 PLAY_GRADE_ENABLED = False       # opt-in per run; validate before making default
 GRADE_MODEL = "claude-opus-4-8"  # grading judgment is the hardest read
 MAX_GRADE_PLAYS = 60             # cost guardrail: grade up to N plays / game
-GRADE_PARALLEL = 2               # concurrency (memory + rate guardrail)
+# MEMORY: the grade pass re-extracts high-res clips; at full scale (60 plays) this
+# OOM-killed the worker on a long game. Grade SERIALLY, at a smaller width than the
+# jersey pass (grading technique does not need 2400px to read a number), with one
+# fewer frame, and delete each frame right after use. Cuts peak memory ~4-5x with no
+# change to grade quality or cost (same number of Opus calls).
+GRADE_PARALLEL = 1               # serialize grading to keep peak memory flat
 GRADE_LEAD = 0.8                 # seconds before the snap to start the grade clip
-GRADE_FRAMES_PER_PLAY = 6        # frames across the play for a technique read
+GRADE_FRAMES_PER_PLAY = 5        # frames across the play for a technique read
 GRADE_FRAME_STRIDE = 0.5         # seconds between grade frames
+GRADE_WIDTH = 1600               # re-extract width for grading (vs 2400 for jersey OCR)
 
 JERSEY_PROMPT = """You have EAGLE-EYE vision. Below are HIGH-RESOLUTION zoom crops of ONE football play, sampled frame-by-frame (~0.45s apart) from just before the snap through the early run — the SAME players across consecutive moments.
 
@@ -1313,10 +1319,14 @@ class AiDetectWorker(BaseWorker):
         for fi in range(GRADE_FRAMES_PER_PLAY):
             fp = os.path.join(tmpdir, f"grade_{idx}_{fi}.jpg")
             when = float(ts) - GRADE_LEAD + fi * GRADE_FRAME_STRIDE
-            if await self._extract_hires_frame(video_source, when, fp):
+            if await self._extract_hires_frame(video_source, when, fp, width=GRADE_WIDTH):
                 content.append({"type": "text", "text": f"Moment {fi + 1}:"})
                 content.extend(self._player_crop_blocks(fp, f"Moment {fi + 1}"))
                 got += 1
+                try:
+                    os.remove(fp)  # free the high-res frame from disk right after cropping
+                except OSError:
+                    pass
         if not got:
             return {}, 0
         if getattr(self, "_sport", "") == "basketball":
