@@ -92,10 +92,11 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
         working-directory: frontend
-      - name: Typecheck
-        run: npx tsc --noEmit
-        working-directory: frontend
-      - name: Build
+      # `next build` runs TypeScript checking as part of the build (next.config forbids
+      # ignoreBuildErrors) and generates next-env.d.ts, so it gates typecheck + build
+      # exactly as the Railway deploy does. A standalone `tsc` fails on a fresh checkout
+      # because next-env.d.ts (image module types) is gitignored.
+      - name: Build (typechecks)
         run: npm run build
         working-directory: frontend
         env:
