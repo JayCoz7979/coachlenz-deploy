@@ -38,3 +38,17 @@ def failure_reason(exc) -> str:
     Capped so a giant provider payload can't bloat the row."""
     s = str(exc).strip()
     return (s[:500] if s else exc.__class__.__name__)
+
+
+def dead_letter_reason(existing_error_reason, generated_at, reason):
+    """What error_reason to write when a report job is dead-lettered (given up after
+    repeated failures). Returns the value to set, or None to leave the report as-is:
+      * already generated -> None (a success beat the dead-letter; don't fail it)
+      * already has a reason (handle() set it) -> keep that specific reason
+      * otherwise -> the given reason, or a generic 'gave up' message
+    This is the tail case where the worker died before handle() could record why."""
+    if generated_at:
+        return None
+    if existing_error_reason:
+        return existing_error_reason
+    return reason or "This report could not be generated after several attempts."

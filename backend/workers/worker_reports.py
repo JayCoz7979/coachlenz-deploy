@@ -8,7 +8,7 @@ from backend.models.event import Event
 from backend.services.tendency_engine import run_tendency_engine
 from backend.services.report_writer import generate_prose_sections
 from backend.services.coach_notes import collect_flagged_plays
-from backend.services.report_failures import failure_reason, is_quota_error
+from backend.services.report_failures import failure_reason, is_quota_error, dead_letter_reason
 from backend.services.encryption import encrypt_json
 from backend.services.agent_log import log_agent_action, confidence_band
 from backend.services.email_service import send_report_failure_alert
@@ -20,6 +20,25 @@ logger = logging.getLogger(__name__)
 
 class ReportsWorker(BaseWorker):
     job_type = "report"
+    # Report generation is short (2-5 min) and idempotent (a re-run overwrites the
+    # report), so an orphaned run can be reclaimed fast without risk of a harmful
+    # double-execution. Recovers in ~4-5 min instead of the base ~10.
+    stuck_threshold_minutes = 4
+
+    async def on_dead_letter(self, payload: dict, reason: str) -> None:
+        """A report job that was given up on must not leave the report spinning: mark
+        it failed (unless a run already succeeded or handle() already recorded why)."""
+        report_id = payload.get("report_id")
+        if not report_id:
+            return
+        async with AsyncSessionLocal() as db:
+            r = await db.get(TendencyReport, report_id)
+            if r is None:
+                return
+            new = dead_letter_reason(r.error_reason, r.generated_at, reason)
+            if new and new != r.error_reason:
+                r.error_reason = new
+                await db.commit()
 
     async def handle(self, payload: dict) -> dict:
         report_id = payload["report_id"]
