@@ -8,7 +8,8 @@ from backend.models.user import User
 from backend.models.clip import Clip
 from backend.models.game import Game
 from backend.services.auth import get_current_user
-from backend.services.r2 import generate_presigned_download_url
+from backend.services.r2 import safe_download_url
+from backend.services.playback import clip_playback
 
 router = APIRouter(prefix="/clips", tags=["clips"])
 
@@ -25,7 +26,9 @@ async def list_clips(game_id: Optional[str] = None, user: User = Depends(get_cur
         query = query.where(Clip.game_id == game_id)
     result = await db.execute(query.order_by(Clip.created_at.desc()))
     clips = result.scalars().all()
-    return [{"id": str(c.id), "game_id": str(c.game_id), "title": c.title, "start_time": c.start_time, "end_time": c.end_time, "r2_url": c.r2_url} for c in clips]
+    # Presign each clip's playback URL fresh from its parent game film (never a
+    # stored, expiring r2_url).
+    return await clip_playback(clips, user.organization_id, db)
 
 @router.post("")
 async def create_clip(body: ClipCreate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
@@ -44,8 +47,13 @@ async def get_clip(clip_id: str, user: User = Depends(get_current_user), db: Asy
     clip = result.scalar_one_or_none()
     if not clip:
         raise HTTPException(status_code=404, detail="Clip not found")
-    url = generate_presigned_download_url(clip.r2_key) if clip.r2_key else None
-    return {"id": str(clip.id), "title": clip.title, "start_time": clip.start_time, "end_time": clip.end_time, "download_url": url}
+    # A clip is a window into its parent game's film; presign that film fresh.
+    gres = await db.execute(select(Game.r2_key).where(
+        Game.id == clip.game_id, Game.organization_id == user.organization_id))
+    row = gres.first()
+    url = safe_download_url(row[0]) if row else None
+    return {"id": str(clip.id), "title": clip.title, "start_time": clip.start_time,
+            "end_time": clip.end_time, "download_url": url}
 
 @router.delete("/{clip_id}")
 async def delete_clip(clip_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
