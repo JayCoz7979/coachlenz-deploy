@@ -11,6 +11,17 @@ from backend.services.auth import get_current_user
 
 router = APIRouter(prefix="/events", tags=["events"])
 
+
+def _event_out(e: Event) -> dict:
+    return {
+        "id": str(e.id), "event_type": e.event_type, "side": e.side or "offense",
+        "down": e.down, "distance": e.distance, "formation": e.formation, "play_type": e.play_type,
+        "defensive_front": e.defensive_front, "coverage": e.coverage, "blitz": e.blitz,
+        "result": e.result, "yards_gained": e.yards_gained, "personnel": e.personnel,
+        "motion": e.motion, "time_seconds": e.time_seconds, "player": e.player,
+        "is_highlight": bool(e.is_highlight), "coach_note": e.coach_note, "extra_data": e.extra_data,
+    }
+
 class EventCreate(BaseModel):
     game_id: str
     event_type: str
@@ -37,13 +48,7 @@ class EventCreate(BaseModel):
 async def list_events(game_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Event).where(Event.game_id == game_id, Event.organization_id == user.organization_id))
     events = result.scalars().all()
-    return [{
-        "id": str(e.id), "event_type": e.event_type, "side": e.side or "offense",
-        "down": e.down, "distance": e.distance, "formation": e.formation, "play_type": e.play_type,
-        "defensive_front": e.defensive_front, "coverage": e.coverage, "blitz": e.blitz,
-        "result": e.result, "yards_gained": e.yards_gained, "personnel": e.personnel,
-        "motion": e.motion, "time_seconds": e.time_seconds, "player": e.player, "extra_data": e.extra_data,
-    } for e in events]
+    return [_event_out(e) for e in events]
 
 @router.post("")
 async def create_event(body: EventCreate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
@@ -80,6 +85,9 @@ class EventUpdate(BaseModel):
     motion: Optional[bool] = None
     time_seconds: Optional[float] = None
     player: Optional[str] = None
+    # Film-room coach marks.
+    is_highlight: Optional[bool] = None
+    coach_note: Optional[str] = None
     # Basketball (and other extra) fields live in extra_data — MERGED, not replaced,
     # so editing one scheme field never wipes the rest of the play's data.
     extra_data: Optional[Dict[str, Any]] = None
@@ -101,13 +109,7 @@ async def update_event(event_id: str, body: EventUpdate, user: User = Depends(ge
         flag_modified(event, "extra_data")
     await db.commit()
     await db.refresh(event)
-    return {
-        "id": str(event.id), "event_type": event.event_type, "side": event.side or "offense",
-        "down": event.down, "distance": event.distance, "formation": event.formation, "play_type": event.play_type,
-        "defensive_front": event.defensive_front, "coverage": event.coverage, "blitz": event.blitz,
-        "result": event.result, "yards_gained": event.yards_gained, "personnel": event.personnel,
-        "motion": event.motion, "time_seconds": event.time_seconds, "player": event.player, "extra_data": event.extra_data,
-    }
+    return _event_out(event)
 
 @router.delete("/{event_id}")
 async def delete_event(event_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):

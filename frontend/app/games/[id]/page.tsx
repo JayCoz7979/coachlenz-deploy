@@ -4,7 +4,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Sidebar from '@/components/layout/Sidebar'
 import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
-import { ChevronLeft, Tag, Play, Pause, Trash2, Clock, FileText, Loader2, CheckCircle, AlertCircle, Zap, Pencil, Check, X, Activity, TrendingUp, Users, Film, SkipForward, SkipBack } from 'lucide-react'
+import { ChevronLeft, Tag, Play, Pause, Trash2, Clock, FileText, Loader2, CheckCircle, AlertCircle, Zap, Pencil, Check, X, Activity, TrendingUp, Users, Film, SkipForward, SkipBack, Star, StickyNote } from 'lucide-react'
 import Link from 'next/link'
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -49,6 +49,8 @@ interface TaggedEvent {
   personnel: string | null
   motion: boolean
   player?: string | null
+  is_highlight?: boolean
+  coach_note?: string | null
   // auto_detected/confidence are set by the vision engine; basketball scheme and
   // shot fields (offensive_set, shot_zone, press_type, ...) also live here.
   extra_data?: { auto_detected?: boolean; confidence?: number; [k: string]: any }
@@ -598,6 +600,19 @@ function PlayLog({
   const [draft, setDraft] = useState<Partial<TaggedEvent>>({})
   const [filter, setFilter] = useState<'all' | 'offense' | 'defense' | 'special_teams'>('all')
   const [savingId, setSavingId] = useState<string | null>(null)
+  const [onlyHighlights, setOnlyHighlights] = useState(false)
+  // Inline coach-note editor (per play). noteId is the event being noted.
+  const [noteId, setNoteId] = useState<string | null>(null)
+  const [noteDraft, setNoteDraft] = useState('')
+  const [noteSaving, setNoteSaving] = useState(false)
+
+  const toggleHighlight = (ev: TaggedEvent) => onUpdate(ev.id, { is_highlight: !ev.is_highlight })
+  const openNote = (ev: TaggedEvent) => { setNoteId(ev.id); setNoteDraft(ev.coach_note || '') }
+  const saveNote = async (id: string) => {
+    setNoteSaving(true)
+    try { await onUpdate(id, { coach_note: noteDraft.trim() }); setNoteId(null); setNoteDraft('') }
+    finally { setNoteSaving(false) }
+  }
 
   const startEdit = (ev: TaggedEvent) => { setEditingId(ev.id); setDraft({ ...ev }) }
   const cancel = () => { setEditingId(null); setDraft({}) }
@@ -660,11 +675,13 @@ function PlayLog({
     )
   }
 
-  const shown = filter === 'all' ? events : events.filter(e => (e.side || 'offense') === filter)
+  const highlightCount = events.filter(e => e.is_highlight).length
+  const shown = (filter === 'all' ? events : events.filter(e => (e.side || 'offense') === filter))
+    .filter(e => !onlyHighlights || e.is_highlight)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      {/* Phase filter */}
+      {/* Phase filter + highlights toggle */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
         {((isBball
           ? [['all', 'All'], ['offense', 'Off'], ['defense', 'Def']]
@@ -676,6 +693,14 @@ function PlayLog({
             {label}
           </button>
         ))}
+        <button onClick={() => setOnlyHighlights(v => !v)} title="Show only highlighted plays"
+          disabled={highlightCount === 0 && !onlyHighlights}
+          style={{ flex: '0 0 auto', padding: '4px 8px', fontSize: 10, fontWeight: 700, cursor: highlightCount === 0 && !onlyHighlights ? 'default' : 'pointer', borderRadius: 3,
+            display: 'flex', alignItems: 'center', gap: 3, opacity: highlightCount === 0 && !onlyHighlights ? 0.4 : 1,
+            background: onlyHighlights ? 'rgba(201,168,76,0.25)' : 'rgba(255,255,255,0.04)',
+            color: onlyHighlights ? '#C9A84C' : '#7a7a6e', border: 'none', letterSpacing: '0.05em' }}>
+          <Star size={11} fill={onlyHighlights ? '#C9A84C' : 'none'} /> {highlightCount}
+        </button>
       </div>
 
       {shown.map((ev, i) => editingId === ev.id ? (
@@ -761,7 +786,8 @@ function PlayLog({
         </div>
       ) : (
         // ── Read-only row ──
-        <div key={ev.id} style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'rgba(255,255,255,0.03)', borderRadius: 4, padding: '8px 12px', border: '1px solid rgba(255,255,255,0.05)' }}>
+        <div key={ev.id} style={{ background: ev.is_highlight ? 'rgba(201,168,76,0.08)' : 'rgba(255,255,255,0.03)', borderRadius: 4, border: ev.is_highlight ? '1px solid rgba(201,168,76,0.35)' : '1px solid rgba(255,255,255,0.05)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px' }}>
           <span style={{ fontSize: 11, color: '#7a7a6e', width: 24, textAlign: 'right', flexShrink: 0 }}>{i + 1}</span>
           <button onClick={() => ev.time_seconds != null && onSeek(ev.time_seconds)}
             style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#C9A84C', padding: 0, fontFamily: 'var(--font-dm-mono)', fontSize: 12, flexShrink: 0 }}>
@@ -838,12 +864,39 @@ function PlayLog({
               )}
             </div>
           </div>
+          <button onClick={() => toggleHighlight(ev)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, flexShrink: 0 }} title={ev.is_highlight ? 'Unmark highlight' : 'Mark as highlight'}>
+            <Star size={13} fill={ev.is_highlight ? '#C9A84C' : 'none'} color={ev.is_highlight ? '#C9A84C' : '#7a7a6e'} />
+          </button>
+          <button onClick={() => (noteId === ev.id ? setNoteId(null) : openNote(ev))} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, flexShrink: 0 }} title={ev.coach_note ? 'Edit note' : 'Add note'}>
+            <StickyNote size={13} color={ev.coach_note ? '#C9A84C' : '#7a7a6e'} />
+          </button>
           <button onClick={() => startEdit(ev)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#7a7a6e', padding: 4, flexShrink: 0 }} title="Edit">
             <Pencil size={12} />
           </button>
           <button onClick={() => onDelete(ev.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#7a7a6e', padding: 4, flexShrink: 0 }} title="Delete">
             <Trash2 size={13} />
           </button>
+          </div>
+          {noteId === ev.id ? (
+            <div style={{ padding: '0 12px 10px 46px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <textarea value={noteDraft} onChange={e => setNoteDraft(e.target.value)} autoFocus rows={2}
+                placeholder="Note for this play — what to coach, why it's a highlight…"
+                className="input" style={{ fontSize: 12, padding: '6px 8px', width: '100%', resize: 'vertical' }} />
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button onClick={() => saveNote(ev.id)} disabled={noteSaving} className="btn-primary" style={{ height: 30, fontSize: 11, display: 'flex', alignItems: 'center', gap: 5, padding: '0 12px' }}>
+                  {noteSaving ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Check size={12} />} Save note
+                </button>
+                <button onClick={() => { setNoteId(null); setNoteDraft('') }} className="btn-secondary" style={{ height: 30, fontSize: 11, display: 'flex', alignItems: 'center', gap: 5, padding: '0 12px' }}>
+                  <X size={12} /> Cancel
+                </button>
+              </div>
+            </div>
+          ) : ev.coach_note ? (
+            <div onClick={() => openNote(ev)} style={{ padding: '0 12px 8px 46px', fontSize: 11, color: '#c9b98c', fontStyle: 'italic', display: 'flex', gap: 6, alignItems: 'flex-start', cursor: 'pointer' }} title="Edit note">
+              <StickyNote size={11} style={{ marginTop: 2, flexShrink: 0, color: '#C9A84C' }} />
+              <span>{ev.coach_note}</span>
+            </div>
+          ) : null}
         </div>
       ))}
     </div>
