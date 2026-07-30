@@ -5,7 +5,7 @@ import Sidebar from '@/components/layout/Sidebar'
 import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
 import Link from 'next/link'
-import { ChevronLeft, Loader2, FileText, AlertTriangle, TrendingUp, Shield, Zap, Target, Printer, Download, ChevronDown } from 'lucide-react'
+import { ChevronLeft, Loader2, FileText, AlertTriangle, TrendingUp, Shield, Zap, Target, Printer, Download, ChevronDown, Share2 } from 'lucide-react'
 import FieldHeatMap from '@/components/report/FieldHeatMap'
 import BasketballShotChart from '@/components/report/BasketballShotChart'
 
@@ -316,6 +316,40 @@ export default function ReportPage() {
 
   const [exporting, setExporting] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
+  const [shareOpen, setShareOpen] = useState(false)
+  const [sharing, setSharing] = useState(false)
+  const [share, setShare] = useState<{ url: string; expires_at: string } | null>(null)
+  const [shareCopied, setShareCopied] = useState(false)
+
+  const downloadCsv = async () => {
+    if (!report) return
+    setMenuOpen(false)
+    try {
+      const res = await api.get(`/reports/${report.id}/export/csv`, { responseType: 'blob' })
+      const url = URL.createObjectURL(new Blob([res.data], { type: 'text/csv' }))
+      const a = document.createElement('a')
+      a.href = url; a.download = `report-${report.id}-plays.csv`; a.click()
+      URL.revokeObjectURL(url)
+    } catch { alert('Could not download the CSV.') }
+  }
+
+  const createShareLink = async () => {
+    if (!report) return
+    setSharing(true)
+    try {
+      const res = await api.post(`/reports/${report.id}/share`)
+      const url = `${window.location.origin}${res.data.share_path}`
+      setShare({ url, expires_at: res.data.expires_at })
+      try { await navigator.clipboard.writeText(url); setShareCopied(true); setTimeout(() => setShareCopied(false), 2000) } catch { /* clipboard may be blocked */ }
+    } catch { alert('Could not create a share link.') }
+    finally { setSharing(false) }
+  }
+
+  const revokeShareLink = async () => {
+    if (!report) return
+    try { await api.delete(`/reports/${report.id}/share`); setShare(null) } catch { /* ignore */ }
+  }
+
   const exportFormat = async (format: string, unit?: string, player?: string) => {
     if (!report) return
     setMenuOpen(false); setExporting(format + (unit || '') + (player || ''))
@@ -429,6 +463,51 @@ export default function ReportPage() {
                           <button key={u} onClick={() => exportFormat('position', u)} style={unitChip}>{u}</button>
                         ))}
                       </div>
+                      <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', marginTop: 6, paddingTop: 6 }}>
+                        <button onClick={downloadCsv} style={menuItem}>Play data (CSV) <span style={menuHint}>every tagged play</span></button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div style={{ position: 'relative' }}>
+                  <button
+                    onClick={() => { setShareOpen(o => !o); setMenuOpen(false) }}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 6, background: 'transparent', color: '#C9A84C',
+                      border: '1px solid rgba(201,168,76,0.4)', borderRadius: 4, padding: '7px 12px', fontSize: 12,
+                      fontWeight: 700, cursor: 'pointer', letterSpacing: '0.04em',
+                    }}
+                    title="Create a read-only public link"
+                  >
+                    <Share2 size={14} /> Share
+                  </button>
+                  {shareOpen && (
+                    <div style={{
+                      position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 20,
+                      background: '#232323', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8,
+                      padding: 8, width: 300, boxShadow: '0 10px 30px rgba(0,0,0,0.4)',
+                    }}>
+                      {!share ? (
+                        <button onClick={createShareLink} disabled={sharing} style={menuItem}>
+                          {sharing ? 'Creating…' : 'Create read-only link'} <span style={menuHint}>7-day, no login</span>
+                        </button>
+                      ) : (
+                        <div style={{ padding: 4 }}>
+                          <input readOnly value={share.url} onFocus={e => e.currentTarget.select()}
+                            style={{ width: '100%', fontSize: 11, padding: '6px 8px', background: '#1c1c1c', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, color: '#f8f6f0' }} />
+                          <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                            <button onClick={() => { navigator.clipboard.writeText(share.url); setShareCopied(true); setTimeout(() => setShareCopied(false), 2000) }}
+                              style={{ flex: 1, fontSize: 12, fontWeight: 700, background: '#C9A84C', color: '#1c1c1c', border: 'none', borderRadius: 4, padding: '6px', cursor: 'pointer' }}>
+                              {shareCopied ? 'Copied!' : 'Copy link'}
+                            </button>
+                            <button onClick={revokeShareLink}
+                              style={{ fontSize: 12, fontWeight: 700, background: 'transparent', color: '#e57373', border: '1px solid rgba(229,115,115,0.4)', borderRadius: 4, padding: '6px 10px', cursor: 'pointer' }}>
+                              Revoke
+                            </button>
+                          </div>
+                          <div style={{ fontSize: 10, color: '#7a7a6e', marginTop: 6 }}>Expires {new Date(share.expires_at).toLocaleDateString()}</div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
