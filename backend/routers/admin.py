@@ -35,6 +35,23 @@ async def update_org(org_id: str, body: OrgUpdate, user: User = Depends(require_
         await db.commit()
     return {"ok": True}
 
+@router.delete("/orgs/{org_id}")
+async def delete_org(org_id: str, user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Permanently delete an organization and everything under it (users, teams,
+    roster, games, reports, ...) via ON DELETE CASCADE. Platform-admin only, and you
+    cannot delete your own org (self-lockout guard). Irreversible."""
+    result = await db.execute(select(Organization).where(Organization.id == org_id))
+    org = result.scalar_one_or_none()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    if str(org.id) == str(user.organization_id):
+        raise HTTPException(status_code=400, detail="You cannot delete your own organization.")
+    n = (await db.execute(select(func.count()).select_from(User).where(User.organization_id == org.id))).scalar() or 0
+    name, slug = org.name, org.slug
+    await db.delete(org)
+    await db.commit()
+    return {"ok": True, "deleted": {"id": org_id, "name": name, "slug": slug}, "users_removed": n}
+
 @router.get("/risk-flags")
 async def list_risk_flags(user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(RiskFlag).where(RiskFlag.resolved_at == None).order_by(RiskFlag.created_at.desc()).limit(100))
