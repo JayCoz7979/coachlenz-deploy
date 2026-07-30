@@ -919,8 +919,8 @@ function CutUps({ events, videoRef, sport }: {
 }) {
   const isBball = sport === 'basketball'
   const DIMS: [string, string][] = isBball
-    ? [['zone', 'Shot Zone'], ['set', 'Off Set'], ['def', 'Defense'], ['quarter', 'Quarter'], ['player', 'Player'], ['result', 'Result']]
-    : [['concept', 'Concept'], ['formation', 'Formation'], ['dd', 'Down & Dist'], ['personnel', 'Personnel'], ['player', 'Player'], ['impact', 'Big Plays']]
+    ? [['zone', 'Shot Zone'], ['set', 'Off Set'], ['def', 'Defense'], ['quarter', 'Quarter'], ['player', 'Player'], ['result', 'Result'], ['highlight', 'Highlights']]
+    : [['concept', 'Concept'], ['formation', 'Formation'], ['dd', 'Down & Dist'], ['personnel', 'Personnel'], ['player', 'Player'], ['impact', 'Big Plays'], ['highlight', 'Highlights']]
   const [dim, setDim] = useState(DIMS[0][0])
   const [value, setValue] = useState<string | null>(null)
   const [idx, setIdx] = useState(0)
@@ -928,6 +928,8 @@ function CutUps({ events, videoRef, sport }: {
 
   const groupValue = (e: TaggedEvent): string | null => {
     const x: any = e.extra_data || {}
+    // Coach-curated highlights apply to every sport (star on the play log).
+    if (dim === 'highlight') return e.is_highlight ? 'Highlights' : null
     if (isBball) {
       if (dim === 'zone') return x.shot_zone || null
       if (dim === 'set') return x.offensive_set || null
@@ -956,6 +958,8 @@ function CutUps({ events, videoRef, sport }: {
 
   const clipLabel = (e: TaggedEvent): string => {
     const x: any = e.extra_data || {}
+    // In the highlights reel, lead with the coach's note (what to coach) when set.
+    if (dim === 'highlight' && e.coach_note) return e.coach_note
     if (isBball) {
       const bits = [x.shot_zone || e.event_type, e.result].filter(Boolean)
       return bits.join(' · ')
@@ -1028,13 +1032,17 @@ function CutUps({ events, videoRef, sport }: {
       {/* Dimension selector */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
         {DIMS.map(([k, label]) => (
-          <button key={k} onClick={() => { setDim(k); setValue(null); setPlaying(false) }}
+          <button key={k} onClick={() => {
+            // Highlights is a single curated group — jump straight into the reel.
+            const toReel = k === 'highlight' && events.some(e => e.is_highlight && e.time_seconds != null)
+            setDim(k); setValue(toReel ? 'Highlights' : null); setIdx(0); setPlaying(false)
+          }}
             style={{
               padding: '5px 9px', fontSize: 10, fontWeight: 700, cursor: 'pointer', borderRadius: 4, border: 'none',
-              letterSpacing: '0.04em', textTransform: 'uppercase',
+              letterSpacing: '0.04em', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: 4,
               background: dim === k ? 'rgba(201,168,76,0.2)' : 'rgba(255,255,255,0.04)',
               color: dim === k ? '#C9A84C' : '#7a7a6e',
-            }}>{label}</button>
+            }}>{k === 'highlight' && <Star size={10} fill={dim === k ? '#C9A84C' : 'none'} />}{label}</button>
         ))}
       </div>
 
