@@ -37,4 +37,10 @@ api.interceptors.response.use(
   }
 )
 
+// For PUBLIC, no-login endpoints (report / recruiting share links). No auth header,
+// no 401 refresh-and-redirect interceptor — a scout viewing a link has no account.
+export const publicApi = axios.create({
+  baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000',
+})
+
 export default api
