@@ -529,7 +529,7 @@ Return ONLY the JSON array, nothing else."""
 
     message = await client.messages.create(
         model=MODEL,
-        max_tokens=6000,
+        max_tokens=16000,  # headroom so a long report isn't truncated mid-section
         system=SYSTEM_PROMPT_FOOTBALL,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -629,7 +629,7 @@ Return ONLY the JSON array, nothing else."""
 
     message = await client.messages.create(
         model=MODEL,
-        max_tokens=6000,
+        max_tokens=16000,  # headroom so a long report isn't truncated mid-section
         system=SYSTEM_PROMPT_FOOTBALL,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -1007,7 +1007,7 @@ Return ONLY the JSON array, nothing else."""
 
     message = await client.messages.create(
         model=MODEL,
-        max_tokens=7000,
+        max_tokens=16000,  # a full basketball report is ~20 sections; 7000 truncated the tail (Scout's Note, coach notes)
         system=SYSTEM_PROMPT_BASKETBALL,
         messages=[{"role": "user", "content": prompt}],
     )
