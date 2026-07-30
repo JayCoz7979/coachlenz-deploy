@@ -40,6 +40,11 @@ SCENE_THRESHOLD = 0.18     # was 0.27 — more sensitive snap detection
 FALLBACK_INTERVAL = 2.0    # was 5.0 — tighter coverage, no >2s gap
 # Confidence gate — plays below this are dropped
 MIN_CONFIDENCE = 0.5       # unchanged — keep quality gate
+# Timeout sanity (basketball). Single-camera vision over-tags dead balls / stoppages
+# as `timeout`, and timeouts carry almost no scouting value, so they are held to a
+# stricter bar than other events: a confidence floor plus a hard per-game cap.
+TIMEOUT_MIN_CONFIDENCE = 0.75   # a timeout read must be this confident to survive
+MAX_PLAUSIBLE_TIMEOUTS = 10     # NFHS allows 5 timeouts/team; beyond ~10 is an artifact
 # Drop frames closer together than this (dedup same-moment frames)
 CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
@@ -430,6 +435,11 @@ CAPTURE EVERY EVENT: shots (made or missed), turnovers, fouls, rebounds (offensi
 
 SKIP: dead balls between possessions already captured, halftime, non-game footage.
 
+━━━ EVENT-TYPE DISCIPLINE (read before labeling) ━━━
+TIMEOUT — tag event_type "timeout" ONLY when you can SEE a real timeout: the team walking to and huddling at the bench with coaches, a referee's raised-T signal, or a "TIMEOUT"/"TO" scoreboard graphic. A generic stoppage is NOT a timeout. Do NOT tag as "timeout": a whistle, a dead ball, a substitution, an inbound, a foul shot, the gap between possessions, an end-of-quarter break, or any clip where you simply cannot tell what is happening. When in doubt, it is NOT a timeout — emit no event for that clip rather than guess. A full game has only a handful of real timeouts; if you find yourself tagging many, you are mislabeling stoppages.
+STEAL — actively look for it: a defender deflecting, poking, or intercepting the ball and gaining possession is a "steal" (side "defense", the taker's role "stealer"). Steals are fast and easy to miss on a wide single-camera angle, so watch the defender's hands, not just the ball. If an offensive possession ends because the defense took the ball, record the defensive steal, not only the offensive turnover.
+BLOCK — a shot that is swatted, pinned, or clearly altered at the rim by a defender is a "block" (side "defense", the defender's role "blocker"). Like steals, blocks happen in a single frame — do not overlook them.
+
 IMAGE SET PER FRAME: For each frame you receive the full image PLUS two zoomed crops — the "lower" and "upper" score/overlay zones (magnified 2x). The broadcast score graphic usually shows SCORE, QUARTER, and GAME/SHOT CLOCK. Read those digits from the zoomed crops; use them as the source of truth for score_margin, quarter, and shot_clock_range. If no graphic is present, set them null and note it in blind_spot — do not guess.
 
 PHASE — classify first:
@@ -721,6 +731,17 @@ class AiDetectWorker(BaseWorker):
                     deduped = self._derive_from_sequence(deduped)
                     deduped = self._derive_field_position(deduped)
                 logger.info(f"[ai_detect] {len(all_plays)} raw → {len(deduped)} after dedup")
+
+                # Basketball detection-artifact scrub: single-cam over-tags stoppages
+                # as `timeout`. Hold timeouts to a confidence floor + a plausible cap
+                # so a handful of real timeouts survive and the dead-ball noise doesn't.
+                if sport == "basketball" and deduped:
+                    deduped, dropped_to = self._sanitize_bb_events(deduped)
+                    if dropped_to:
+                        logger.info(
+                            f"[ai_detect] basketball sanity: dropped {dropped_to} "
+                            f"implausible timeout event(s)"
+                        )
 
                 # EAGLE EYE jersey pass (football): re-read jersey numbers off high-res
                 # player crops so personnel is actually usable. Skipped on dry runs.
@@ -1990,6 +2011,33 @@ class AiDetectWorker(BaseWorker):
                 deduped.append(play)
 
         return deduped
+
+    def _sanitize_bb_events(self, plays: list[dict]) -> tuple[list[dict], int]:
+        """Model-free scrub of basketball detection artifacts before persist.
+
+        Single-camera vision has no per-type plausibility check, so it over-tags
+        dead balls and stoppages as `timeout`. Timeouts carry almost no scouting
+        value, so they are held to a stricter bar than every other event: a
+        confidence floor, then a hard per-game cap (keeping the most confident).
+        Non-timeout events pass through untouched — steals/blocks are a recall
+        gap the prompt handles, not something a filter can invent.
+
+        Returns (clean_plays, dropped_timeout_count). Order is preserved.
+        """
+        timeouts = [p for p in plays if p.get("event_type") == "timeout"]
+        if not timeouts:
+            return plays, 0
+
+        # Floor first, then keep the most-confident up to the plausible cap.
+        eligible = [p for p in timeouts if p.get("confidence", 0.0) >= TIMEOUT_MIN_CONFIDENCE]
+        eligible.sort(key=lambda p: p.get("confidence", 0.0), reverse=True)
+        survivors = {id(p) for p in eligible[:MAX_PLAUSIBLE_TIMEOUTS]}
+
+        clean = [
+            p for p in plays
+            if p.get("event_type") != "timeout" or id(p) in survivors
+        ]
+        return clean, len(timeouts) - len(survivors)
 
 
 if __name__ == "__main__":
