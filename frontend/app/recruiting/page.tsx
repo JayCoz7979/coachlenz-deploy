@@ -1,96 +1,194 @@
 'use client'
-/**
- * Recruiting board - recruit intel cards.
- * There is no backend recruiting endpoint yet, so this renders the approved demo
- * layout as a clearly labeled PREVIEW. The sample recruits are framed as examples
- * of the layout a connected recruiting pipeline will populate, never as real data.
- * Trial/coach tiers see an upgrade call-to-action (Athletic Dept plans and up).
- */
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { useAuth } from '@/lib/auth'
-import OSShell from '@/components/os/OSShell'
+import Sidebar from '@/components/layout/Sidebar'
+import { useAuth, usePermission } from '@/lib/auth'
+import api from '@/lib/api'
+import { Star, Trash2, Copy, Send, Plus } from 'lucide-react'
 
-interface Recruit {
-  name: string
-  pos: string
-  a: string
-  b: string
-  cLabel: string
-  cValue: string
-  fill: number
-  tags: { text: string; cls: string }[]
+interface Team { id: string; name: string; sport: string; season: string | null }
+interface Player { id: string; jersey_number: string; first_name: string; last_name: string | null; position: string | null }
+interface Highlight { id: string; title: string | null; start_time: number; end_time: number; url: string | null }
+interface Profile {
+  player: { id: string; name: string; position: string | null; grade_year: string | null; jersey_number: string }
+  recruiting_enabled: boolean
+  recruiting_expires_at: string | null
+  share_path: string | null
+  highlights: Highlight[]
+  stats: { highlights_count: number }
 }
-
-const SAMPLE_RECRUITS: Recruit[] = [
-  {
-    name: 'Darius M. - QB',
-    pos: 'Class of 2026 · Athens, AL · Football',
-    a: '6\'2"', b: '195 lbs', cLabel: '40yd', cValue: '4.61', fill: 92,
-    tags: [{ text: 'Priority', cls: 'tg' }, { text: 'Film: A', cls: 'tgo' }, { text: 'D1 Proj', cls: 'tw' }],
-  },
-  {
-    name: 'Keion T. - WR',
-    pos: 'Class of 2026 · Huntsville, AL · Football',
-    a: '6\'0"', b: '172 lbs', cLabel: '40yd', cValue: '4.42', fill: 87,
-    tags: [{ text: 'Priority', cls: 'tg' }, { text: 'Film: A-', cls: 'tgo' }, { text: 'Offer Pending', cls: 'tq' }],
-  },
-  {
-    name: 'Aaliyah C. - Libero',
-    pos: 'Class of 2027 · Madison, AL · Volleyball',
-    a: '5\'5"', b: 'Volleyball', cLabel: '', cValue: 'Dig: .94', fill: 89,
-    tags: [{ text: 'Priority', cls: 'tg' }, { text: 'Film: A', cls: 'tgo' }, { text: 'D2 Proj', cls: 'tw' }],
-  },
-]
-
-const GATED_TIERS = ['trial', 'coach']
+interface Clip { id: string; game_id: string; title: string | null; start_time: number; end_time: number }
 
 export default function RecruitingPage() {
-  const { user } = useAuth()
-  const tier = user?.organization?.subscription_tier || ''
-  const gated = GATED_TIERS.includes(tier)
+  const { user, isLoading, fetchMe } = useAuth()
+  const router = useRouter()
+  const canManage = usePermission('can_manage_roster')
+
+  const [teams, setTeams] = useState<Team[]>([])
+  const [teamId, setTeamId] = useState('')
+  const [players, setPlayers] = useState<Player[]>([])
+  const [playerId, setPlayerId] = useState('')
+  const [profile, setProfile] = useState<Profile | null>(null)
+  const [clips, setClips] = useState<Clip[]>([])
+  const [addClip, setAddClip] = useState('')
+  const [scoutEmail, setScoutEmail] = useState('')
+  const [copied, setCopied] = useState(false)
+  const [msg, setMsg] = useState('')
+  const [err, setErr] = useState('')
+
+  useEffect(() => { fetchMe() }, [])
+  useEffect(() => { if (!isLoading && !user) router.push('/login') }, [isLoading, user])
+  useEffect(() => {
+    if (!user) return
+    api.get('/teams').then(r => { setTeams(r.data); if (r.data[0]) setTeamId(r.data[0].id) }).catch(() => {})
+    api.get('/clips').then(r => setClips(r.data)).catch(() => {})
+  }, [user])
+  useEffect(() => {
+    if (!teamId) return
+    api.get(`/rosters/${teamId}`).then(r => {
+      setPlayers(r.data.players || [])
+      setPlayerId(r.data.players?.[0]?.id || '')
+    }).catch(() => { setPlayers([]); setPlayerId('') })
+  }, [teamId])
+  useEffect(() => { if (playerId) loadProfile(playerId); else setProfile(null) }, [playerId])
+
+  function flash(setter: (s: string) => void, t: string) { setter(t); setTimeout(() => setter(''), 3500) }
+  async function loadProfile(pid: string) {
+    try { const r = await api.get(`/recruiting/players/${pid}`); setProfile(r.data) } catch { setProfile(null) }
+  }
+  const shareUrl = profile?.share_path ? `${typeof window !== 'undefined' ? window.location.origin : ''}${profile.share_path}` : ''
+
+  async function enable() {
+    setErr('')
+    try { await api.post(`/recruiting/players/${playerId}/enable`, { expires_in_days: 30 }); await loadProfile(playerId) }
+    catch (e: any) { flash(setErr, e.response?.data?.detail || 'Could not enable recruiting.') }
+  }
+  async function disable() {
+    if (!confirm('Turn off this player’s public recruiting profile? The link will stop working.')) return
+    try { await api.delete(`/recruiting/players/${playerId}`); await loadProfile(playerId) } catch {}
+  }
+  async function sendScout() {
+    if (!scoutEmail) return
+    setErr('')
+    try { await api.post(`/recruiting/players/${playerId}/send`, { scout_email: scoutEmail }); flash(setMsg, `Profile sent to ${scoutEmail}.`); setScoutEmail('') }
+    catch (e: any) { flash(setErr, e.response?.data?.detail || 'Could not send.') }
+  }
+  async function markHighlight() {
+    if (!addClip) return
+    try { await api.post('/recruiting/highlights', { clip_id: addClip, player_id: playerId }); setAddClip(''); await loadProfile(playerId) }
+    catch (e: any) { flash(setErr, e.response?.data?.detail || 'Could not add highlight.') }
+  }
+  async function unmark(clipId: string) {
+    try { await api.delete(`/recruiting/highlights/${clipId}`); await loadProfile(playerId) } catch {}
+  }
 
   return (
-    <OSShell title="Recruiting">
-      <div className="sec-title" style={{ marginBottom: 16 }}>🎯 Recruiting Intelligence</div>
+    <div className="flex h-screen overflow-hidden">
+      <Sidebar />
+      <main className="flex-1 overflow-y-auto p-8">
+        <div className="max-w-3xl mx-auto">
+          <h2 className="text-2xl font-bold mb-1">Recruiting Board</h2>
+          <p className="text-gray-400 text-sm mb-6">Build a shareable highlight profile for a player and send it to college scouts.</p>
 
-      <div className="ai-box" style={{ marginTop: 0, marginBottom: 16 }}>
-        <strong>Recruiting board preview</strong> - connect your recruiting pipeline to populate.
-        Available on Athletic Dept plans.
-      </div>
+          {msg && <div className="mb-4 text-sm bg-brand-500/10 border border-brand-500/30 text-brand-400 rounded p-2">{msg}</div>}
+          {err && <div className="mb-4 text-sm bg-red-400/10 border border-red-400/30 text-red-400 rounded p-2">{err}</div>}
 
-      {gated && (
-        <div className="tier-lock" style={{ marginBottom: 16 }}>
-          <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 10 }}>
-            The recruiting board unlocks on Athletic Dept plans and up. Upgrade to connect your pipeline
-            and populate this board with your real recruits.
-          </div>
-          <Link href="/settings/billing" className="tl-btn" style={{ textDecoration: 'none' }}>Upgrade →</Link>
+          {teams.length === 0 ? (
+            <div className="card text-center text-gray-400">
+              Create a <Link href="/teams" className="text-brand-400 hover:underline">team</Link> and <Link href="/roster" className="text-brand-400 hover:underline">roster</Link> first.
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-4 mb-6">
+                <div>
+                  <label className="label">Team</label>
+                  <select className="input" value={teamId} onChange={e => setTeamId(e.target.value)}>
+                    {teams.map(t => <option key={t.id} value={t.id}>{t.name}{t.season ? ` · ${t.season}` : ''}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="label">Player</label>
+                  <select className="input" value={playerId} onChange={e => setPlayerId(e.target.value)} disabled={players.length === 0}>
+                    {players.length === 0 && <option>No players on this roster</option>}
+                    {players.map(p => <option key={p.id} value={p.id}>#{p.jersey_number} {p.first_name} {p.last_name || ''}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              {profile && (
+                <>
+                  {/* Sharing */}
+                  <div className="card mb-6">
+                    <div className="flex items-center justify-between mb-3">
+                      <div>
+                        <div className="text-lg font-semibold">{profile.player.name}</div>
+                        <div className="text-sm text-gray-400">{[profile.player.position, profile.player.grade_year && `Class of ${profile.player.grade_year}`].filter(Boolean).join(' · ') || '—'}</div>
+                      </div>
+                      <span className={`text-xs px-2 py-1 rounded ${profile.recruiting_enabled ? 'bg-brand-500/15 text-brand-400' : 'bg-gray-700 text-gray-400'}`}>
+                        {profile.recruiting_enabled ? 'Shared' : 'Private'}
+                      </span>
+                    </div>
+
+                    {!canManage ? (
+                      <p className="text-sm text-gray-500">You don&apos;t have permission to manage recruiting.</p>
+                    ) : !profile.recruiting_enabled ? (
+                      <button onClick={enable} className="btn-primary flex items-center gap-2"><Star size={15} /> Enable recruiting profile</button>
+                    ) : (
+                      <div className="space-y-3">
+                        <div>
+                          <label className="label">Public link (no login required)</label>
+                          <div className="flex gap-2">
+                            <input readOnly value={shareUrl} onFocus={e => e.currentTarget.select()} className="input text-xs" />
+                            <button onClick={() => { navigator.clipboard.writeText(shareUrl); setCopied(true); setTimeout(() => setCopied(false), 2000) }} className="btn-secondary flex items-center gap-1"><Copy size={14} />{copied ? 'Copied' : 'Copy'}</button>
+                          </div>
+                          {profile.recruiting_expires_at && <p className="text-xs text-gray-500 mt-1">Expires {new Date(profile.recruiting_expires_at).toLocaleDateString()}</p>}
+                        </div>
+                        <div className="flex gap-2 items-end">
+                          <div className="flex-1"><label className="label">Send to a scout</label><input type="email" className="input" placeholder="scout@school.edu" value={scoutEmail} onChange={e => setScoutEmail(e.target.value)} /></div>
+                          <button onClick={sendScout} className="btn-primary flex items-center gap-2" disabled={!scoutEmail}><Send size={14} /> Send</button>
+                        </div>
+                        <button onClick={disable} className="text-xs text-red-400 hover:underline">Turn off public profile</button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Highlights */}
+                  <div className="card">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="font-semibold">Highlights <span className="text-gray-500 text-sm">({profile.stats.highlights_count})</span></div>
+                    </div>
+                    {canManage && (
+                      <div className="flex gap-2 mb-4">
+                        <select className="input" value={addClip} onChange={e => setAddClip(e.target.value)}>
+                          <option value="">Add a clip as a highlight…</option>
+                          {clips.map(c => <option key={c.id} value={c.id}>{c.title || 'Clip'} ({Math.round(c.end_time - c.start_time)}s)</option>)}
+                        </select>
+                        <button onClick={markHighlight} className="btn-secondary flex items-center gap-1" disabled={!addClip}><Plus size={14} /> Add</button>
+                      </div>
+                    )}
+                    <div className="space-y-2">
+                      {profile.highlights.map(h => (
+                        <div key={h.id} className="flex items-center justify-between border-b border-gray-800/60 pb-2">
+                          <div>
+                            <div className="text-sm text-gray-100">{h.title || 'Highlight'}</div>
+                            <div className="text-xs text-gray-500">{Math.round(h.end_time - h.start_time)}s clip</div>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            {h.url && <a href={h.url} target="_blank" rel="noopener noreferrer" className="text-brand-400 text-sm hover:underline">Watch</a>}
+                            {canManage && <button onClick={() => unmark(h.id)} className="text-gray-500 hover:text-red-400"><Trash2 size={14} /></button>}
+                          </div>
+                        </div>
+                      ))}
+                      {profile.highlights.length === 0 && <p className="text-sm text-gray-500">No highlights yet{canManage ? '. Add a clip above.' : '.'}</p>}
+                    </div>
+                  </div>
+                </>
+              )}
+            </>
+          )}
         </div>
-      )}
-
-      <div className="rec-g">
-        {SAMPLE_RECRUITS.map((r, i) => (
-          <div className="rec" key={i}>
-            <div className="rec-name">{r.name}</div>
-            <div className="rec-pos">{r.pos}</div>
-            <div style={{ display: 'flex', gap: 10, marginBottom: 7, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 10, color: 'var(--text2)' }}><strong style={{ color: 'var(--text)' }}>{r.a}</strong></span>
-              <span style={{ fontSize: 10, color: 'var(--text2)' }}><strong style={{ color: 'var(--text)' }}>{r.b}</strong></span>
-              <span style={{ fontSize: 10, color: 'var(--text2)' }}>
-                <strong style={{ color: 'var(--text)' }}>{r.cValue}</strong>{r.cLabel ? ' ' + r.cLabel : ''}
-              </span>
-            </div>
-            <div className="rec-bar"><div className="rec-fill" style={{ width: r.fill + '%' }} /></div>
-            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-              {r.tags.map((t, j) => (
-                <span className={'tag ' + t.cls} key={j}>{t.text}</span>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div className="powered">Powered by <a href="https://cosbyaisolutions.com" target="_blank" rel="noreferrer">Cosby AI Solutions</a></div>
-    </OSShell>
+      </main>
+    </div>
   )
 }
