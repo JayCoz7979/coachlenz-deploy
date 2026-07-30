@@ -5,7 +5,7 @@ import Sidebar from '@/components/layout/Sidebar'
 import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
 import Link from 'next/link'
-import { ChevronLeft, Loader2, FileText, AlertTriangle, TrendingUp, Shield, Zap, Target, Printer, Download, ChevronDown, Share2 } from 'lucide-react'
+import { ChevronLeft, Loader2, FileText, AlertTriangle, TrendingUp, Shield, Zap, Target, Printer, Download, ChevronDown, Share2, Star } from 'lucide-react'
 import FieldHeatMap from '@/components/report/FieldHeatMap'
 import BasketballShotChart from '@/components/report/BasketballShotChart'
 
@@ -43,6 +43,7 @@ const SECTION_ICONS: Record<string, any> = {
   defense: Shield,
   red_zone: Zap,
   tendency: TrendingUp,
+  coach_notes: Star,
   default: FileText,
 }
 
