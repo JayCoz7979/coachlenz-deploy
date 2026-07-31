@@ -7,6 +7,7 @@ from .clip import Clip
 from .event import Event
 from .tag import Tag
 from .report import TendencyReport
+from .report_chat import ReportChatMessage
 from .job import Job
 from .comms import Thread, ThreadMember, Message, MessageMention, ThreadRead, Playlist, PlaylistClip, ClipAssignment, FilmPackage, Notification
 from .abuse import DeviceFingerprint, RiskFlag, AuditLog

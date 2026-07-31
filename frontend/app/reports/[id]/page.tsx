@@ -8,6 +8,7 @@ import Link from 'next/link'
 import { ChevronLeft, Loader2, FileText, AlertTriangle, TrendingUp, Shield, Zap, Target, Printer, Download, ChevronDown, Share2, Star, Trash2 } from 'lucide-react'
 import FieldHeatMap from '@/components/report/FieldHeatMap'
 import BasketballShotChart from '@/components/report/BasketballShotChart'
+import ReportChat from '@/components/report/ReportChat'
 
 interface Section {
   heading: string
@@ -688,6 +689,9 @@ export default function ReportPage() {
               <div>No report content generated. The AI worker may still be starting up.</div>
             </div>
           ) : null}
+
+          {/* Ask the Film Assistant — report-scoped chat, only on a finished report */}
+          {report.generated_at && <ReportChat reportId={report.id} />}
         </div>
       </main>
     </div>
