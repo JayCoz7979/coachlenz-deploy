@@ -5,6 +5,8 @@ from backend.workers.base import BaseWorker
 from backend.models.base import AsyncSessionLocal
 from backend.models.report import TendencyReport
 from backend.models.event import Event
+from backend.models.organization import Organization
+from backend.services import learning_loop
 from backend.services.tendency_engine import run_tendency_engine
 from backend.services.report_writer import generate_prose_sections
 from backend.services.coach_notes import collect_flagged_plays
@@ -54,6 +56,17 @@ class ReportsWorker(BaseWorker):
                 select(Event).where(Event.game_id.in_(report.game_ids))
             )
             events = events_result.scalars().all()
+
+            # §14 learning loop: unless the coach is in Manual Mode, apply this
+            # account's ACTIVE learned relabels to the report's view of the film.
+            # In-memory only — we never commit these events, so the stored plays are
+            # untouched and rejecting an adjustment fully reverts the effect.
+            manual = (await db.execute(
+                select(Organization.learning_loop_manual).where(Organization.id == org_id)
+            )).scalar_one_or_none()
+            learn_adjustments = [] if manual else await learning_loop.active_adjustments_for(db, org_id, sport)
+
+        relabeled = learning_loop.apply_adjustments(events, learn_adjustments) if learn_adjustments else 0
 
         try:
             tendency_summary = await run_tendency_engine(sport, events)
@@ -106,7 +119,8 @@ class ReportsWorker(BaseWorker):
             confidence=conf,
             level="success",
             detail={"report_id": str(report_id), "sections": len(prose_sections),
-                    "events": len(events), "coach_flagged_plays": len(flagged)},
+                    "events": len(events), "coach_flagged_plays": len(flagged),
+                    "learning_relabeled": relabeled},
         )
 
         async with AsyncSessionLocal() as db:

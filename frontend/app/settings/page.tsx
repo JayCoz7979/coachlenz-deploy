@@ -5,7 +5,7 @@ import Link from 'next/link'
 import Sidebar from '@/components/layout/Sidebar'
 import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
-import { Loader2, KeyRound, CreditCard, Link2 } from 'lucide-react'
+import { Loader2, KeyRound, CreditCard, Link2, Brain } from 'lucide-react'
 
 export default function SettingsPage() {
   const { user, isLoading, fetchMe } = useAuth()
@@ -86,6 +86,9 @@ export default function SettingsPage() {
             </Link>
             <Link href="/settings/connections" className="card" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none', color: 'var(--text)' }}>
               <Link2 size={16} style={{ color: 'var(--gold)' }} /> Connected Accounts
+            </Link>
+            <Link href="/settings/learning" className="card" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none', color: 'var(--text)' }}>
+              <Brain size={16} style={{ color: 'var(--gold)' }} /> Learning Loop
             </Link>
           </div>
         </div>

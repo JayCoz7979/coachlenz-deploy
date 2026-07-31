@@ -23,6 +23,10 @@ class Organization(Base):
     # analyzed). Empty list = not yet locked. See backend/services/sports.py.
     chosen_sports = Column(JSONB, nullable=False, default=list)
     onboarding_completed = Column(Boolean, nullable=False, default=False)
+    # Per-account learning loop (§14): when true the coach has opted out of the
+    # auto-loop — corrections are still recorded, but no adjustments are proposed
+    # or applied. See backend/services/learning_loop.py.
+    learning_loop_manual = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     referral_code = Column(String, unique=True)
     referred_by_org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"))
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)

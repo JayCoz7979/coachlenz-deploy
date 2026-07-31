@@ -7,7 +7,10 @@ from backend.models.base import get_db
 from backend.models.user import User
 from backend.models.event import Event
 from backend.models.game import Game
+from backend.models.organization import Organization
 from backend.services.auth import get_current_user
+from backend.services import learning_loop
+from backend.services.learning_loop import CORRECTABLE_LABEL_FIELDS, EXTRA_DATA_LABEL_FIELDS
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -101,6 +104,22 @@ async def update_event(event_id: str, body: EventUpdate, user: User = Depends(ge
     # Only apply fields the client actually sent.
     changes = body.dict(exclude_unset=True)
     new_extra = changes.pop("extra_data", None)
+
+    # §14 learning loop: snapshot the LABEL values BEFORE we overwrite them, so a
+    # coach's correction of an AI tag becomes a recorded (old -> new) signal.
+    before_labels: Dict[str, Any] = {}
+    after_labels: Dict[str, Any] = {}
+    for f, v in changes.items():
+        if f in CORRECTABLE_LABEL_FIELDS:
+            before_labels[f] = getattr(event, f, None)
+            after_labels[f] = v
+    if new_extra:
+        old_extra = event.extra_data or {}
+        for k, v in new_extra.items():
+            if k in EXTRA_DATA_LABEL_FIELDS:
+                before_labels[k] = old_extra.get(k)
+                after_labels[k] = v
+
     for k, v in changes.items():
         setattr(event, k, v)
     if new_extra is not None:
@@ -109,6 +128,24 @@ async def update_event(event_id: str, body: EventUpdate, user: User = Depends(ge
         flag_modified(event, "extra_data")
     await db.commit()
     await db.refresh(event)
+
+    # Record the correction after the edit is durable. Best-effort — a learning-loop
+    # failure must never break the coach's edit, so it's fully guarded.
+    label_changes = learning_loop.diff_label_changes(before_labels, after_labels)
+    if label_changes:
+        try:
+            sport = (await db.execute(select(Game.sport).where(Game.id == event.game_id))).scalar_one_or_none()
+            manual = (await db.execute(
+                select(Organization.learning_loop_manual).where(Organization.id == user.organization_id)
+            )).scalar_one_or_none()
+            if sport:
+                await learning_loop.record_corrections(
+                    db, organization_id=user.organization_id, user_id=user.id,
+                    event=event, sport=sport, changes=label_changes, manual_mode=bool(manual),
+                )
+        except Exception:
+            pass  # never fail the edit on loop bookkeeping
+
     return _event_out(event)
 
 @router.delete("/{event_id}")
