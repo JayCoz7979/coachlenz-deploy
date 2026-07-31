@@ -73,6 +73,8 @@ def analyze_basketball(events) -> Dict[str, Any]:
         "defensive_scheme": _defensive_scheme_analysis(defense_events),
         "ball_screen_defense": _ball_screen_defense_analysis(defense_events),
         "turnovers": _turnover_analysis(turnovers),
+        # §12 Map 3 — where/how they give it away (clustered; no fake court coords).
+        "turnover_map": _turnover_map(turnovers),
         "fouls": _foul_analysis(fouls),
         "rebounding": _rebound_analysis(rebounds),
         "steals": len(steals),
@@ -862,6 +864,49 @@ def _turnover_analysis(turnovers) -> Dict[str, Any]:
         "by_type": dict(by_type.most_common(8)),
         "by_quarter": {f"Q{k}": v for k, v in by_quarter.items()},
     }
+
+
+# Turnover clustering (§12 Map 3). Single-camera film gives no court coordinates
+# for turnovers, so we cluster by the real "how/where" signal the detector DOES
+# read — transition vs the half-court action they were running — instead of
+# fabricating positions on a court. The dominant cluster is the "force them here".
+_TO_ACTION_LABELS = {
+    "Pick and Roll": "Ball screens", "Pick and Pop": "Ball screens",
+    "Isolation": "One-on-one", "Post Up": "The post",
+    "Drive and Kick": "Drives to the paint", "DHO (Dribble Handoff)": "Handoffs",
+    "Off-Ball Screen": "Off-ball screens", "Transition Layup": "Transition",
+    "BLOB": "Inbounds", "SLOB": "Inbounds", "Backdoor Cut": "Cuts",
+}
+_TO_MIN_TOTAL = 5   # need a real sample before naming a "force them here"
+_TO_MIN_TOP = 3     # and the top cluster must have real volume
+
+
+def _turnover_cluster_label(e) -> str:
+    """Map one turnover to a plain, actionable cluster from the fields that exist."""
+    origin = (_x(e, "possession_origin") or "").lower()
+    if origin == "transition" or _x(e, "transition_type"):
+        return "Transition"
+    pa = _x(e, "play_action") or e.play_type
+    if pa:
+        return _TO_ACTION_LABELS.get(pa, str(pa))
+    if origin and origin != "unspecified":
+        return origin.replace("_", " ").title()
+    return "Half-court sets"
+
+
+def _turnover_map(turnovers) -> Dict[str, Any]:
+    if not turnovers:
+        return {}
+    clusters = Counter(_turnover_cluster_label(e) for e in turnovers)
+    total = len(turnovers)
+    zones = [{"zone": z, "count": c, "pct": round(c / total * 100, 1)}
+             for z, c in clusters.most_common()]
+    top = zones[0] if zones else None
+    force_here = None
+    if top and total >= _TO_MIN_TOTAL and top["count"] >= _TO_MIN_TOP:
+        force_here = f"Force them into {top['zone'].lower()} — that's where they give it away."
+    return {"total": total, "zones": zones,
+            "top_cluster": top["zone"] if top else None, "force_here": force_here}
 
 
 def _foul_analysis(fouls) -> Dict[str, Any]:

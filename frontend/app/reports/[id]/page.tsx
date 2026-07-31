@@ -8,6 +8,7 @@ import Link from 'next/link'
 import { ChevronLeft, Loader2, FileText, AlertTriangle, TrendingUp, Shield, Zap, Target, Printer, Download, ChevronDown, Share2, Star, Trash2 } from 'lucide-react'
 import FieldHeatMap from '@/components/report/FieldHeatMap'
 import BasketballShotChart from '@/components/report/BasketballShotChart'
+import TurnoverMap from '@/components/report/TurnoverMap'
 import RunPassMatrix from '@/components/report/RunPassMatrix'
 import ReportChat from '@/components/report/ReportChat'
 
@@ -313,6 +314,27 @@ export default function ReportPage() {
     return `<section><h2>Run / Pass Matrix — By Down &amp; Hash</h2><table style="border-collapse:collapse"><thead>${head}</thead><tbody>${body}</tbody></table><div style="font-size:10px;color:#888;margin-top:5px">Number = run share of that down &amp; hash (small number = plays). Grey = too few to call. Red = run, purple = pass.</div></section>`
   }
 
+  // Print/PDF turnover map (§12 Map 3) — clustered bars, top flagged. Appended to
+  // the basketball shot chart in the PDF.
+  const buildTurnoverMapHtml = (s: any): string => {
+    const esc = (v: string) => (v || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    const tm = s?.turnover_map
+    if (!tm || !tm.zones?.length) return ''
+    const max = Math.max(1, ...tm.zones.map((z: any) => z.count))
+    const rows = tm.zones.map((z: any, i: number) => {
+      const top = i === 0 && !!tm.force_here
+      const w = Math.max(6, (z.count / max) * 100)
+      const color = top ? '#c0392b' : '#8a7a4a'
+      return `<tr>
+        <td style="font-size:11px;color:#222;text-align:right;padding:3px 8px;white-space:nowrap;font-weight:${top ? 700 : 400}">${top ? '🎯 ' : ''}${esc(z.zone)}</td>
+        <td style="width:55%;padding:3px 4px"><div style="height:14px;background:#eee;border-radius:3px"><div style="height:100%;width:${w}%;background:${color};border-radius:3px"></div></div></td>
+        <td style="font-size:11px;color:#333;padding:3px 6px;white-space:nowrap">${z.count} &middot; ${z.pct}%</td>
+      </tr>`
+    }).join('')
+    const force = tm.force_here ? `<div style="font-size:12px;color:#b23b2b;margin-top:6px">🎯 <b>${esc(tm.force_here)}</b></div>` : ''
+    return `<section><h2>Turnovers — Where They Give It Away</h2>${force}<table style="border-collapse:collapse;width:100%">${rows}</table><div style="font-size:10px;color:#888;margin-top:5px">Grouped by what they were running — single-camera film has no turnover court coordinates.</div></section>`
+  }
+
   // One branded print/PDF renderer for every format. Blocks are {heading, body}.
   const printDoc = (opts: {
     title: string; subtitle: string; blocks: Section[]; watermarked: boolean
@@ -370,7 +392,7 @@ export default function ReportPage() {
       heatMapHtml: (() => {
         const sport = String(report.sport || '').toLowerCase()
         if (sport.includes('football')) return buildHeatMapHtml(s) + buildRunPassMatrixHtml(s)
-        if (sport === 'basketball') return buildBasketballHeatMapHtml(s)
+        if (sport === 'basketball') return buildBasketballHeatMapHtml(s) + buildTurnoverMapHtml(s)
         return ''
       })(),
     })
@@ -785,6 +807,15 @@ export default function ReportPage() {
             && report.summary && typeof report.summary !== 'string' && (
             <div style={{ marginBottom: 28 }}>
               <BasketballShotChart summary={report.summary} />
+            </div>
+          )}
+
+          {/* Turnover cluster map (basketball) — §12 Map 3 */}
+          {String(report.sport || '').toLowerCase() === 'basketball'
+            && report.summary && typeof report.summary !== 'string'
+            && report.summary.turnover_map && (
+            <div style={{ marginBottom: 28 }}>
+              <TurnoverMap summary={report.summary} />
             </div>
           )}
 
