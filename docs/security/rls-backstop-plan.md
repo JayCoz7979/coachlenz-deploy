@@ -52,10 +52,18 @@ never via an auto-applied migration alone.
   grants + default privileges, via the **additive, inert** migration
   `031_rls_app_role.sql` (no login, no RLS yet). Verified idempotent and prod-safe
   by applying it inside a rolled-back transaction. Safe to auto-apply.
-- **Stage 2.** Add the GUC layer: set `app.org_id` in the request-scoped
-  `get_db` path once auth resolves the org, plus a `set_org_context(org_id)` helper
-  for workers. Still no RLS. Assert/log in staging that `app.org_id` is set on every
-  request and every worker job before any tenant query.
+- **Stage 2 — SHIPPED (dormant).** The GUC layer: a per-request/task org
+  ContextVar (`backend/models/rls.py`) + a SQLAlchemy `after_begin` listener that
+  stamps `app.org_id` (transaction-local) on every transaction, gated on
+  `settings.RLS_ENABLED` (default **false**) and Postgres-only. `get_current_user`
+  sets the context from the signed JWT `org` claim BEFORE its first query (so the
+  users lookup is itself org-scoped once enforced, avoiding a bootstrap deadlock).
+  Proven on real Postgres (`backend/tests/rls_guc_check.py`, 4/4): no-op when
+  disabled, `''` fail-closed with no context, echoes the org, and survives across a
+  COMMIT (re-applied on the next transaction). Unit-tested for no cross-task leak.
+  Still zero prod effect (flag off + superuser bypass). NOTE: worker jobs do not yet
+  call `set_org_context`; that is deferred to Stage 3 because it is coupled to the
+  bootstrap/cross-org connection decision below.
 - **Stage 3.** On a **staging / DB-branch** only: `ENABLE` + `FORCE` RLS + policies
   on every tenant table. Run the full test suite AND a manual cross-org probe while
   connected as `app_rls`. This is where 0-rows bugs surface — fix them here, never
@@ -86,6 +94,29 @@ clips, coach_moves, coach_profiles, coach_usage_limits, device_fingerprints,
 events, film_packages, games, grade_annotations, jobs, messages, notifications,
 playlists, referral_codes, risk_flags, roster_players, source_connections,
 survey_responses, tags, teams, tendency_reports, threads, users.
+
+## Bootstrap & cross-org paths (the Stage 3 design decision)
+
+Several legitimate paths query tenant tables WITHOUT a single-org request context.
+Under RLS with the restricted role they would fail-closed (0 rows) and break:
+
+- **Auth bootstrap** — login and refresh look up a user by email/id *before* any org
+  is known; signup creates the org+user; password reset looks up by email.
+- **Public share links** — `GET /reports/{id}/share/{token}` reads a report across
+  orgs by token (no logged-in org).
+- **Workers** — the job queue poll (`SELECT next job`) is inherently cross-org; a
+  worker must see all orgs' jobs, then scope to one org while processing that job.
+
+So Stage 3 is a **dual-engine** design, not a single cutover:
+- A **restricted** engine (role `app_rls`, RLS-enforced) for ordinary org-scoped
+  request handlers.
+- A **privileged** engine (a `BYPASSRLS` role, or `postgres`) for the bootstrap,
+  share-link, and worker-poll paths, which set `app.org_id` explicitly where they
+  do need to scope (e.g. a worker sets the job's org before touching tenant data).
+  Alternatively, expose the few bootstrap lookups as `SECURITY DEFINER` functions.
+
+This is why Stage 2 wires only the authenticated request path and defers worker
+context: the worker's engine choice is part of this decision.
 
 ## Policy shape (reference)
 

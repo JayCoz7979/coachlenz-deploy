@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from backend.config import settings
 from backend.models.base import get_db
+from backend.models.rls import set_org_context
 from backend.models.user import User
 from backend.models.organization import Organization
 
@@ -64,6 +65,10 @@ async def get_current_user(
     payload = decode_token(credentials.credentials)
     if payload.get("type") != "access":
         raise HTTPException(status_code=401, detail="Invalid token type")
+    # Bind this request to its org for RLS BEFORE the first query, so even the
+    # user lookup is org-scoped once RLS is enforced (the org is a signed JWT
+    # claim, so it needs no DB hit to know). Dormant until settings.RLS_ENABLED.
+    set_org_context(payload.get("org"))
     result = await db.execute(select(User).where(User.id == payload["sub"], User.is_active == True))
     user = result.scalar_one_or_none()
     if not user:

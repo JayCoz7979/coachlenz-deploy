@@ -11,3 +11,8 @@ class Base(DeclarativeBase):
 async def get_db():
     async with AsyncSessionLocal() as session:
         yield session
+
+# Register the RLS org-context listener (dormant unless settings.RLS_ENABLED and
+# the dialect is postgresql). Import for its side effect of attaching the
+# after_begin hook to the Session class. See backend/models/rls.py.
+from backend.models import rls  # noqa: E402,F401

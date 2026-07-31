@@ -87,6 +87,14 @@ class Settings(BaseSettings):
     # Admin
     ADMIN_PASSWORD: str = "ChangeMeNow!"
 
+    # Row Level Security backstop (see docs/security/rls-backstop-plan.md).
+    # When true, each transaction stamps the request/worker org into the Postgres
+    # session GUC `app.org_id` so RLS policies can scope every query. DEFAULT FALSE:
+    # the plumbing stays dormant until policies are in place AND the DATABASE_URL is
+    # cut over from the `postgres` superuser (which bypasses RLS) to the restricted
+    # `app_rls` role. Flip to true only per the staged rollout, never casually.
+    RLS_ENABLED: bool = False
+
     class Config:
         env_file = ".env"
         case_sensitive = False
