@@ -14,6 +14,7 @@ from .routers import (
     billing, referrals, teams_of_month, coaches, admin, threads,
     playlists, assignments, packages, notifications, me, files, ingest, ai_detect,
     connections, scout, scout_football, onboarding, roster, staff, ad, recruiting, grades,
+    legal,
 )
 from .workers.worker_ai_detect import AiDetectWorker
 from .workers.worker_analysis import AnalysisWorker
@@ -122,6 +123,7 @@ app.include_router(staff.router)
 app.include_router(ad.router)
 app.include_router(recruiting.router)
 app.include_router(grades.router)
+app.include_router(legal.router)
 
 
 @app.get("/health")

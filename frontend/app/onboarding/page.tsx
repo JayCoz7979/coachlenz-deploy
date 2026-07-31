@@ -16,6 +16,7 @@ function OnboardingForm() {
   const [error, setError] = useState('')
   const [note, setNote] = useState('')
   const [loading, setLoading] = useState(false)
+  const [acceptedTerms, setAcceptedTerms] = useState(false)
 
   // verification state
   const [emailCode, setEmailCode] = useState('')
@@ -64,7 +65,7 @@ function OnboardingForm() {
     e.preventDefault()
     setLoading(true); setError('')
     try {
-      const res = await api.post('/auth/register', form)
+      const res = await api.post('/auth/register', { ...form, accepted_terms: acceptedTerms })
       localStorage.setItem('access_token', res.data.access_token)
       localStorage.setItem('refresh_token', res.data.refresh_token)
       const status = await api.get('/onboarding/status')
@@ -160,9 +161,12 @@ function OnboardingForm() {
             <div><label className="label">Password</label><input type="password" className="input" value={form.password} onChange={set('password')} required minLength={8} /></div>
             <div><label className="label">School / Organization Name</label><input className="input" value={form.org_name} onChange={set('org_name')} required /></div>
             {form.referral_code && <div><label className="label">Referral Code</label><input className="input bg-gray-700" value={form.referral_code} readOnly /></div>}
-            <button type="submit" disabled={loading} className="btn-primary w-full">{loading ? 'Creating account...' : 'Start Free Trial'}</button>
+            <label className="flex items-start gap-2 text-xs text-gray-400 cursor-pointer">
+              <input type="checkbox" className="mt-0.5" checked={acceptedTerms} onChange={e => setAcceptedTerms(e.target.checked)} required />
+              <span>I agree to the <Link href="/terms" className="underline text-brand-400">Terms of Service</Link> and <Link href="/privacy" className="underline text-brand-400">Privacy Policy</Link>.</span>
+            </label>
+            <button type="submit" disabled={loading || !acceptedTerms} className="btn-primary w-full">{loading ? 'Creating account...' : 'Start Free Trial'}</button>
             <p className="text-center text-sm text-gray-400">Already have an account? <Link href="/login" className="text-brand-400 hover:underline">Sign in</Link></p>
-            <p className="text-center text-xs text-gray-500">By signing up you agree to our <Link href="/terms" className="underline">Terms</Link> and <Link href="/privacy" className="underline">Privacy Policy</Link></p>
           </form>
         )}
 

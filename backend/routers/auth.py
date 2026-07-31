@@ -9,6 +9,7 @@ from backend.models.organization import Organization
 from backend.services.auth import hash_password, verify_password, create_access_token, create_refresh_token, decode_token, get_current_user
 from backend.services.abuse_prevention import get_risk_score, fingerprint_request, flag_risk
 from backend.services.trial import TRIAL_DAYS
+from backend.services.legal import record_acceptance
 from backend.services.email_service import send_welcome_email, send_password_reset_email, send_email_verification_code
 from backend.services import twilio_verify
 from backend.utils.timeutils import to_naive_utc
@@ -43,6 +44,8 @@ class RegisterRequest(BaseModel):
     password: str
     org_name: str
     referral_code: str | None = None
+    # Must be true: the user checked the Terms + Privacy consent box at signup.
+    accepted_terms: bool = False
 
 class LoginRequest(BaseModel):
     email: EmailStr
@@ -54,6 +57,9 @@ class RefreshRequest(BaseModel):
 @router.post("/register")
 @limiter.limit("5/minute")
 async def register(body: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    if not body.accepted_terms:
+        raise HTTPException(status_code=422, detail="You must accept the Terms of Service and Privacy Policy to create an account.")
+
     risk = get_risk_score(body.email)
     if risk >= 80:
         await flag_risk(None, None, "disposable_email", "high", {"email": body.email}, db)
@@ -92,6 +98,11 @@ async def register(body: RegisterRequest, request: Request, db: AsyncSession = D
     )
     db.add(user)
     await db.flush()
+
+    # Log the Terms + Privacy acceptance the user made at signup (with the IP).
+    ip = request.client.host if request.client else None
+    await record_acceptance(db, org.id, user.id, "terms", ip=ip)
+    await record_acceptance(db, org.id, user.id, "privacy", ip=ip)
 
     if referred_by:
         from backend.models.referral import Referral

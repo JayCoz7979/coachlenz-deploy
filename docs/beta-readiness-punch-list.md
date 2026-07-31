@@ -44,7 +44,16 @@ built and small; it is NOT the real blocker.
   `email_verified` (ideally onboarding complete) before the first analysis.
 - Size: small-medium code. **This is the highest-value fix on the list.**
 
-### 2. Legal + COPPA have zero enforcement (you ingest minors' film)
+### 2. Legal + COPPA have zero enforcement (you ingest minors' film) — CODE GATE SHIPPED (PR pending); ToS TEXT still needs the attorney
+> Enforcement scaffolding built: migration `032_legal_consents.sql` +
+> `legal_acceptances` table; `backend/services/legal.py` (versioned docs). Signup
+> now REQUIRES a Terms/Privacy checkbox and logs the acceptance (per user, with IP).
+> A per-org student-data (COPPA/FERPA) authority attestation is REQUIRED and logged
+> before any roster player is created (`assert_student_consent` gates add/upload/
+> clone; `/legal/student-consent` records it; roster UI prompts for it). STILL
+> NEEDED (yours): the attorney must finalize the ToS/Privacy/attestation TEXT (the
+> `legal/*.md` drafts) and then bump the versions in `services/legal.py`.
+
 - ToS/Privacy: thin 4-paragraph live pages (`frontend/app/terms/page.tsx`,
   `privacy/page.tsx`); the real 10KB drafts (`legal/*.md`) are **unreviewed
   ("ATTORNEY REVIEW REQUIRED", [FILL-IN] date) and rendered nowhere**.
