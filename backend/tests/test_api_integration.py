@@ -358,11 +358,94 @@ async def run():
         await ac.delete(f"/games/{zero_gid}", headers=tok("analyst"))
         check("trial refund floors at 0", (await _trial_used()) == 0)
 
+        # ── Cross-org tenant isolation: the systematic leak sweep ──────────
+        await cross_org_isolation(ac)
+
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         print("FAILURES:", ", ".join(FAIL))
         raise SystemExit(1)
     print("ALL API INTEGRATION TESTS PASSED")
+
+
+async def cross_org_isolation(ac):
+    """Systematic tenant-isolation regression sweep.
+
+    Today the ONLY isolation layer is app-layer `organization_id` filtering in
+    every query — there is no database RLS. This guard proves that an org-A user
+    can never READ or MUTATE an org-B resource by id, that cross-org rows never
+    appear in list endpoints, and that after every hostile probe org B's data is
+    byte-for-byte intact. Positive controls confirm org B can still reach its own
+    resources, so the test can't pass trivially by 404-ing everything.
+    """
+    # ── Build a fully independent org B: owner, game, event, report ──
+    async with AsyncSessionLocal() as db:
+        orgB = Organization(name="Rival HS", slug=f"rival-{uuid.uuid4().hex[:8]}", is_trial=False)
+        db.add(orgB)
+        await db.flush()
+        userB = User(organization_id=orgB.id, name="Rival Owner",
+                     email=f"owner-{uuid.uuid4().hex[:6]}@rival.com",
+                     hashed_password=hash_password("x"), role="owner")
+        gameB = Game(id=uuid.uuid4(), organization_id=orgB.id, title="Rival Film",
+                     sport="basketball", status="ready", scout_jersey="23")
+        db.add_all([userB, gameB])
+        await db.flush()
+        eventB = Event(id=uuid.uuid4(), game_id=gameB.id, organization_id=orgB.id,
+                       event_type="shot", side="offense", coach_note="rival secret")
+        reportB = TendencyReport(id=uuid.uuid4(), organization_id=orgB.id,
+                                 game_ids=[str(gameB.id)], sport="basketball",
+                                 report_type="opponent", title="Rival Secret Report")
+        db.add_all([eventB, reportB])
+        await db.commit()
+        B = {"org": str(orgB.id), "user": str(userB.id), "game": str(gameB.id),
+             "event": str(eventB.id), "report": str(reportB.id)}
+    tokB = {"Authorization": f"Bearer {create_access_token(B['user'], B['org'])}"}
+    A = tok("analyst")  # an ordinary org-A member
+
+    # ── READS: org A must not see org B by id, nor in any list ──
+    r = await ac.get("/games", headers=A)
+    check("xorg: B game absent from A's game list", B["game"] not in [g["id"] for g in r.json()])
+    r = await ac.get(f"/games/{B['game']}", headers=A)
+    check("xorg: GET B game -> 404", r.status_code == 404)
+    r = await ac.get("/reports", headers=A)
+    check("xorg: B report absent from A's report list", B["report"] not in [x["id"] for x in r.json()])
+    r = await ac.get(f"/reports/{B['report']}", headers=A)
+    check("xorg: GET B report -> 404", r.status_code == 404)
+    r = await ac.get(f"/reports/{B['report']}/export?format=coordinator", headers=A)
+    check("xorg: export B report -> 404", r.status_code == 404)
+    r = await ac.get(f"/events?game_id={B['game']}", headers=A)
+    check("xorg: list B events -> empty (no leak)", r.status_code == 200 and r.json() == [])
+
+    # ── MUTATIONS: org A must not modify or delete org B resources ──
+    r = await ac.patch(f"/games/{B['game']}", json={"title": "PWNED"}, headers=A)
+    check("xorg: PATCH B game -> 404", r.status_code == 404)
+    r = await ac.delete(f"/games/{B['game']}", headers=A)
+    check("xorg: DELETE B game -> 404", r.status_code == 404)
+    r = await ac.delete(f"/reports/{B['report']}", headers=A)
+    check("xorg: DELETE B report -> 404", r.status_code == 404)
+    r = await ac.post("/events", json={"game_id": B["game"], "event_type": "shot"}, headers=A)
+    check("xorg: create event on B game -> 404", r.status_code == 404)
+    r = await ac.patch(f"/events/{B['event']}", json={"coach_note": "leaked"}, headers=A)
+    check("xorg: PATCH B event -> 404", r.status_code == 404)
+    r = await ac.delete(f"/events/{B['event']}", headers=A)
+    check("xorg: DELETE B event -> 404", r.status_code == 404)
+
+    # ── INTEGRITY: after every hostile probe, org B's data is untouched ──
+    async with AsyncSessionLocal() as db:
+        g = (await db.execute(select(Game).where(Game.id == uuid.UUID(B["game"])))).scalar_one_or_none()
+        e = (await db.execute(select(Event).where(Event.id == uuid.UUID(B["event"])))).scalar_one_or_none()
+        rp = (await db.execute(select(TendencyReport).where(TendencyReport.id == uuid.UUID(B["report"])))).scalar_one_or_none()
+        check("xorg: B game intact after probes", g is not None and g.title == "Rival Film")
+        check("xorg: B event note intact after probes", e is not None and e.coach_note == "rival secret")
+        check("xorg: B report intact after probes", rp is not None and rp.title == "Rival Secret Report")
+
+    # ── POSITIVE CONTROLS: org B CAN reach its own resources ──
+    r = await ac.get(f"/games/{B['game']}", headers=tokB)
+    check("xorg: B owner reads own game (control)", r.status_code == 200 and r.json()["id"] == B["game"])
+    r = await ac.get(f"/reports/{B['report']}", headers=tokB)
+    check("xorg: B owner reads own report (control)", r.status_code == 200)
+    r = await ac.get(f"/events?game_id={B['game']}", headers=tokB)
+    check("xorg: B owner sees own event (control)", r.status_code == 200 and len(r.json()) == 1)
 
 
 if __name__ == "__main__":
