@@ -18,7 +18,14 @@ import csv
 import io
 from typing import Dict, Any, List, Optional
 
-EXPORT_FORMATS = ("coordinator", "position", "head_coach", "player")
+from backend.services.plainify import plainify, pct_to_words
+from backend.services import heatmap as _hm
+
+EXPORT_FORMATS = ("coordinator", "position", "head_coach", "player", "player_onepager")
+
+# The one FERPA line every player-facing page carries (§9 / §11).
+CONFIDENTIAL_NOTE = ("This report is confidential. It contains performance data "
+                     "covered under your institution's FERPA DPA with CoachLenz.")
 
 # ── Play-level CSV export ────────────────────────────────────────────────────
 # A flat, one-row-per-play sheet for coaches who want the tags in a spreadsheet.
@@ -309,6 +316,181 @@ def _player(report: Dict[str, Any], player: Optional[str]) -> Dict[str, Any]:
     }
 
 
+# ── player one-pager (§11) ───────────────────────────────────────────────────
+# The Player Layer: one print-ready page a 16-year-old reads once and knows what
+# to do. THE KEY / WHO TO WATCH / WHAT THEY RUN / WHAT WE DO, all built from the
+# structured summary and forced through plainify() so no percentage, jargon term,
+# or long sentence can reach a player. This is a NEW format — the per-player
+# `player` bulletins above are untouched.
+_ZONE_LABELS = {
+    "restricted area": "the paint", "paint non-ra": "the paint", "paint": "the paint",
+    "corner 3": "the corner", "left corner 3": "the left corner", "right corner 3": "the right corner",
+    "wing 3": "the wing", "top of key": "the top", "top of key 3": "the top",
+    "mid-range": "the mid-range", "left mid-range": "the mid-range", "right mid-range": "the mid-range",
+    "elbow": "the elbow",
+}
+
+
+def _zone_label(zone: Optional[str]) -> str:
+    if not zone:
+        return "there"
+    return _ZONE_LABELS.get(str(zone).strip().lower(), str(zone).lower())
+
+
+def _priorities(scouting: Dict[str, Any], sport: Optional[str]) -> List[Dict[str, Any]]:
+    """The ranked directives, whichever sport's key holds them."""
+    return (scouting.get("head_coach_priorities")
+            or scouting.get("game_plan_priorities") or [])
+
+
+def _priority_text(item: Dict[str, Any]) -> str:
+    return str(item.get("call") or item.get("adjustment") or "").strip()
+
+
+def _onepager_key(prios: List[Dict[str, Any]]) -> Optional[str]:
+    """THE KEY — the single highest-value directive, in plain words."""
+    if prios:
+        k = plainify(_priority_text(prios[0]))
+        if k:
+            return k
+    return None
+
+
+def _bb_watch_cue(p: Dict[str, Any]) -> str:
+    t = p.get("shot_tendency")
+    if p.get("perimeter_dependency_flag") or t == "perimeter":
+        return "Great shooter. Chase him off the line."
+    if t == "paint_attacker":
+        return "Drives hard. Wall off the paint."
+    if t == "mid_range":
+        return "Loves the mid-range. Contest every shot."
+    if p.get("possession_role") == "initiator":
+        return "Runs their offense. Pressure the ball."
+    return "Stay in your stance. Do not gamble."
+
+
+def _onepager_watch(summary: Dict[str, Any], sport: Optional[str]) -> List[Dict[str, str]]:
+    """WHO TO WATCH — up to 3 jerseys, one plain phrase each."""
+    pt = summary.get("player_tendencies") or {}
+    by_player = pt.get("by_player") or {}
+    out: List[Dict[str, str]] = []
+    for _key, p in list(by_player.items())[:3]:
+        jersey = str(p.get("jersey", "?"))
+        if sport == "basketball":
+            cue = _bb_watch_cue(p)
+        else:
+            # Football: the bulletins cue is already plain-ish; take its first clause.
+            cue = (_player_cue(p).split(";")[0]).strip().capitalize()
+        out.append({"jersey": jersey, "cue": plainify(cue)})
+    return out
+
+
+def _onepager_run(summary: Dict[str, Any], sport: Optional[str]) -> List[str]:
+    """WHAT THEY RUN — up to 3 plain lines from structured tendencies."""
+    lines: List[str] = []
+    if sport == "basketball":
+        so = summary.get("shooting_overview") or {}
+        tp = so.get("three_point") or {}
+        if (tp.get("pct_of_shots") or 0) >= 33:
+            lines.append("They shoot lots of threes.")
+        szm = summary.get("shot_zone_map") or {}
+        if szm.get("most_frequent_zone"):
+            lines.append(f"They love shots from {_zone_label(szm['most_frequent_zone'])}.")
+        sc = summary.get("shot_creation") or {}
+        best = sc.get("best_action") or sc.get("top_action")
+        if best:
+            lines.append(f"They score most in {str(best).lower()}.")
+    else:
+        off = summary.get("offense") or {}
+        rp = off.get("run_pass_ratio") or {}
+        run_pct = rp.get("run_pct")
+        if run_pct is not None:
+            if run_pct >= 55:
+                lines.append(f"They run the ball {pct_to_words(run_pct)}.")
+            elif run_pct <= 45:
+                lines.append(f"They throw the ball {pct_to_words(100 - run_pct)}.")
+            else:
+                lines.append("They run and throw about the same.")
+        tf = off.get("top_formations")
+        if isinstance(tf, dict) and tf:
+            lines.append(f"They line up most in {next(iter(tf))}.")
+        tpl = off.get("top_plays")
+        if isinstance(tpl, dict) and tpl:
+            lines.append(f"Watch for their {str(next(iter(tpl))).lower()}.")
+    return [plainify(l) for l in lines[:3]]
+
+
+def _onepager_do(prios: List[Dict[str, Any]]) -> List[str]:
+    """WHAT WE DO — up to 3 verb-first directives, in plain words."""
+    out: List[str] = []
+    for it in prios[:3]:
+        line = plainify(_priority_text(it))
+        if line:
+            out.append(line)
+    return out
+
+
+def _onepager_heatmap(summary: Dict[str, Any], sport: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Static, print-safe 3-color shot-zone strip (basketball). Football's spatial
+    field heat map is a §12 follow-up; None here keeps this honest."""
+    if sport != "basketball":
+        return None
+    szm = summary.get("shot_zone_map") or {}
+    zones = szm.get("zones") or {}
+    if not zones:
+        return None
+    ranked = sorted(zones.items(), key=lambda kv: -(kv[1].get("attempts") or 0))[:6]
+    cells = []
+    for zone, z in ranked:
+        band = _hm.efg_band_player(z.get("efg_pct"), z.get("confidence"))
+        cells.append({"zone": _zone_label(zone), "band": band["band"],
+                      "color": band["color"], "label": band["label"]})
+    return {"zones": cells, "caption": "Red = they score here. Green = make them shoot here."}
+
+
+def _player_onepager(report: Dict[str, Any]) -> Dict[str, Any]:
+    summary = report.get("summary") or {}
+    if not isinstance(summary, dict):
+        summary = {}
+    sport = (report.get("sport") or "").strip().lower()
+    scouting = summary.get("scouting") or {}
+    prios = _priorities(scouting, sport)
+
+    key = _onepager_key(prios)
+    watch = _onepager_watch(summary, sport)
+    run = _onepager_run(summary, sport)
+    do = _onepager_do(prios)
+    if not key and watch:
+        key = f"Stop #{watch[0]['jersey']}. Make someone else beat you."
+
+    # A blocks view so any generic renderer still shows the content.
+    blocks: List[Dict[str, Any]] = []
+    if key:
+        blocks.append({"heading": "THE KEY", "insight_type": "tendency", "body": key})
+    if watch:
+        blocks.append({"heading": "WHO TO WATCH", "insight_type": "tendency",
+                       "body": "\n".join(f"- #{w['jersey']} {w['cue']}" for w in watch)})
+    if run:
+        blocks.append({"heading": "WHAT THEY RUN", "insight_type": "tendency",
+                       "body": "\n".join(f"- {r}" for r in run)})
+    if do:
+        blocks.append({"heading": "WHAT WE DO", "insight_type": "red_zone",
+                       "body": "\n".join(f"- {d}" for d in do)})
+
+    return {
+        "format": "player_onepager",
+        "title": report.get("title") or "Scouting Report",
+        "subtitle": "Player Game Plan",
+        "key": key,
+        "watch": watch,
+        "run": run,
+        "do": do,
+        "heatmap": _onepager_heatmap(summary, sport),
+        "confidential_note": CONFIDENTIAL_NOTE,
+        "blocks": blocks,
+    }
+
+
 # ── public entry ─────────────────────────────────────────────────────────────
 def build_export(report: Dict[str, Any], fmt: str,
                  unit: Optional[str] = None, player: Optional[str] = None) -> Dict[str, Any]:
@@ -321,6 +503,8 @@ def build_export(report: Dict[str, Any], fmt: str,
         out = _head_coach(report)
     elif fmt == "player":
         out = _player(report, player)
+    elif fmt == "player_onepager":
+        out = _player_onepager(report)
     else:
         raise ValueError(f"Unknown export format '{fmt}'. Valid: {', '.join(EXPORT_FORMATS)}")
 

@@ -373,6 +373,71 @@ export default function ReportPage() {
       alert('Could not build that export.')
     } finally { setExporting('') }
   }
+  // §11 Player One-Pager: a single print-ready page for players (6th-grade, no
+  // stats). Its payload (key/watch/run/do/heatmap) differs from the block formats,
+  // so it gets a dedicated print renderer rather than the shared printDoc.
+  const printOnePager = (p: any) => {
+    const esc = (s: string) => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    const date = report?.generated_at ? new Date(report.generated_at).toLocaleDateString() : ''
+    const watch = (p.watch || []).map((w: any) => `<li><b>#${esc(w.jersey)}</b> ${esc(w.cue)}</li>`).join('')
+    const run = (p.run || []).map((r: string) => `<li>${esc(r)}</li>`).join('')
+    const doList = (p.do || []).map((d: string) => `<li>${esc(d)}</li>`).join('')
+    const heat = p.heatmap ? `
+      <div class="heat">
+        ${(p.heatmap.zones || []).map((z: any) =>
+          `<span class="cell" style="background:${z.color}"><span class="zn">${esc(z.zone)}</span><span class="zl">${esc(z.label)}</span></span>`).join('')}
+      </div>
+      <div class="cap">${esc(p.heatmap.caption || '')}</div>` : ''
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/>
+      <title>${esc(p.title)} - Player Game Plan</title>
+      <style>
+        @page { margin: 0.6in; size: letter; }
+        * { box-sizing: border-box; }
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; color: #14140f; line-height: 1.5; max-width: 760px; margin: 0 auto; padding: 20px; }
+        .bar { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 3px solid #1a5c2a; padding-bottom: 8px; margin-bottom: 16px; }
+        .bar .b { font-size: 13px; font-weight: 800; letter-spacing: 0.12em; color: #1a5c2a; text-transform: uppercase; }
+        .bar .vs { font-size: 15px; font-weight: 700; }
+        .bar .dt { font-size: 12px; color: #666; }
+        .key { background: #f4efdc; border: 2px solid #C9A84C; border-radius: 10px; padding: 14px 18px; margin-bottom: 18px; }
+        .key .h { font-size: 13px; font-weight: 800; color: #9a7d22; letter-spacing: 0.1em; margin-bottom: 4px; }
+        .key .k { font-size: 22px; font-weight: 800; line-height: 1.3; }
+        h2 { font-size: 15px; color: #1a5c2a; letter-spacing: 0.06em; text-transform: uppercase; margin: 16px 0 6px; }
+        ul { margin: 0 0 8px; padding-left: 22px; } li { font-size: 15px; margin: 0 0 6px; }
+        .heat { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 4px; }
+        .cell { flex: 1; min-width: 90px; color: #fff; border-radius: 8px; padding: 10px 8px; text-align: center; display: flex; flex-direction: column; gap: 2px; }
+        .cell .zn { font-size: 13px; font-weight: 700; } .cell .zl { font-size: 11px; opacity: 0.95; }
+        .cap { font-size: 12px; color: #555; font-style: italic; margin-bottom: 12px; }
+        .ferpa { font-size: 10px; color: #888; border-top: 1px solid #ccc; padding-top: 8px; margin-top: 18px; }
+        .foot { font-size: 11px; color: #999; text-align: center; margin-top: 6px; }
+        .wm { color: #9a7d22; font-size: 11px; border: 1px dashed #C9A84C; padding: 5px 9px; border-radius: 6px; margin-bottom: 14px; display: inline-block; }
+      </style></head><body>
+      <div class="bar"><span class="b">CoachLenz &middot; Game Plan</span><span class="vs">vs ${esc(p.title)}</span><span class="dt">${esc(date)}</span></div>
+      ${report?.watermarked ? '<div class="wm">TRIAL - upgrade at coachlenz.com</div>' : ''}
+      ${p.key ? `<div class="key"><div class="h">&#128273; THE KEY</div><div class="k">${esc(p.key)}</div></div>` : ''}
+      ${watch ? `<h2>&#128064; Who To Watch</h2><ul>${watch}</ul>` : ''}
+      ${run ? `<h2>&#128203; What They Run</h2><ul>${run}</ul>` : ''}
+      ${doList ? `<h2>&#9989; What We Do</h2><ul>${doList}</ul>` : ''}
+      ${heat}
+      <div class="ferpa">${esc(p.confidential_note || '')}</div>
+      <div class="foot">CoachLenz AI &middot; coachlenz.com &middot; Ready in 5-10 min &middot; Powered by Cosby AI Solutions</div>
+      </body></html>`
+    const w = window.open('', '_blank', 'width=820,height=1000')
+    if (!w) { alert('Please allow pop-ups to print or save the game plan as PDF.'); return }
+    w.document.write(html); w.document.close(); w.focus()
+    setTimeout(() => w.print(), 400)
+  }
+
+  const exportOnePager = async () => {
+    if (!report) return
+    setMenuOpen(false); setExporting('player_onepager')
+    try {
+      const res = await api.get(`/reports/${report.id}/export?format=player_onepager`)
+      printOnePager(res.data)
+    } catch {
+      alert('Could not build the player game plan.')
+    } finally { setExporting('') }
+  }
+
   // Position-coach brief units are sport-specific: basketball groups by Guards /
   // Wings / Bigs, football by unit. Codes match backend report_export unit maps.
   const POSITION_UNITS: { code: string; label: string }[] = report?.sport === 'basketball'
@@ -511,6 +576,7 @@ export default function ReportPage() {
                       <button onClick={() => exportFormat('coordinator')} style={menuItem}>Coordinator Report <span style={menuHint}>full detail</span></button>
                       <button onClick={() => exportFormat('head_coach')} style={menuItem}>Head Coach Summary <span style={menuHint}>one page</span></button>
                       <button onClick={() => exportFormat('player')} style={menuItem}>Player Bulletins <span style={menuHint}>per player</span></button>
+                      <button onClick={exportOnePager} style={menuItem}>Player Game Plan <span style={menuHint}>1 page, print</span></button>
                       <div style={{ fontSize: 10, color: '#7a7a6e', letterSpacing: '0.1em', padding: '8px 8px 4px' }}>POSITION COACH BRIEF</div>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: '0 4px 4px' }}>
                         {POSITION_UNITS.map(u => (
