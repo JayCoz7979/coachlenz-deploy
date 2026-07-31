@@ -63,6 +63,18 @@ async def create_event(body: EventCreate, user: User = Depends(get_current_user)
 
 @router.post("/bulk")
 async def bulk_create_events(events: list[EventCreate], user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    if not events:
+        return {"created": 0}
+    # Every distinct game_id in the payload must belong to the caller's org —
+    # otherwise a caller could attach events to another org's game (single-create
+    # already 404s on this; the bulk path must match that ownership check).
+    game_ids = {e.game_id for e in events}
+    owned = await db.execute(
+        select(Game.id).where(Game.id.in_(game_ids), Game.organization_id == user.organization_id)
+    )
+    owned_ids = {str(gid) for gid in owned.scalars().all()}
+    if not game_ids.issubset(owned_ids):
+        raise HTTPException(status_code=404, detail="Game not found")
     objs = [Event(organization_id=user.organization_id, **e.dict()) for e in events]
     db.add_all(objs)
     await db.commit()

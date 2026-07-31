@@ -433,6 +433,8 @@ async def cross_org_isolation(ac):
     check("xorg: DELETE B report -> 404", r.status_code == 404)
     r = await ac.post("/events", json={"game_id": B["game"], "event_type": "shot"}, headers=A)
     check("xorg: create event on B game -> 404", r.status_code == 404)
+    r = await ac.post("/events/bulk", json=[{"game_id": B["game"], "event_type": "shot"}], headers=A)
+    check("xorg: bulk-create events on B game -> 404", r.status_code == 404)
     r = await ac.patch(f"/events/{B['event']}", json={"coach_note": "leaked"}, headers=A)
     check("xorg: PATCH B event -> 404", r.status_code == 404)
     r = await ac.delete(f"/events/{B['event']}", headers=A)
