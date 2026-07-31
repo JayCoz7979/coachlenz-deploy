@@ -162,10 +162,10 @@ built and small; it is NOT the real blocker.
   per process, + `pool_timeout`/`pool_recycle`), Postgres-only so the SQLite test
   engine is untouched. Verified: prod `max_connections=100`, ~11 app processes ->
   worst-case ~77, with headroom. Raise `DB_POOL_SIZE` per service via env if needed.
-- **SIGKILL'd ingest strands a game in a permanent spinner**: `IngestWorker` has no
-  `on_dead_letter` override, so an OOM mid-handle leaves `Game.status=processing`
-  forever (ai_detect is rescued by `detect_status` self-heal; ingest is not).
-  Mirror the reports/ai_detect recovery.
+- **SIGKILL'd ingest strands a game in a permanent spinner** — FIXED (PR pending).
+  Added `IngestWorker.on_dead_letter`: when the ingest job is finally given up on,
+  the game is marked `error` (so the spinner stops), without clobbering a game that
+  already reached `ready`/`error`. Mirrors the ReportsWorker recovery.
 
 ### Frontend
 - **Landing page is thin and off-brand** (`frontend/app/page.tsx`): one hero + two
