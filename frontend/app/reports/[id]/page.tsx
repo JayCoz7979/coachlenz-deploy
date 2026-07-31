@@ -8,6 +8,7 @@ import Link from 'next/link'
 import { ChevronLeft, Loader2, FileText, AlertTriangle, TrendingUp, Shield, Zap, Target, Printer, Download, ChevronDown, Share2, Star, Trash2 } from 'lucide-react'
 import FieldHeatMap from '@/components/report/FieldHeatMap'
 import BasketballShotChart from '@/components/report/BasketballShotChart'
+import RunPassMatrix from '@/components/report/RunPassMatrix'
 import ReportChat from '@/components/report/ReportChat'
 
 interface Section {
@@ -293,6 +294,25 @@ export default function ReportPage() {
     return `<section><h2>Shot Chart — Where They Score</h2><table style="border-collapse:collapse;width:100%">${body}</table>${priLine}<div style="font-size:10px;color:#888;margin-top:6px">Bar length = shot volume &middot; color = eFG% (shot quality). Red = take it away, green = make them shoot it.</div></section>`
   }
 
+  // Print/PDF run-pass matrix (§12 Map 4) — light theme, appended to the football
+  // heat maps so the PDF carries the down-and-hash tendency grid too.
+  const buildRunPassMatrixHtml = (s: any): string => {
+    const m = s?.offense?.run_pass_matrix
+    if (!m || !m.rows?.length || !m.cols?.length) return ''
+    const head = `<tr><th></th>${m.cols.map((c: string) => `<th style="font-size:10px;color:#555;padding:2px 6px;text-transform:uppercase">${c}</th>`).join('')}</tr>`
+    const body = m.rows.map((row: string) => {
+      const tds = m.cols.map((col: string) => {
+        const c = m.cells[row]?.[col]
+        if (!c || c.total === 0) return `<td style="background:#f4f4f0;border:2px solid #fff;min-width:52px"></td>`
+        const bg = c.low_sample ? '#e8e8e2' : c.color
+        const fg = (c.low_sample || c.band === 'balanced' || c.band === 'none') ? '#333' : '#fff'
+        return `<td style="background:${bg};color:${fg};text-align:center;padding:6px 4px;border:2px solid #fff${c.low_sample ? ';opacity:0.7' : ''}"><div style="font-size:14px;font-weight:bold">${Math.round(c.run_pct ?? 0)}%</div><div style="font-size:8px">${c.total} pl</div></td>`
+      }).join('')
+      return `<tr><td style="font-size:11px;color:#222;font-weight:bold;text-align:right;padding-right:8px">${row}</td>${tds}</tr>`
+    }).join('')
+    return `<section><h2>Run / Pass Matrix — By Down &amp; Hash</h2><table style="border-collapse:collapse"><thead>${head}</thead><tbody>${body}</tbody></table><div style="font-size:10px;color:#888;margin-top:5px">Number = run share of that down &amp; hash (small number = plays). Grey = too few to call. Red = run, purple = pass.</div></section>`
+  }
+
   // One branded print/PDF renderer for every format. Blocks are {heading, body}.
   const printDoc = (opts: {
     title: string; subtitle: string; blocks: Section[]; watermarked: boolean
@@ -349,7 +369,7 @@ export default function ReportPage() {
                ['Defense', s.defense_plays], ['Special Teams', s.special_teams_plays]],
       heatMapHtml: (() => {
         const sport = String(report.sport || '').toLowerCase()
-        if (sport.includes('football')) return buildHeatMapHtml(s)
+        if (sport.includes('football')) return buildHeatMapHtml(s) + buildRunPassMatrixHtml(s)
         if (sport === 'basketball') return buildBasketballHeatMapHtml(s)
         return ''
       })(),
@@ -749,6 +769,14 @@ export default function ReportPage() {
             && report.summary && typeof report.summary !== 'string' && (
             <div style={{ marginBottom: 28 }}>
               <FieldHeatMap summary={report.summary} />
+            </div>
+          )}
+
+          {/* Run/Pass tendency matrix (football) — §12 Map 4 */}
+          {String(report.sport || '').toLowerCase().includes('football')
+            && report.summary && typeof report.summary !== 'string' && (
+            <div style={{ marginBottom: 28 }}>
+              <RunPassMatrix summary={report.summary} />
             </div>
           )}
 

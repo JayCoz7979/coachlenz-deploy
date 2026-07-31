@@ -58,6 +58,24 @@ def efg_band_coach(efg: Optional[float], confidence: Optional[float] = None) -> 
     return {"band": band, "color": color, "label": label, "downgraded": False}
 
 
+# Run/Pass tendency matrix bands (§12 Map 4). A cell's run% -> a color that reads
+# run-heavy (red) through balanced (neutral) to pass-heavy (purple).
+def run_pass_band(run_pct: Optional[float]) -> Dict[str, Any]:
+    """run_pct -> {band, color, label}. Ranges follow §12 Map 4:
+    >=75 run RED, 60-74 run ORANGE, 40-59 NEUTRAL, 60-74 pass BLUE, >=75 pass PURPLE."""
+    if run_pct is None:
+        return {"band": "none", "color": "#8a8a80", "label": "No read"}
+    if run_pct >= 75:
+        return {"band": "run_heavy", "color": "#c0392b", "label": "Run heavy"}
+    if run_pct >= 60:
+        return {"band": "run_lean", "color": "#d98c30", "label": "Run lean"}
+    if run_pct >= 40:
+        return {"band": "balanced", "color": "#8a8a80", "label": "Balanced"}
+    if run_pct >= 26:
+        return {"band": "pass_lean", "color": "#3b6fb0", "label": "Pass lean"}
+    return {"band": "pass_heavy", "color": "#7a4fb0", "label": "Pass heavy"}
+
+
 def efg_band_player(efg: Optional[float], confidence: Optional[float] = None) -> Dict[str, Any]:
     """Player Layer 3-color mapping, print-safe. RED on a low-confidence zone is
     downgraded to YELLOW (never overstate a take-away to a player)."""
