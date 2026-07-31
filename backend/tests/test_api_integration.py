@@ -361,6 +361,9 @@ async def run():
         # ── Cross-org tenant isolation: the systematic leak sweep ──────────
         await cross_org_isolation(ac)
 
+        # ── Entitlement gates fire on a real endpoint (trial vs paid) ──────
+        await entitlement_gates(ac)
+
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         print("FAILURES:", ", ".join(FAIL))
@@ -446,6 +449,37 @@ async def cross_org_isolation(ac):
     check("xorg: B owner reads own report (control)", r.status_code == 200)
     r = await ac.get(f"/events?game_id={B['game']}", headers=tokB)
     check("xorg: B owner sees own event (control)", r.status_code == 200 and len(r.json()) == 1)
+
+
+async def entitlement_gates(ac):
+    """Prove the trial paid-feature lock actually fires on a live endpoint (not just
+    the pure-policy unit tests). Uses the reports multi-game gate: mounted here and
+    free of external deps. A fresh ACTIVE-TRIAL org (verified owner, sport locked)
+    is blocked from a multi-game report but allowed a single-game one; the paid main
+    org is the control."""
+    from datetime import timedelta
+    async with AsyncSessionLocal() as db:
+        torg = Organization(name="Trial HS", slug=f"trial-{uuid.uuid4().hex[:8]}",
+                            is_trial=True, trial_ends_at=datetime.utcnow() + timedelta(days=10),
+                            chosen_sports=["basketball"])
+        db.add(torg)
+        await db.flush()
+        tuser = User(organization_id=torg.id, name="Trial Coach",
+                     email=f"trial-{uuid.uuid4().hex[:6]}@x.com",
+                     hashed_password=hash_password("x"), role="owner", email_verified=True)
+        db.add(tuser)
+        await db.commit()
+        for o in (torg, tuser):
+            await db.refresh(o)
+    ttok = {"Authorization": f"Bearer {create_access_token(str(tuser.id), str(torg.id))}"}
+    g1, g2 = str(uuid.uuid4()), str(uuid.uuid4())
+
+    r = await ac.post("/reports", json={"title": "Multi", "sport": "basketball", "game_ids": [g1, g2]}, headers=ttok)
+    check("trial multi-game report -> 403 (locked)", r.status_code == 403)
+    r = await ac.post("/reports", json={"title": "Solo", "sport": "basketball", "game_ids": [g1]}, headers=ttok)
+    check("trial single-game report -> 200 (allowed)", r.status_code == 200)
+    r = await ac.post("/reports", json={"title": "Multi", "sport": "football", "game_ids": [g1, g2]}, headers=tok("analyst"))
+    check("paid multi-game report -> 200 (control)", r.status_code == 200)
 
 
 if __name__ == "__main__":
