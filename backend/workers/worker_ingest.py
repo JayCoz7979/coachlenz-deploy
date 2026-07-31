@@ -26,6 +26,24 @@ class IngestWorker(BaseWorker):
         else:
             return await self._ingest_uploaded_file(game_id)
 
+    async def on_dead_letter(self, payload: dict, reason: str) -> None:
+        """A crash mid-ingest (e.g. an OOM-killed ffmpeg on a huge file) kills the
+        worker before handle()'s except can set status='error', leaving the game
+        stuck in 'downloading'/'processing' forever with a spinner. When the job is
+        finally given up on, mark the game failed — but never clobber a game that
+        already finished ('ready') or already recorded an error. Mirrors the
+        ReportsWorker dead-letter recovery."""
+        game_id = payload.get("game_id")
+        if not game_id:
+            return
+        async with AsyncSessionLocal() as db:
+            game = await db.get(Game, game_id)
+            if game is None or game.status in ("ready", "error"):
+                return
+            game.status = "error"
+            game.error_message = (reason or "Film import failed after repeated attempts.")[:480]
+            await db.commit()
+
     async def _ingest_uploaded_file(self, game_id: str) -> dict:
         try:
             return await self._ingest_uploaded_file_inner(game_id)
