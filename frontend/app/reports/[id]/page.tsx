@@ -277,15 +277,17 @@ export default function ReportPage() {
       return `<section><h2>Shot Chart — Where They Score</h2><p style="color:#555;font-style:italic">No readable shot-zone detail on this film yet — usually a thin or low-confidence breakdown. Run a full or DEEP breakdown of the whole game and the shot chart fills in.</p></section>`
     }
     const maxAtt = Math.max(1, ...rows.map(([, z]: any) => z.attempts || 0))
+    const anyEfg = rows.some(([, z]: any) => z.efg_pct != null)
+    const pctLabel = anyEfg ? 'eFG' : 'FG'
     const body = rows.map(([zone, z]: any) => {
-      const efg = z.efg_pct ?? z.fg_pct
+      const shotPct = z.efg_pct ?? z.fg_pct
       const color = z.band_color || '#888'
       const w = Math.max(6, ((z.attempts || 0) / maxAtt) * 100)
       const pri = z.priority_takeaway ? '🚨 ' : ''
       return `<tr>
         <td style="font-size:11px;color:#222;text-align:right;padding:3px 8px;white-space:nowrap;font-weight:${z.priority_takeaway ? 700 : 400}">${pri}${zone}</td>
         <td style="width:52%;padding:3px 4px"><div style="height:16px;background:#eee;border-radius:3px"><div style="height:100%;width:${w}%;background:${color};border-radius:3px"></div></div></td>
-        <td style="font-size:11px;color:#333;padding:3px 6px;white-space:nowrap">${z.made}/${z.attempts} &middot; ${z.pct_of_all_shots}% &middot; <b style="color:${color}">${efg}% eFG</b></td>
+        <td style="font-size:11px;color:#333;padding:3px 6px;white-space:nowrap">${z.made}/${z.attempts} &middot; ${z.pct_of_all_shots}% &middot; <b style="color:${color}">${shotPct}% ${pctLabel}</b></td>
       </tr>`
     }).join('')
     const pri: string[] = szm.priority_takeaways || []

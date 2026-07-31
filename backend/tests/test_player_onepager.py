@@ -60,6 +60,8 @@ def test_basketball_onepager_structure_and_readability():
     assert any("the corner" in r for r in out["run"])
     assert out["do"] and len(out["do"]) <= 3
     assert out["confidential_note"] == CONFIDENTIAL_NOTE
+    # The cue must keep its second sentence (the how-to-stop), not get clamped away.
+    assert any("Chase him off the line" in w["cue"] for w in out["watch"])
     _assert_readable(out)
 
 

@@ -74,13 +74,19 @@ def _swap_jargon(text: str) -> str:
 
 
 def _clamp_words(text: str, max_words: int) -> str:
-    """Keep to the first sentence, then cap word count so nothing runs long."""
-    first = re.split(r"(?<=[.!?])\s+", text.strip(), maxsplit=1)[0] if text.strip() else ""
-    words = first.split()
-    if len(words) <= max_words:
+    """Cap word count so nothing runs long. A short multi-sentence phrase is kept
+    WHOLE (e.g. "Drives hard. Wall off the paint." keeps its defensive instruction);
+    only genuinely long text is trimmed to its first sentence, then hard-capped."""
+    t = (text or "").strip()
+    if not t:
+        return ""
+    if len(t.split()) <= max_words:
+        return t                      # whole thing fits — keep every sentence
+    first = re.split(r"(?<=[.!?])\s+", t, maxsplit=1)[0]
+    fwords = first.split()
+    if len(fwords) <= max_words:
         return first.strip()
-    clipped = " ".join(words[:max_words]).rstrip(",;:.")
-    return clipped + "."
+    return " ".join(fwords[:max_words]).rstrip(",;:.") + "."
 
 
 def plainify(text: str, max_words: int = 12) -> str:

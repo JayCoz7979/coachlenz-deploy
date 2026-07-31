@@ -38,6 +38,11 @@ export default function BasketballShotChart({ summary }: { summary: any }) {
   const zoneRows = Object.entries(zones).sort((a: any, b: any) => (b[1].attempts || 0) - (a[1].attempts || 0))
   const maxAtt = Math.max(1, ...zoneRows.map(([, z]: any) => z.attempts || 0))
   const hasZones = zoneRows.length > 0
+  // eFG is only present on reports generated after the eFG engine shipped. On older
+  // reports we fall back to raw FG% — and must LABEL it FG%, not eFG (a made three's
+  // eFG is 150%, so calling FG% "eFG" is wrong).
+  const usesEfg = zoneRows.some(([, z]: any) => z.efg_pct != null)
+  const pctLabel = usesEfg ? 'eFG' : 'FG'
 
   // Top offense players by usage (by_player is already ranked; keep the offense side).
   const players: [string, any][] = Object.entries(pt.by_player || {})
@@ -59,7 +64,7 @@ export default function BasketballShotChart({ summary }: { summary: any }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', margin: '12px 0 6px', fontSize: 10, color: '#9a9a8e' }}>
             <span><b style={{ color: '#d8d8cc' }}>Bar length</b> = shot volume</span>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              <b style={{ color: '#d8d8cc' }}>Color</b> = eFG% (shot quality)
+              <b style={{ color: '#d8d8cc' }}>Color</b> = {usesEfg ? 'eFG% (shot quality)' : 'FG%'}
               <span style={{ display: 'inline-block', width: 60, height: 8, borderRadius: 2, background: 'linear-gradient(90deg,#b45c5c,#C9A84C,#2d8c40)' }} />
               <span>cold → hot</span>
             </span>
@@ -72,8 +77,8 @@ export default function BasketballShotChart({ summary }: { summary: any }) {
               const w = (z.attempts || 0) / maxAtt
               // eFG band color from the backend (single source w/ print); old reports
               // without a band fall back to the FG% ramp.
-              const efg = z.efg_pct ?? z.fg_pct
-              const color = z.band_color || _quality((efg || 0) / 100)
+              const shotPct = z.efg_pct ?? z.fg_pct
+              const color = z.band_color || _quality((shotPct || 0) / 100)
               const priority = !!z.priority_takeaway
               return (
                 <div key={zone} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -88,7 +93,7 @@ export default function BasketballShotChart({ summary }: { summary: any }) {
                   <div style={{ width: 132, flexShrink: 0, display: 'flex', justifyContent: 'flex-end', gap: 8, fontSize: 11 }}>
                     <span style={{ color: '#d8d8cc' }}>{z.made}/{z.attempts}</span>
                     <span style={{ color: '#7a7a6e' }}>{z.pct_of_all_shots}%</span>
-                    <span style={{ width: 46, textAlign: 'right', fontWeight: 700, color }} title="effective FG%">{efg}% eFG</span>
+                    <span style={{ width: 46, textAlign: 'right', fontWeight: 700, color }} title={usesEfg ? 'effective FG%' : 'field goal %'}>{shotPct}% {pctLabel}</span>
                   </div>
                 </div>
               )

@@ -90,6 +90,14 @@ def test_plainify_clamps_to_twelve_words():
     assert P.has_readability_violation(out) is None
 
 
+def test_plainify_keeps_short_two_sentence_phrase():
+    # A short two-sentence cue must keep BOTH sentences (the second carries the
+    # defensive instruction) — the clamp only trims genuinely long text.
+    out = P.plainify("Drives hard. Wall off the paint.")
+    assert out == "Drives hard. Wall off the paint."
+    assert P.has_readability_violation(out) is None
+
+
 def test_readability_violation_detects_percent_and_length():
     assert P.has_readability_violation("shoots 55%") == "contains a percentage"
     assert P.has_readability_violation("one two three four five six seven eight nine ten eleven twelve thirteen")
