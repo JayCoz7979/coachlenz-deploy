@@ -118,6 +118,13 @@ def _shooting_overview(shots) -> Dict[str, Any]:
     }
 
 
+def _zone_confidence(zshots):
+    """Mean detection confidence across a zone's shots, or None if none carried one."""
+    vals = [_x(e, "confidence") for e in zshots]
+    vals = [v for v in vals if isinstance(v, (int, float))]
+    return round(sum(vals) / len(vals), 3) if vals else None
+
+
 def _shot_zone_map(shots) -> Dict[str, Any]:
     if not shots:
         return {}
@@ -131,11 +138,20 @@ def _shot_zone_map(shots) -> Dict[str, Any]:
     zone_map = {}
     for zone, zshots in sorted(by_zone.items(), key=lambda x: -len(x[1])):
         makes = [e for e in zshots if _is_made(e)]
+        threes_made = [e for e in makes if _is_three(e)]
         zone_map[zone] = {
             "attempts": len(zshots),
             "made": len(makes),
             "fg_pct": round(len(makes) / len(zshots) * 100, 1),
+            # Effective FG% credits the extra point a made 3 is worth:
+            # eFG = (FG + 0.5*3PM) / FGA. This is the metric the heat-map bands key
+            # off (§12) — a 33% 3-point zone (eFG 50) is not "cold" like a 33% 2.
+            "efg_pct": round((len(makes) + 0.5 * len(threes_made)) / len(zshots) * 100, 1),
             "pct_of_all_shots": round(len(zshots) / len(shots) * 100, 1),
+            # Mean detection confidence for the zone's shots (single-camera reads
+            # vary). None when no shot carried a confidence. The heat map never
+            # paints a zone RED on a LOW-confidence read (§12).
+            "confidence": _zone_confidence(zshots),
         }
 
     if not zone_map:
