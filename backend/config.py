@@ -5,6 +5,16 @@ from typing import Optional
 class Settings(BaseSettings):
     # Database
     DATABASE_URL: str
+    # Connection-pool sizing (Postgres only). The API runs `uvicorn --workers 4`
+    # and there are ~7 worker services, so ~11 processes share ONE Postgres
+    # (max_connections=100). Each process's ceiling is pool_size + max_overflow;
+    # keep (processes x ceiling) comfortably under max_connections. Default ceiling
+    # 7 -> ~77 worst-case, leaving headroom for migrate/admin. Raise DB_POOL_SIZE on
+    # a specific service via env if it needs more concurrency (mind the math).
+    DB_POOL_SIZE: int = 3
+    DB_MAX_OVERFLOW: int = 4
+    DB_POOL_TIMEOUT: int = 30      # seconds a request waits for a free connection
+    DB_POOL_RECYCLE: int = 1800    # recycle a connection after 30 min (avoid stale)
 
     # Auth
     SECRET_KEY: str

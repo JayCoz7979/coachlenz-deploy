@@ -156,10 +156,11 @@ built and small; it is NOT the real blocker.
   failure) and pointed `backend/railway.toml` `healthcheckPath` at it, so a deploy
   whose Postgres is unreachable is not promoted to healthy. `/health` stays as the
   cheap liveness endpoint.
-- **DB connection exhaustion risk**: `railway.toml` runs `uvicorn --workers 4`;
-  `models/base.py:5` sets no `pool_size`/`max_overflow` -> ~15 conns/process ->
-  ~60 from the API alone + worker services, against a small Postgres (~100 max).
-  Set an explicit pool size.
+- **DB connection exhaustion risk** — FIXED (PR pending). `models/base.py` now sets
+  an explicit pool (env-driven `DB_POOL_SIZE=3` + `DB_MAX_OVERFLOW=4` -> ceiling 7
+  per process, + `pool_timeout`/`pool_recycle`), Postgres-only so the SQLite test
+  engine is untouched. Verified: prod `max_connections=100`, ~11 app processes ->
+  worst-case ~77, with headroom. Raise `DB_POOL_SIZE` per service via env if needed.
 - **SIGKILL'd ingest strands a game in a permanent spinner**: `IngestWorker` has no
   `on_dead_letter` override, so an OOM mid-handle leaves `Game.status=processing`
   forever (ai_detect is rescued by `detect_status` self-heal; ingest is not).
