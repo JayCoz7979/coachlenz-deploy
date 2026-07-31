@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Response
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import select, update, delete
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime, timedelta
@@ -9,6 +9,7 @@ from backend.models.base import get_db
 from backend.models.user import User
 from backend.models.organization import Organization
 from backend.models.report import TendencyReport
+from backend.models.report_chat import ReportChatMessage
 from backend.models.event import Event
 from backend.models.job import Job
 from backend.services.auth import get_current_user, get_current_org
@@ -122,6 +123,12 @@ async def retry_report(report_id: str, user: User = Depends(get_current_user),
     if report.generated_at:
         return {"ok": True, "status": "ready"}  # already done, nothing to retry
     report.error_reason = None
+    # Re-analysis resets the report-scoped chat (Engine §13): the film is being
+    # re-read, so prior answers no longer describe what the report will say.
+    await db.execute(delete(ReportChatMessage).where(
+        ReportChatMessage.report_id == report.id,
+        ReportChatMessage.organization_id == user.organization_id,
+    ))
     db.add(Job(organization_id=org.id, job_type="report", payload={"report_id": str(report.id)}))
     await db.commit()
     return {"ok": True, "status": "generating"}

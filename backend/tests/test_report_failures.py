@@ -64,6 +64,7 @@ class _FakeDB:
         self.committed = False
 
     async def execute(self, *_a, **_k):
+        self.executes = getattr(self, "executes", 0) + 1
         return self._results.pop(0)
 
     def add(self, obj):
@@ -95,12 +96,14 @@ def test_retry_missing_report_404():
 
 def test_retry_failed_report_clears_error_and_enqueues_job():
     rep = _report(generated_at=None, error_reason="You have reached your specified API usage limits")
-    db = _FakeDB([_Result(rep)])
+    # Two execute results: the report SELECT, then the chat-reset DELETE (§13).
+    db = _FakeDB([_Result(rep), _Result(None)])
     out = asyncio.run(retry_report("r1", user=_user(), org=_org(), db=db))
     assert out["status"] == "generating"
     assert rep.error_reason is None            # failure cleared
     assert db.added and db.added[0].job_type == "report"   # fresh job queued
     assert db.committed is True
+    assert db.executes == 2                     # SELECT + chat-reset DELETE issued
 
 
 def test_retry_already_generated_is_noop():
