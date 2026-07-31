@@ -177,6 +177,60 @@ def _hash_play_matrix(plays) -> Dict[str, Any]:
     return matrix
 
 
+# A down-hash cell needs this many run/pass plays before we call its tendency;
+# below it the cell shows its number but stays grey (honest small sample).
+_MATRIX_MIN_CELL = 4
+_DOWN_LABELS = {1: "1st", 2: "2nd", 3: "3rd", 4: "4th"}
+_HASH_ORDER = ["Left", "Middle", "Right", "L", "M", "R"]
+
+
+def _run_pass_matrix(plays) -> Dict[str, Any]:
+    """§12 Map 4 — run% by (down x hash). Each cell carries its run/pass counts and
+    a color band (run-heavy red -> balanced grey -> pass-heavy purple). Cells under
+    the sample floor keep their number but are flagged low_sample and left grey."""
+    from backend.services import heatmap as _hm
+
+    by = defaultdict(lambda: defaultdict(list))
+    downs, hashes = set(), []
+    for e in plays:
+        if e.down in (1, 2, 3, 4) and e.hash_position and (_is_run(e) or _is_pass(e)):
+            by[e.down][e.hash_position].append(e)
+            downs.add(e.down)
+            if e.hash_position not in hashes:
+                hashes.append(e.hash_position)
+    if not downs or not hashes:
+        return {}
+
+    def _horder(h):
+        try:
+            return _HASH_ORDER.index(h)
+        except ValueError:
+            return len(_HASH_ORDER)
+
+    cols = sorted(hashes, key=lambda h: (_horder(h), h))
+    rows = [_DOWN_LABELS[d] for d in sorted(downs)]
+    cells: Dict[str, Any] = {}
+    for d in sorted(downs):
+        label = _DOWN_LABELS[d]
+        cells[label] = {}
+        for h in cols:
+            plist = by[d].get(h, [])
+            runs = sum(1 for p in plist if _is_run(p))
+            passes = sum(1 for p in plist if _is_pass(p))
+            total = runs + passes
+            if total == 0:
+                cells[label][h] = {"total": 0, "run": 0, "pass": 0, "run_pct": None,
+                                   "low_sample": True, "band": "none", "color": "#eeeeee", "band_label": ""}
+                continue
+            run_pct = round(runs / total * 100, 1)
+            low = total < _MATRIX_MIN_CELL
+            band = _hm.run_pass_band(None if low else run_pct)
+            cells[label][h] = {"total": total, "run": runs, "pass": passes, "run_pct": run_pct,
+                               "low_sample": low, "band": band["band"], "color": band["color"],
+                               "band_label": band["label"]}
+    return {"rows": rows, "cols": cols, "cells": cells, "min_sample": _MATRIX_MIN_CELL}
+
+
 def _motion_analysis(plays) -> Dict[str, Any]:
     """Motion vs. no-motion split: run/pass %, avg yards, success rate."""
     with_motion = [e for e in plays if e.motion]
@@ -1116,6 +1170,8 @@ def analyze_football(events) -> Dict[str, Any]:
 
         # Hash + field position
         "hash_play_matrix": _hash_play_matrix(plays),
+        # §12 Map 4 — run% by down x hash, color-banded for the tendency grid.
+        "run_pass_matrix": _run_pass_matrix(plays),
 
         # Situational
         "short_yardage": _short_yardage_detail(plays),
