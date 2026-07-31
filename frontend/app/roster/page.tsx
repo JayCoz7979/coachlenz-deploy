@@ -35,6 +35,9 @@ export default function RosterPage() {
   const [view, setView] = useState<'roster' | 'stats'>('roster')
   const [stats, setStats] = useState<StatRow[]>([])
   const [gamesAnalyzed, setGamesAnalyzed] = useState(0)
+  // Set when the backend requires the one-time student-data (COPPA) attestation
+  // before roster data can be entered. `retry` re-runs the blocked action.
+  const [consent, setConsent] = useState<{ attestation: string; retry: () => Promise<void> } | null>(null)
 
   useEffect(() => { fetchMe() }, [])
   useEffect(() => { if (!isLoading && !user) router.push('/login') }, [isLoading, user])
@@ -58,21 +61,44 @@ export default function RosterPage() {
 
   function flash(setter: (s: string) => void, text: string) { setter(text); setTimeout(() => setter(''), 3500) }
 
-  async function addPlayer(e: React.FormEvent) {
-    e.preventDefault(); setErr('')
-    try {
-      await api.post(`/rosters/${teamId}/players`, form)
-      setForm({ ...BLANK }); setShowForm(false); await loadRoster(teamId)
-    } catch (e: any) { flash(setErr, e.response?.data?.detail || 'Could not add player.') }
+  // Route an action error: a student-consent 403 opens the attestation panel (with a
+  // retry of the blocked action); anything else flashes the message.
+  function onActionError(e: any, fallback: string, retry: () => Promise<void>) {
+    const d = e?.response?.data?.detail
+    if (e?.response?.status === 403 && d && typeof d === 'object' && d.code === 'student_consent_required') {
+      setConsent({ attestation: d.attestation, retry })
+      return
+    }
+    flash(setErr, typeof d === 'string' ? d : fallback)
   }
 
-  async function uploadCsv() {
+  async function attestConsent() {
     setErr('')
     try {
-      const r = await api.post(`/rosters/${teamId}/upload`, { csv })
-      setCsv(''); setShowCsv(false); await loadRoster(teamId)
-      flash(setMsg, `Imported: ${r.data.created} added, ${r.data.updated} updated.`)
-    } catch (e: any) { flash(setErr, e.response?.data?.detail || 'CSV import failed.') }
+      await api.post('/legal/student-consent')
+      const retry = consent?.retry
+      setConsent(null)
+      if (retry) await retry()
+    } catch (e: any) { flash(setErr, e?.response?.data?.detail || 'Could not record your confirmation.') }
+  }
+
+  async function doAddPlayer() {
+    await api.post(`/rosters/${teamId}/players`, form)
+    setForm({ ...BLANK }); setShowForm(false); await loadRoster(teamId)
+  }
+  async function addPlayer(e: React.FormEvent) {
+    e.preventDefault(); setErr('')
+    try { await doAddPlayer() } catch (e: any) { onActionError(e, 'Could not add player.', doAddPlayer) }
+  }
+
+  async function doUploadCsv() {
+    const r = await api.post(`/rosters/${teamId}/upload`, { csv })
+    setCsv(''); setShowCsv(false); await loadRoster(teamId)
+    flash(setMsg, `Imported: ${r.data.created} added, ${r.data.updated} updated.`)
+  }
+  async function uploadCsv() {
+    setErr('')
+    try { await doUploadCsv() } catch (e: any) { onActionError(e, 'CSV import failed.', doUploadCsv) }
   }
 
   async function removePlayer(pid: string) {
@@ -80,12 +106,14 @@ export default function RosterPage() {
     try { await api.delete(`/rosters/${teamId}/players/${pid}`); await loadRoster(teamId) } catch {}
   }
 
+  async function doClone() {
+    const r = await api.post(`/rosters/${teamId}/clone-to/${cloneTo}`)
+    flash(setMsg, `Cloned ${r.data.cloned} players.`); setCloneTo('')
+  }
   async function clone() {
     if (!cloneTo) return
-    try {
-      const r = await api.post(`/rosters/${teamId}/clone-to/${cloneTo}`)
-      flash(setMsg, `Cloned ${r.data.cloned} players.`); setCloneTo('')
-    } catch (e: any) { flash(setErr, e.response?.data?.detail || 'Clone failed.') }
+    setErr('')
+    try { await doClone() } catch (e: any) { onActionError(e, 'Clone failed.', doClone) }
   }
 
   const currentTeam = teams.find(t => t.id === teamId)
@@ -114,6 +142,17 @@ export default function RosterPage() {
 
           {msg && <div className="mb-4 text-sm bg-brand-500/10 border border-brand-500/30 text-brand-300 rounded p-2">{msg}</div>}
           {err && <div className="mb-4 text-sm bg-red-400/10 border border-red-400/30 text-red-400 rounded p-2">{err}</div>}
+
+          {consent && (
+            <div className="card mb-6 border border-brand-500/40">
+              <h3 className="font-semibold mb-2">Confirm student-data consent</h3>
+              <p className="text-sm text-gray-300 mb-4">{consent.attestation}</p>
+              <div className="flex gap-2">
+                <button onClick={attestConsent} className="btn-primary">I confirm &amp; continue</button>
+                <button onClick={() => setConsent(null)} className="btn-secondary">Cancel</button>
+              </div>
+            </div>
+          )}
 
           {teams.length === 0 ? (
             <div className="card text-center text-gray-400">

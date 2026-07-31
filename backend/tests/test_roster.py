@@ -58,6 +58,9 @@ class _Result:
     def scalar_one_or_none(self):
         return self.value
 
+    def scalar_one(self):
+        return self.value
+
     def scalars(self):
         items = self.value if isinstance(self.value, list) else ([] if self.value is None else [self.value])
         return SimpleNamespace(all=lambda: items)
@@ -86,11 +89,22 @@ def test_list_roster_team_not_found_404():
 
 def test_add_player_duplicate_jersey_409():
     db = _FakeDB([_Result(SimpleNamespace(id="t1")),          # team lookup
+                  _Result(1),                                  # student-data consent present
                   _Result(SimpleNamespace(id="p_existing"))])  # jersey already present
     body = roster_router.PlayerIn(jersey_number="07", first_name="Sam")
     with pytest.raises(HTTPException) as exc:
         asyncio.run(roster_router.add_player("t1", body, user=_user(), db=db))
     assert exc.value.status_code == 409
+
+
+def test_add_player_requires_student_consent_403():
+    # Team exists, but the org has NOT attested student-data consent (count 0) -> 403.
+    db = _FakeDB([_Result(SimpleNamespace(id="t1")), _Result(0)])
+    body = roster_router.PlayerIn(jersey_number="7", first_name="Sam")
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(roster_router.add_player("t1", body, user=_user(), db=db))
+    assert exc.value.status_code == 403
+    assert exc.value.detail["code"] == "student_consent_required"
 
 
 def test_resolve_game_maps_jerseys_to_players():

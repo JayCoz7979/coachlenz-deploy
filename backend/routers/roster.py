@@ -21,6 +21,7 @@ from backend.services.auth import get_current_user, require_permission
 from backend.services.permissions import CAN_MANAGE_ROSTER
 from backend.services.roster import parse_roster_csv, resolve_jersey, normalize_jersey
 from backend.services.player_stats import aggregate_player_stats, top_play_types
+from backend.services.legal import assert_student_consent
 
 # Managing the roster (add/edit/remove/upload/clone) requires the can_manage_roster
 # capability (head coach, coordinators, owner). Reads stay open to any org member.
@@ -120,6 +121,7 @@ async def roster_stats(team_id: str, user: User = Depends(get_current_user), db:
 @router.post("/{team_id}/players")
 async def add_player(team_id: str, body: PlayerIn, user: User = _require_manage, db: AsyncSession = Depends(get_db)):
     await _team_or_404(team_id, user, db)
+    await assert_student_consent(db, user.organization_id)
     jersey = normalize_jersey(body.jersey_number)
     if not jersey:
         raise HTTPException(status_code=422, detail="Jersey number is required.")
@@ -142,6 +144,7 @@ async def upload_roster_csv(team_id: str, body: CsvIn, user: User = _require_man
     position, grade_year — common header spellings accepted). Existing jerseys are
     updated in place; new ones are inserted."""
     await _team_or_404(team_id, user, db)
+    await assert_student_consent(db, user.organization_id)
     try:
         parsed = parse_roster_csv(body.csv)
     except ValueError as e:
@@ -200,6 +203,7 @@ async def clone_roster(team_id: str, target_team_id: str, user: User = _require_
     on the target are left untouched."""
     await _team_or_404(team_id, user, db)
     await _team_or_404(target_team_id, user, db)
+    await assert_student_consent(db, user.organization_id)
     source = await _roster(team_id, user.organization_id, db)
     existing = {p.jersey_number for p in await _roster(target_team_id, user.organization_id, db)}
     cloned = 0
