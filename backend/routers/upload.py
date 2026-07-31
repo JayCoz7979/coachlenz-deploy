@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
@@ -12,6 +12,7 @@ from backend.models.game import Game
 from backend.models.job import Job
 from backend.services.auth import get_current_user, get_current_org
 from backend.services.r2 import generate_presigned_upload_url, upload_fileobj, safe_object_name
+from backend.ratelimit import limiter
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
@@ -38,8 +39,10 @@ async def presign_upload(body: UploadRequest, user: User = Depends(get_current_u
     return {"upload_url": presigned["upload_url"], "key": key}
 
 @router.post("/file")
+@limiter.limit("20/minute")
 async def upload_file_proxy(
     game_id: str,
+    request: Request,
     file: UploadFile = File(...),
     user: User = Depends(get_current_user),
     org: Organization = Depends(get_current_org),

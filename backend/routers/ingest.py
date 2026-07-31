@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 from pydantic import BaseModel, HttpUrl
@@ -13,6 +13,7 @@ from backend.services.auth import get_current_user, get_current_org
 from backend.services.trial import can_upload_game, is_trial_active
 from backend.services.sports import assert_sport_allowed
 from backend.services.entitlements import assert_ready_to_analyze
+from backend.ratelimit import limiter
 from backend.utils.url_guard import validate_public_http_url
 
 router = APIRouter(prefix="/ingest", tags=["ingest"])
@@ -63,8 +64,10 @@ class IngestURLRequest(BaseModel):
 
 
 @router.post("/url")
+@limiter.limit("20/minute")
 async def ingest_from_url(
     body: IngestURLRequest,
+    request: Request,
     user: User = Depends(get_current_user),
     org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db),

@@ -1,5 +1,4 @@
 import asyncio
-import sentry_sdk
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
@@ -25,8 +24,8 @@ from .workers.worker_referrals import ReferralsWorker
 from .workers.worker_reports import ReportsWorker
 from .workers.worker_survey import SurveyWorker
 
-if settings.SENTRY_DSN:
-    sentry_sdk.init(dsn=settings.SENTRY_DSN, traces_sample_rate=0.1, environment=settings.ENVIRONMENT)
+from .observability import init_sentry
+init_sentry("api")
 
 app = FastAPI(
     title="CoachLenz API",
