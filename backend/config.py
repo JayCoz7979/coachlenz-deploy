@@ -87,6 +87,14 @@ class Settings(BaseSettings):
     # Admin
     ADMIN_PASSWORD: str = "ChangeMeNow!"
 
+    # Default monthly analysis cap for a coach with NO explicit CoachUsageLimit row
+    # (the base coach plan). Before this, an absent row meant UNLIMITED deep-Opus
+    # runs — a leaked token or an eager coach could run up unbounded API cost. This
+    # is a generous backstop, not a normal-use limit; set high enough to never bite
+    # a real coach. An explicit CoachUsageLimit row (AD/district) still overrides it,
+    # and an explicit 0 there still means unlimited. 0 here disables the backstop.
+    DEFAULT_MONTHLY_ANALYSIS_LIMIT: int = 300
+
     # Row Level Security backstop (see docs/security/rls-backstop-plan.md).
     # When true, each transaction stamps the request/worker org into the Postgres
     # session GUC `app.org_id` so RLS policies can scope every query. DEFAULT FALSE:

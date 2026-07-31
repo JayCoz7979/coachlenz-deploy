@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, update, and_, or_
 from datetime import datetime, timedelta
+from backend.config import settings
 from backend.models.base import get_db
 from backend.models.user import User
 from backend.models.organization import Organization
@@ -327,20 +328,27 @@ async def trigger_auto_detect(
     if existing.scalar_one_or_none():
         return {"status": "already_queued", "game_id": game_id}
 
-    # Per-coach monthly cap (AD-set on athletic_dept/district plans). Absent row or
-    # 0 = unlimited. Counted per calendar month; blocks a NEW run at the cap.
+    # Per-coach monthly cap. An explicit CoachUsageLimit row (AD/district-set) wins,
+    # and an explicit 0 there means unlimited. With NO row (base coach plan) we fall
+    # back to a generous default backstop so an absent row is not UNLIMITED deep-Opus
+    # (the previous behavior — a cost/abuse hole). Counted per calendar month.
     lres = await db.execute(select(CoachUsageLimit).where(
         CoachUsageLimit.organization_id == user.organization_id,
         CoachUsageLimit.user_id == user.id))
     limit_row = lres.scalar_one_or_none()
-    if limit_row and limit_row.monthly_run_limit > 0:
+    effective_limit = (
+        limit_row.monthly_run_limit if limit_row is not None
+        else settings.DEFAULT_MONTHLY_ANALYSIS_LIMIT
+    )
+    if effective_limit and effective_limit > 0:
         cres = await db.execute(select(func.count()).select_from(AnalysisUsage).where(
             AnalysisUsage.user_id == user.id,
             AnalysisUsage.created_at >= month_start(datetime.utcnow())))
-        if over_limit(cres.scalar_one() or 0, limit_row.monthly_run_limit):
+        if over_limit(cres.scalar_one() or 0, effective_limit):
+            ask = ("Ask your athletic director to raise your limit."
+                   if limit_row is not None else "Upgrade your plan to run more.")
             raise HTTPException(status_code=402, detail=(
-                f"You've used your {limit_row.monthly_run_limit} analyses for this month. "
-                f"Ask your athletic director to raise your limit."))
+                f"You've used your {effective_limit} analyses for this month. {ask}"))
 
     job = Job(
         organization_id=user.organization_id,

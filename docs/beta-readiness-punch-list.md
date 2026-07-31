@@ -58,7 +58,13 @@ built and small; it is NOT the real blocker.
   attorney-finalize the ToS/Privacy drafts before onboarding any school.
 - Size: medium code + your lawyer. Blocker for taking minors' film + money.
 
-### 3. Worker failures are invisible (you can't see what breaks)
+### 3. Worker failures are invisible (you can't see what breaks) — FIXED (PR pending)
+> Resolved by `backend/observability.py`: `init_sentry()` is now called in
+> `BaseWorker.run_forever()` (every worker process) as well as the API, and the
+> worker error paths (job handle, process loop, dead-letter, watchdog) explicitly
+> `capture()` to Sentry. Still a no-op without `SENTRY_DSN` — set it on the worker
+> services. The `error_logs` table remains a separate follow-up.
+
 - Sentry is initialized only in the API process (`main.py:28`). The dedicated
   worker services (`python -m backend.workers.worker_*`) never import it — `grep
   sentry backend/workers/` is empty. The heaviest, most crash-prone work (film
@@ -68,7 +74,14 @@ built and small; it is NOT the real blocker.
 - Fix: init Sentry in the worker entrypoint (or add the `error_logs` write path).
 - Size: small. Without it you are flying blind on paid workloads.
 
-### 4. Unbounded Opus spend per beta user
+### 4. Unbounded Opus spend per beta user — FIXED (PR pending)
+> Resolved: a generous default monthly analysis cap
+> (`settings.DEFAULT_MONTHLY_ANALYSIS_LIMIT=300`) now applies when a coach has no
+> explicit `CoachUsageLimit` row, so an absent row is no longer unlimited (explicit
+> rows, incl. 0=unlimited, still win). Plus slowapi rate limits on the game-creation
+> velocity vector: `/ingest/url` and `/upload/file` (20/min). The auto-detect
+> trigger is bounded by the monthly cap + the existing `already_queued` dedup.
+
 - The slowapi limiter is imported **only in `auth.py`**. `/games/{id}/auto-detect`,
   `/ingest/url`, `/upload/file`, and scout endpoints have no per-IP/per-org rate
   limit. The base "coach" plan has no `CoachUsageLimit` row, so the monthly cap

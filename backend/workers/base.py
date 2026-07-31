@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 from backend.models.base import AsyncSessionLocal
 from backend.models.job import Job
+from backend.observability import init_sentry, capture
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,9 @@ class BaseWorker:
     stuck_threshold_minutes: int = STUCK_THRESHOLD_MINUTES
 
     async def run_forever(self):
+        # Workers run as their own processes and never import main.py, so this is
+        # where their Sentry gets initialized (no-op in-API / without SENTRY_DSN).
+        init_sentry(f"worker:{self.job_type}")
         logger.info(f"[{self.job_type}] worker starting")
         asyncio.create_task(self._watchdog())
         while True:
@@ -34,6 +38,7 @@ class BaseWorker:
                 await self._process_one()
             except Exception as e:
                 logger.error(f"[{self.job_type}] error: {e}")
+                capture(e, worker=self.job_type, phase="process_loop")
             await asyncio.sleep(5)
 
     async def _process_one(self):
@@ -65,6 +70,7 @@ class BaseWorker:
                     await self.on_dead_letter(dead_payload, dead_reason)
                 except Exception as e:
                     logger.error(f"[{self.job_type}] on_dead_letter failed: {e}")
+                    capture(e, worker=self.job_type, phase="on_dead_letter")
                 return
             job.status = "running"
             job.locked_at = datetime.utcnow()
@@ -103,6 +109,7 @@ class BaseWorker:
                 await db.commit()
         except Exception as e:
             logger.error(f"[{self.job_type}] job {job_id} failed: {e}")
+            capture(e, worker=self.job_type, job_id=str(job_id), phase="handle")
             async with AsyncSessionLocal() as db:
                 await db.execute(update(Job).where(Job.id == job_id).values(status="error", error_message=str(e), locked_at=None))
                 await db.commit()
@@ -125,6 +132,7 @@ class BaseWorker:
                     await db.commit()
             except Exception as e:
                 logger.error(f"[{self.job_type}] watchdog error: {e}")
+                capture(e, worker=self.job_type, phase="watchdog")
             await asyncio.sleep(60)
 
     async def on_dead_letter(self, payload: dict, reason: str) -> None:
