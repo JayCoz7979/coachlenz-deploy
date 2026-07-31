@@ -40,6 +40,33 @@ def test_zone_confidence_none_when_absent():
     assert _shot_zone_map(shots)["zones"]["Wing 3"]["confidence"] is None
 
 
+# ── F) priority take-away flag (hot + high-volume) ───────────────────────────
+def test_priority_flags_hot_high_volume_zone():
+    # Corner 3: 8 shots, 6 made threes -> RED eFG, 100% of shots -> priority.
+    shots = [_shot("Corner 3", True) for _ in range(6)] + [_shot("Corner 3", False) for _ in range(2)]
+    szm = _shot_zone_map(shots)
+    assert szm["zones"]["Corner 3"]["band"] == "red"
+    assert szm["zones"]["Corner 3"]["priority_takeaway"] is True
+    assert "Corner 3" in szm["priority_takeaways"]
+
+
+def test_hot_but_low_volume_zone_is_not_priority():
+    # Corner 3 is hot but only ~9% of shots; the paint carries the volume.
+    shots = ([_shot("Corner 3", True), _shot("Corner 3", True)]
+             + [_shot("Restricted Area", i % 2 == 0) for i in range(20)])
+    szm = _shot_zone_map(shots)
+    assert "Corner 3" not in szm["priority_takeaways"]     # < 15% share
+    assert "Restricted Area" not in szm["priority_takeaways"]  # eFG 50 -> not RED
+
+
+def test_low_confidence_hot_zone_is_not_priority():
+    shots = ([_shot("Corner 3", True, conf=0.4) for _ in range(6)]
+             + [_shot("Corner 3", False, conf=0.4) for _ in range(2)])
+    szm = _shot_zone_map(shots)
+    assert szm["zones"]["Corner 3"]["band"] == "orange"    # RED downgraded on low conf
+    assert "Corner 3" not in szm["priority_takeaways"]
+
+
 # ── B) plainify ──────────────────────────────────────────────────────────────
 def test_pct_to_words_bands():
     assert P.pct_to_words(78) == "almost always"

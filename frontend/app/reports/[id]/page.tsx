@@ -264,6 +264,35 @@ export default function ReportPage() {
     return `<section><h2>Field Heat Maps — Where They Attack</h2><div style="display:flex;gap:24px;flex-wrap:wrap">${passTable}${gapTable}</div>${sideLine}<div style="font-size:10px;color:#888;margin-top:6px">Darker green = more volume.</div></section>`
   }
 
+  // Print/PDF basketball shot chart (light theme) — parity with the football
+  // field map above, so the PDF carries the same "where they score, and how well"
+  // visual as the screen. eFG-banded, with priority take-aways flagged.
+  const buildBasketballHeatMapHtml = (s: any): string => {
+    const szm = s?.shot_zone_map || {}
+    const zones: Record<string, any> = szm.zones || {}
+    const rows = Object.entries(zones).sort((a: any, b: any) => (b[1].attempts || 0) - (a[1].attempts || 0))
+    if (!rows.length) {
+      return `<section><h2>Shot Chart — Where They Score</h2><p style="color:#555;font-style:italic">No readable shot-zone detail on this film yet — usually a thin or low-confidence breakdown. Run a full or DEEP breakdown of the whole game and the shot chart fills in.</p></section>`
+    }
+    const maxAtt = Math.max(1, ...rows.map(([, z]: any) => z.attempts || 0))
+    const body = rows.map(([zone, z]: any) => {
+      const efg = z.efg_pct ?? z.fg_pct
+      const color = z.band_color || '#888'
+      const w = Math.max(6, ((z.attempts || 0) / maxAtt) * 100)
+      const pri = z.priority_takeaway ? '🚨 ' : ''
+      return `<tr>
+        <td style="font-size:11px;color:#222;text-align:right;padding:3px 8px;white-space:nowrap;font-weight:${z.priority_takeaway ? 700 : 400}">${pri}${zone}</td>
+        <td style="width:52%;padding:3px 4px"><div style="height:16px;background:#eee;border-radius:3px"><div style="height:100%;width:${w}%;background:${color};border-radius:3px"></div></div></td>
+        <td style="font-size:11px;color:#333;padding:3px 6px;white-space:nowrap">${z.made}/${z.attempts} &middot; ${z.pct_of_all_shots}% &middot; <b style="color:${color}">${efg}% eFG</b></td>
+      </tr>`
+    }).join('')
+    const pri: string[] = szm.priority_takeaways || []
+    const priLine = pri.length
+      ? `<div style="font-size:12px;color:#b23b2b;margin-top:8px">🚨 <b>Take these away:</b> ${pri.join(', ')} — they shoot here often and well.</div>`
+      : ''
+    return `<section><h2>Shot Chart — Where They Score</h2><table style="border-collapse:collapse;width:100%">${body}</table>${priLine}<div style="font-size:10px;color:#888;margin-top:6px">Bar length = shot volume &middot; color = eFG% (shot quality). Red = take it away, green = make them shoot it.</div></section>`
+  }
+
   // One branded print/PDF renderer for every format. Blocks are {heading, body}.
   const printDoc = (opts: {
     title: string; subtitle: string; blocks: Section[]; watermarked: boolean
@@ -318,7 +347,12 @@ export default function ReportPage() {
       blocks: report.sections || [],
       counts: [['Total Plays', s.total_plays], ['Offense', s.offense_plays],
                ['Defense', s.defense_plays], ['Special Teams', s.special_teams_plays]],
-      heatMapHtml: String(report.sport || '').toLowerCase().includes('football') ? buildHeatMapHtml(s) : '',
+      heatMapHtml: (() => {
+        const sport = String(report.sport || '').toLowerCase()
+        if (sport.includes('football')) return buildHeatMapHtml(s)
+        if (sport === 'basketball') return buildBasketballHeatMapHtml(s)
+        return ''
+      })(),
     })
   }
 
