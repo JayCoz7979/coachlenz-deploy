@@ -90,7 +90,14 @@ built and small; it is NOT the real blocker.
 - Fix: frequency rate-limit on the auto-detect trigger + a default coach cap.
 - Size: small.
 
-### 5. Player Grades page shows fabricated data
+### 5. Player Grades page shows fabricated data — FIXED (PR pending)
+> Resolved: `frontend/app/players/page.tsx` no longer ships `SAMPLE_PERFORMERS`,
+> `SAMPLE_BANDS`, or the invented "top 3%" AI insight. It now shows an honest empty
+> state (no data today, since `/players` 404s) that also sets the real expectation
+> (grading is opt-in and needs legible HD film), and a real-data path that derives
+> the grade distribution from actual grades. Also addresses the P1 "grades populate
+> automatically" oversell copy.
+
 - `frontend/app/players/page.tsx` renders hardcoded fake players ("Marcus J.",
   "Devon W.") and an **invented AI insight** ("top 3% in our library"). `GET
   /players` 404s (no backend), so it is always in preview, and the fake grade
