@@ -4,7 +4,9 @@
 v3.0 Master Build Prompt. This is the versioned source of truth for the platform
 constants so future build sessions audit against the real system, not a stale spec.
 
-**Reconciled against:** `coachlenz-deploy` @ `main` commit `4659b8e` on 2026-07-29.
+**Reconciled against:** `coachlenz-deploy` @ `main` commit `4659b8e` on 2026-07-29;
+**guardrail states re-reconciled** against `main` on 2026-07-31 after the v3.0 Engine
+build-out (PRs #118, #120, #121, #122, #123, #124). See "§1–§14 Guardrail States".
 **Authority:** Team Analysis (Jay + sports analysis consultant + software architect
 + CV/imaging consultant + human movement science consultant).
 
@@ -129,6 +131,36 @@ UATP v1.3 (mandatory on all analysis runs)                          [VERIFIED]
 
 ---
 
+## §1–§14 Guardrail States (reconciled 2026-07-31)
+
+The "AI Analysis Engine — Master System Prompt v3.0" opens every section with a
+GUARDRAIL STATE block (STATE 1 = built/skip, STATE 2 = enhance, STATE 3 = net-new).
+A 2026-07-31 audit found several of those STATEs wrong, and the Engine build-out
+then shipped every genuinely net-new item. **This table is the corrected guardrail
+set — the audit wins over the prompt.** Tags: **[BUILT]** shipped this cycle;
+**[CORRECTED]** premise was false; **[VERIFIED]** matches code.
+
+| § | v3.0 STATE | Actual | Correction / evidence |
+|---|---|---|---|
+| §1 Identity & Mission | 2 enhancer | 2 | **[CORRECTED]** Call chain is **FastAPI workers + Anthropic**, NOT "Supabase Edge Functions." Reports run `claude-sonnet-4-6` (config); detection is multi-model (sonnet + opus verify). |
+| §2 Evidence Standards | 2 enhancer | 2 | **[CORRECTED]** CV is **Claude multi-pass vision**, NOT "YOLO11 Pose + Modal.com" (that pipeline does not exist). Confidence scoring + sample floors are real. |
+| §3 Report Structure | 2 enhancer | 2 | **[CORRECTED]** `report_type` enum is `opponent \| self_scout \| custom` (`migrations/001`). The persona variants (coordinator/head_coach/position/player) are **export FORMATS** (`report_export.py`), NOT report_types. No `cheat_sheet`/`special_teams` report_type exists. |
+| §4 Credit Architecture | **1 built** | **[CORRECTED] does not exist** | There is **no credit wallet**. Billing = Stripe subscription tiers (`coach/athletic_dept/district`) + trial game limits + entitlements. The "$9.99/mo + $1/game credits" model and the "0.5-credit re-analysis charge" are fiction; re-analysis is the free `/reports/{id}/retry`. |
+| §5 Accuracy Safeguards | 2 enhancer | 2 **[VERIFIED]** | UATP live; single-camera blind-spot honesty surfaced; heat-map sample floors + "never RED on low confidence" enforced in `services/heatmap.py`. |
+| §6 Competitive Positioning | 1 prompt-only | 1 | Prompt-level, no code. |
+| §7 Output Quality Rules | 2 enhancer | 2 | **[CORRECTED]** "consume credits only after processing" is moot — no credits. Reports generate only from processed events. |
+| §8 Sport Expansion | 1 roadmap | 1 **[CORRECTED]** | **3 live** (football, flag_football, basketball), not 7. volleyball/baseball are stubs. See SPORTS above. |
+| §9 FERPA Governance | 1 built | 1 **[VERIFIED/partial]** | COPPA/FERPA consent gating live (`services/legal.py`, migration 032). Per-report FERPA notice ships on the player one-pager (`report_export.CONFIDENTIAL_NOTE`); **[CONFIRM]** it also prepends the full coach report output. |
+| §10 Non-Negotiable Promise | 2 prompt-only | 2 | Prompt-level self-check. |
+| §11 Player One-Pager | **3 net-new** | **[BUILT] #121** | Shipped as a **new export format `player_onepager`** (NOT a new report_type), templated from structured data + `services/plainify.py` enforcement (no LLM). Existing `player` bulletins untouched. |
+| §12 Heat Maps | **3 net-new** | **[BUILT, mostly] #121/#122/#123/#124** | eFG% + per-zone confidence on `shot_zone_map`; `services/heatmap.py` bands; Map 1 + priority-takeaway flag; basketball print map; Map 4 run/pass matrix (down×hash); Map 3 turnover **cluster** map (no court plot — single-cam film has no turnover coordinates). **NOT built (deliberate):** Map 2 individual player shot-spots, football spatial player-heat map. |
+| §13 AI Coach Chat | **3 net-new** | **[BUILT] #118** | Report-scoped chat on **FastAPI + Anthropic** (NOT "Supabase Edge Function"). Org-isolated, ready-gated, UATP-logged, deterministic no-fabrication fallback. |
+| §14 Learning Loop | **3 net-new** | **[BUILT] #120** | Tables `coach_label_corrections`, `account_learning_adjustments`, `label_quality_scores` (migration 034) + Manual Mode. **[CORRECTED]** the "0.5-credit re-analysis charge" and the "expert-labeler global de-identified queue" were NOT built (no credit system; cross-account write collides with the isolation rule). |
+
+**Standing-rules corrections** (in addition to NON-NEGOTIABLES above): STANDING RULE #12 "all AI as claude-sonnet-4-6, no other model strings" is **[CORRECTED]** — detection uses `claude-opus-4-8` for verify/grade. STANDING RULE #11 "always through Supabase Edge Functions or FastAPI" is **[CORRECTED]** — FastAPI workers only, no edge functions. STANDING RULE #10 "7 sports" is **[CORRECTED]** — 3 live.
+
+---
+
 ## Downstream track corrections forced by the constants
 
 These are the specific places in the v3.0 tracks that must change to stay consistent
@@ -155,5 +187,7 @@ stands as written in v3.0.
 3. **Report SLA + hero copy** — reconcile the "60 seconds" vs "5 minutes" conflict on the marketing site.
 4. **Postgres RLS** policies — confirm they exist for student/player tables (defense-in-depth beyond API-layer scoping).
 5. **Telegram/alert-email** routing — not wired in this repo; confirm where P1/P0 alerts actually go.
+6. **FERPA per-report notice** — confirmed on the player one-pager; confirm the full coach report output also prepends it (§9).
+7. **§12 remaining maps** — Map 2 (individual player shot-spots) and the football spatial player-heat map were deliberately deferred as diminishing-returns; build only on explicit request. See `docs/engine-s11-s12-rescope.md`.
 
-*Re-verify file:line before treating any [VERIFIED] item as final if `main` has moved past `4659b8e`.*
+*Re-verify file:line before treating any [VERIFIED] item as final if `main` has moved past `4659b8e` (constants) / the 2026-07-31 guardrail reconciliation.*
