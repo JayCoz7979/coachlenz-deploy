@@ -141,11 +141,14 @@ export default function OSShell({ title, children }: { title: string; children: 
       <div className="main">
         <div className="topbar">
           <div className="page-ttl">{title}</div>
+          {/* The org's plan sports. These are indicators, not a switcher (content
+              is not sport-scoped yet), so they are non-interactive spans rather
+              than buttons that look clickable but do nothing. */}
           <div className="sport-tabs">
             {shownTabs.map(s => (
-              <button key={s.key} className={'stab' + (s.key === activeSport ? ' active' : '')}>
+              <span key={s.key} className={'stab' + (s.key === activeSport ? ' active' : '')} style={{ cursor: 'default' }}>
                 {s.emoji} {s.label}
-              </button>
+              </span>
             ))}
           </div>
         </div>

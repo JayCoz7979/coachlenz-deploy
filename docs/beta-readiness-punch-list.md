@@ -173,8 +173,9 @@ built and small; it is NOT the real blocker.
   violation of the CGE green/gold "no blue/purple" brand rule.
 - **No public pricing page**: pricing lives only behind login at
   `/settings/billing`. A prospect cannot see prices before signing up.
-- **Sport tabs unwired** (`components/os/OSShell.tsx:144`): per-sport tabs render
-  with no onClick; `activeSport` is hardwired. Multi-sport orgs can't switch.
+- **Sport tabs unwired** (`components/os/OSShell.tsx:144`) — FIXED (PR pending).
+  `activeSport` drives no content (purely cosmetic), so rather than fake a switch,
+  the tabs are now non-interactive `<span>` indicators of the org's plan sports.
 
 ---
 
@@ -183,12 +184,14 @@ built and small; it is NOT the real blocker.
 - **Two design systems** coexist: `.clz` green/gold OSShell (dashboard/intel/
   reports/games) vs. legacy gray Tailwind (admin/ad/settings/billing) — a visible
   theme jump. (Intentional per the back-office rebuild, but reads unfinished.)
-- **Survey feature is dead code**: `routers/survey.py` is not mounted in `main.py`;
-  `worker_survey.handle()` is a no-op; nothing enqueues survey jobs. Remove or wire.
+- **Survey feature is dead code** — FIXED (PR pending). Removed the unmounted
+  router, the no-op worker (it polled uselessly), and the model; no other code
+  referenced them. DB tables left in place (dropping is destructive, not worth it).
 - `window.alert()` used for errors in admin/grades/reports. Replace with toasts.
-- Presigned **download** URLs default to 7 days (`config.py:27`) — shorten.
+- Presigned **download** URLs defaulted to 7 days — FIXED (PR pending): now 24h
+  (`R2_PRESIGNED_EXPIRY_SECONDS`); the app refreshes them, so a leaked URL is short-lived.
 - Access token survives logout up to 30 min (by design; documented).
-- Doc drift: `sports.py:37` says "2-game trial" but the limit is 1.
+- Doc drift: `sports.py` said "2-game trial" but the limit is 1 — FIXED (PR pending).
 - No cookie/consent banner (jurisdiction-dependent).
 
 ---

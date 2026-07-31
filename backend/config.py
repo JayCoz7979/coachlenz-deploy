@@ -34,7 +34,10 @@ class Settings(BaseSettings):
     R2_SECRET_ACCESS_KEY: str = ""
     R2_BUCKET_NAME: str = "coachlenz-film"
     R2_ENDPOINT_URL: str = ""
-    R2_PRESIGNED_EXPIRY_SECONDS: int = 604800  # 7 days
+    # User-facing film download/playback links. Kept short since a leaked URL is
+    # valid for its whole lifetime; the app refreshes presigned URLs as needed, so
+    # a viewing session never needs a week. (Detection uses its own 1-2h expiries.)
+    R2_PRESIGNED_EXPIRY_SECONDS: int = 86400  # 24 hours
 
     # Anthropic
     ANTHROPIC_API_KEY: str = ""

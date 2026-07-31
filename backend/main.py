@@ -23,7 +23,6 @@ from .workers.worker_ingest import IngestWorker
 from .workers.worker_packages import PackagesWorker
 from .workers.worker_referrals import ReferralsWorker
 from .workers.worker_reports import ReportsWorker
-from .workers.worker_survey import SurveyWorker
 
 from .observability import init_sentry
 init_sentry("api")
@@ -87,7 +86,7 @@ async def start_workers():
     mode = (settings.WORKERS_IN_API or "all").strip().lower()
     if mode == "none":
         return
-    for WorkerClass in [AiDetectWorker, AnalysisWorker, DripWorker, IngestWorker, PackagesWorker, ReferralsWorker, ReportsWorker, SurveyWorker]:
+    for WorkerClass in [AiDetectWorker, AnalysisWorker, DripWorker, IngestWorker, PackagesWorker, ReferralsWorker, ReportsWorker]:
         if mode == "light" and WorkerClass in _HEAVY_WORKERS:
             continue
         asyncio.create_task(WorkerClass().run_forever())
