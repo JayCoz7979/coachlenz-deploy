@@ -11,6 +11,7 @@ from backend.models.event import Event
 from backend.models.agent_log import AgentLog
 from backend.services.auth import get_current_user, get_current_org
 from backend.services.sports import assert_sport_allowed
+from backend.services.entitlements import assert_ready_to_analyze, assert_feature_allowed
 from backend.models.usage import AnalysisUsage, CoachUsageLimit
 from backend.services.usage import month_start, over_limit
 from backend.utils.timeutils import to_naive_utc
@@ -285,6 +286,12 @@ async def trigger_auto_detect(
     # must 403 here BEFORE a job is queued, or a single-sport plan could burn
     # deep-analysis cost on a sport it never paid for.
     assert_sport_allowed(org, game.sport or "football")
+
+    # Entitlements: an active trial must be verified + sport-locked before it can
+    # burn analysis, and deep/grade (the Opus-heavy paths) are paid-only.
+    assert_ready_to_analyze(org, user)
+    if mode == "deep" or grade:
+        assert_feature_allowed(org, "advanced_tendencies")
 
     if game.status not in ("ready", "analyzing"):
         raise HTTPException(

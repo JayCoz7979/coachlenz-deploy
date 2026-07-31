@@ -12,6 +12,7 @@ from backend.models.report import TendencyReport
 from backend.models.event import Event
 from backend.models.job import Job
 from backend.services.auth import get_current_user, get_current_org
+from backend.services.entitlements import assert_feature_allowed
 from backend.services.encryption import decrypt_json
 from backend.services.report_failures import report_status, CLIENT_FAILURE_MESSAGE
 from backend.utils.timeutils import to_naive_utc
@@ -45,6 +46,9 @@ async def list_reports(user: User = Depends(get_current_user), db: AsyncSession 
 
 @router.post("")
 async def create_report(body: ReportCreate, user: User = Depends(get_current_user), org: Organization = Depends(get_current_org), db: AsyncSession = Depends(get_db)):
+    # Entitlements: combining more than one game into a report is a paid feature.
+    if len(body.game_ids or []) > 1:
+        assert_feature_allowed(org, "multi_game_reports")
     report = TendencyReport(
         organization_id=org.id,
         team_id=body.team_id,

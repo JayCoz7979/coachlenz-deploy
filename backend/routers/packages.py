@@ -8,8 +8,10 @@ import uuid
 from slugify import slugify
 from backend.models.base import get_db
 from backend.models.user import User
+from backend.models.organization import Organization
 from backend.models.comms import FilmPackage
-from backend.services.auth import get_current_user
+from backend.services.auth import get_current_user, get_current_org
+from backend.services.entitlements import assert_feature_allowed
 from backend.utils.timeutils import to_naive_utc
 
 router = APIRouter(prefix="/packages", tags=["packages"])
@@ -27,7 +29,9 @@ async def list_packages(user: User = Depends(get_current_user), db: AsyncSession
     return [{"id": str(p.id), "title": p.title, "slug": p.slug, "share_token": p.share_token, "view_count": p.view_count, "expires_at": p.expires_at.isoformat() if p.expires_at else None} for p in packages]
 
 @router.post("")
-async def create_package(body: PackageCreate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def create_package(body: PackageCreate, user: User = Depends(get_current_user), org: Organization = Depends(get_current_org), db: AsyncSession = Depends(get_db)):
+    # Entitlements: film packages are a paid feature (locked on the free trial).
+    assert_feature_allowed(org, "film_packages")
     slug = f"{slugify(body.title)}-{str(uuid.uuid4())[:6]}"
     expires_at = datetime.utcnow() + timedelta(days=body.expires_in_days) if body.expires_in_days else None
     pkg = FilmPackage(
