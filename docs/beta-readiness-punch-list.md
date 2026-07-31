@@ -151,9 +151,11 @@ built and small; it is NOT the real blocker.
   Latent while Twilio stays configured.
 
 ### Ops
-- **`/health` is liveness-only** (`main.py:128`): never touches the DB, so an
-  instance with a dead Postgres or failed migration still reports healthy and
-  serves 500s. Add a `/readyz` that pings the DB.
+- **`/health` is liveness-only** (`main.py:128`) — FIXED (PR pending). Added
+  `GET /health/ready` (`backend/health.py` `db_ready()` pings the DB, 503 on
+  failure) and pointed `backend/railway.toml` `healthcheckPath` at it, so a deploy
+  whose Postgres is unreachable is not promoted to healthy. `/health` stays as the
+  cheap liveness endpoint.
 - **DB connection exhaustion risk**: `railway.toml` runs `uvicorn --workers 4`;
   `models/base.py:5` sets no `pool_size`/`max_overflow` -> ~15 conns/process ->
   ~60 from the API alone + worker services, against a small Postgres (~100 max).

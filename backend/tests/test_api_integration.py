@@ -364,6 +364,11 @@ async def run():
         # ── Entitlement gates fire on a real endpoint (trial vs paid) ──────
         await entitlement_gates(ac)
 
+        # ── Readiness probe pings the live DB (happy path) ─────────────────
+        from backend.health import db_ready
+        ok_ready, _ = await db_ready()
+        check("readiness: db_ready() true on live DB", ok_ready)
+
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         print("FAILURES:", ", ".join(FAIL))

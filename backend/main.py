@@ -128,4 +128,17 @@ app.include_router(legal.router)
 
 @app.get("/health")
 async def health():
+    # Liveness: the process is up and serving. Cheap, no dependencies.
     return {"status": "ok", "version": "1.0.0", "platform": "CoachLenz"}
+
+
+@app.get("/health/ready")
+async def health_ready(response: Response):
+    # Readiness: can we actually serve? Ping the DB. 503 if not, so Railway does
+    # not promote a deploy whose Postgres is unreachable (it would serve 500s).
+    from .health import db_ready
+    ok, err = await db_ready()
+    if ok:
+        return {"status": "ready", "db": "ok"}
+    response.status_code = 503
+    return {"status": "not_ready", "db": "error", "detail": err}
