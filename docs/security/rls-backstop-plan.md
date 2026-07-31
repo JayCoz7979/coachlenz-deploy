@@ -46,10 +46,12 @@ never via an auto-applied migration alone.
 
 ## Staged rollout (each stage reversible; validate on a Railway DB branch first)
 
-- **Stage 0 — SHIPPED.** Cross-org regression sweep locks the app-layer guarantee
-  so any future code change that breaks isolation fails CI.
-- **Stage 1.** Create role `app_rls` + grants via an **additive, inert** migration
-  (no login in prod yet, no RLS yet). Safe to auto-apply.
+- **Stage 0 — SHIPPED (PR #106).** Cross-org regression sweep locks the app-layer
+  guarantee so any future code change that breaks isolation fails CI.
+- **Stage 1 — SHIPPED.** Role `app_rls` (`NOLOGIN NOSUPERUSER NOBYPASSRLS`) + DML
+  grants + default privileges, via the **additive, inert** migration
+  `031_rls_app_role.sql` (no login, no RLS yet). Verified idempotent and prod-safe
+  by applying it inside a rolled-back transaction. Safe to auto-apply.
 - **Stage 2.** Add the GUC layer: set `app.org_id` in the request-scoped
   `get_db` path once auth resolves the org, plus a `set_org_context(org_id)` helper
   for workers. Still no RLS. Assert/log in staging that `app.org_id` is set on every
@@ -61,6 +63,29 @@ never via an auto-applied migration alone.
 - **Stage 4.** Cut over **one low-risk service's** `DATABASE_URL` to `app_rls` in
   prod, watch logs/health, then roll the rest one at a time. Keep env-revert as an
   instant rollback.
+
+## Mechanism proof (backend/tests/rls_poc.py, run 2026-07-30)
+
+RLS is a Postgres feature; CI runs on SQLite and cannot test it. `rls_poc.py`
+proves the mechanism against the real production Postgres, in a throwaway schema
+with a real `NOSUPERUSER` role, cleaning up after itself (touches no app tables).
+All six checks pass:
+
+1. A superuser connection **bypasses** RLS (sees all rows) — this is why prod is
+   inert until the `DATABASE_URL` cutover.
+2. Restricted role, **no** `app.org_id` set → **0 rows** (fail-closed).
+3. `app.org_id` = org A → only org A's rows.
+4. `app.org_id` = org B → only org B's rows.
+5. A cross-org `INSERT` is **rejected** by the policy `WITH CHECK` (SQLSTATE
+   42501, reported as insufficient-privilege).
+6. A same-org `INSERT` is allowed.
+
+**Tenant-table inventory:** 27 tables carry `organization_id` and will need a
+policy in Stage 3: agent_logs, analysis_usage, audit_logs, clip_assignments,
+clips, coach_moves, coach_profiles, coach_usage_limits, device_fingerprints,
+events, film_packages, games, grade_annotations, jobs, messages, notifications,
+playlists, referral_codes, risk_flags, roster_players, source_connections,
+survey_responses, tags, teams, tendency_reports, threads, users.
 
 ## Policy shape (reference)
 
