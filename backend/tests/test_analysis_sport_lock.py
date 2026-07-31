@@ -51,8 +51,10 @@ def _game(sport, status="ready"):
 
 
 def _org(chosen_sports):
+    # A paid (non-trial) org — these tests exercise the SPORT lock, so the trial
+    # entitlement gate (assert_ready_to_analyze) must no-op. is_trial=False makes it.
     return SimpleNamespace(id="org1", chosen_sports=chosen_sports,
-                           subscription_tier="starter")
+                           subscription_tier="starter", is_trial=False, trial_ends_at=None)
 
 
 def _user():
