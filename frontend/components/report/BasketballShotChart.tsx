@@ -59,7 +59,7 @@ export default function BasketballShotChart({ summary }: { summary: any }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', margin: '12px 0 6px', fontSize: 10, color: '#9a9a8e' }}>
             <span><b style={{ color: '#d8d8cc' }}>Bar length</b> = shot volume</span>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              <b style={{ color: '#d8d8cc' }}>Color</b> = FG%
+              <b style={{ color: '#d8d8cc' }}>Color</b> = eFG% (shot quality)
               <span style={{ display: 'inline-block', width: 60, height: 8, borderRadius: 2, background: 'linear-gradient(90deg,#b45c5c,#C9A84C,#2d8c40)' }} />
               <span>cold → hot</span>
             </span>
@@ -70,24 +70,37 @@ export default function BasketballShotChart({ summary }: { summary: any }) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {zoneRows.map(([zone, z]: any) => {
               const w = (z.attempts || 0) / maxAtt
-              const color = _quality((z.fg_pct || 0) / 100)
+              // eFG band color from the backend (single source w/ print); old reports
+              // without a band fall back to the FG% ramp.
+              const efg = z.efg_pct ?? z.fg_pct
+              const color = z.band_color || _quality((efg || 0) / 100)
+              const priority = !!z.priority_takeaway
               return (
                 <div key={zone} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <div style={{ width: 140, flexShrink: 0, fontSize: 11, color: '#d8d8cc', textAlign: 'right' }}>{zone}</div>
+                  <div style={{ width: 140, flexShrink: 0, fontSize: 11, color: priority ? '#f0c0b0' : '#d8d8cc', textAlign: 'right', fontWeight: priority ? 700 : 400 }}>
+                    {priority ? '🚨 ' : ''}{zone}
+                  </div>
                   <div style={{ flex: 1, height: 20, background: 'rgba(255,255,255,0.04)', borderRadius: 3, position: 'relative', overflow: 'hidden' }}>
                     <div style={{ height: '100%', width: `${Math.max(6, w * 100)}%`, background: color, borderRadius: 3 }} />
                   </div>
-                  {/* Numbers live outside the bar so they read cleanly over any fill color:
-                      volume (made/attempts + share of all shots) and FG%. */}
+                  {/* Numbers outside the bar so they read over any fill: volume
+                      (made/attempts + share) and eFG% (the banded metric). */}
                   <div style={{ width: 132, flexShrink: 0, display: 'flex', justifyContent: 'flex-end', gap: 8, fontSize: 11 }}>
                     <span style={{ color: '#d8d8cc' }}>{z.made}/{z.attempts}</span>
                     <span style={{ color: '#7a7a6e' }}>{z.pct_of_all_shots}%</span>
-                    <span style={{ width: 42, textAlign: 'right', fontWeight: 700, color }}>{z.fg_pct}%</span>
+                    <span style={{ width: 46, textAlign: 'right', fontWeight: 700, color }} title="effective FG%">{efg}% eFG</span>
                   </div>
                 </div>
               )
             })}
           </div>
+
+          {/* Priority take-aways: hot AND high-volume zones — where to load the defense. */}
+          {Array.isArray(szm.priority_takeaways) && szm.priority_takeaways.length > 0 && (
+            <div style={{ marginTop: 14, fontSize: 12, color: '#f0c0b0', background: 'rgba(192,57,43,0.12)', border: '1px solid rgba(192,57,43,0.35)', borderRadius: 6, padding: '8px 12px' }}>
+              🚨 <b>Take these away:</b> {szm.priority_takeaways.join(', ')} — they shoot here often and well.
+            </div>
+          )}
 
           {/* Callouts */}
           <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', marginTop: 14, fontSize: 11, color: '#b8b8aa' }}>

@@ -118,6 +118,11 @@ def _shooting_overview(shots) -> Dict[str, Any]:
     }
 
 
+# A zone must take at least this share of all shots to count as HIGH volume for a
+# priority take-away flag (§12 F).
+PRIORITY_MIN_SHARE_PCT = 15.0
+
+
 def _zone_confidence(zshots):
     """Mean detection confidence across a zone's shots, or None if none carried one."""
     vals = [_x(e, "confidence") for e in zshots]
@@ -157,8 +162,25 @@ def _shot_zone_map(shots) -> Dict[str, Any]:
     if not zone_map:
         return {}
 
+    # §12 F — a priority take-away is a zone the opponent both shoots WELL (RED eFG
+    # band) and shoots OFTEN (high share). Band + color come from the shared band
+    # logic so screen and print agree; the RED->downgrade-on-low-confidence rule is
+    # applied there, so a shaky read is never flagged as a priority.
+    from backend.services import heatmap as _hm
+    priority_takeaways = []
+    for zone, z in zone_map.items():
+        band = _hm.efg_band_coach(z["efg_pct"], z["confidence"])
+        z["band"] = band["band"]
+        z["band_color"] = band["color"]
+        z["band_label"] = band["label"]
+        z["priority_takeaway"] = (band["band"] == "red"
+                                  and z["pct_of_all_shots"] >= PRIORITY_MIN_SHARE_PCT)
+        if z["priority_takeaway"]:
+            priority_takeaways.append(zone)
+
     return {
         "zones": zone_map,
+        "priority_takeaways": priority_takeaways,
         "hottest_zone": max(zone_map, key=lambda z: zone_map[z]["fg_pct"]),
         "most_frequent_zone": max(zone_map, key=lambda z: zone_map[z]["attempts"]),
         "left_side_pct": round(sum(v["attempts"] for k, v in zone_map.items() if "Left" in k) / len(shots) * 100, 1),
