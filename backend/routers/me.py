@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, func
 from pydantic import BaseModel
@@ -8,7 +8,7 @@ from backend.models.base import get_db
 from backend.models.user import User
 from backend.models.organization import Organization
 from backend.models.usage import AnalysisUsage, CoachUsageLimit
-from backend.services.auth import get_current_user, get_current_org, hash_password, verify_password
+from backend.services.auth import get_current_user, get_current_org
 from backend.services.trial import is_trial_active, get_trial_days_remaining
 from backend.services.permissions import role_permissions
 from backend.services.usage import month_start
@@ -68,14 +68,7 @@ async def update_me(body: UpdateMeRequest, user: User = Depends(get_current_user
         await db.commit()
     return {"ok": True}
 
-class ChangePasswordRequest(BaseModel):
-    current_password: str
-    new_password: str
-
-@router.post("/change-password")
-async def change_password(body: ChangePasswordRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    if not verify_password(body.current_password, user.hashed_password):
-        raise HTTPException(status_code=400, detail="Current password is incorrect")
-    await db.execute(update(User).where(User.id == user.id).values(hashed_password=hash_password(body.new_password)))
-    await db.commit()
-    return {"ok": True}
+# Password change lives at the single hardened endpoint POST /auth/change-password
+# (validates length, rejects an unchanged password, and revokes other sessions by
+# bumping token_version). A weaker duplicate that used to live here was removed to
+# avoid two divergent password-change paths.

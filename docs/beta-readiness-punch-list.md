@@ -143,9 +143,10 @@ built and small; it is NOT the real blocker.
   **disabled** (`PLAY_GRADE_ENABLED=False`). Reword to match reality.
 
 ### Auth / API hygiene
-- **Duplicate weak `/me/change-password`** (`me.py:75`): unlike `auth.py:216` it
-  does NOT bump `token_version` (no session revocation), skips length/difference
-  checks. Retire it; frontend already uses the strong one.
+- **Duplicate weak `/me/change-password`** — FIXED (PR pending). Removed; the single
+  hardened `POST /auth/change-password` (length + reject-same + token_version bump to
+  revoke other sessions) is now the only path. The web app already used it; nothing
+  called the weak one.
 - **Onboarding phone step can trap** (`frontend/app/onboarding/page.tsx:82`): hard-
   jumps to phone even if Twilio is unset; 503 with no skip button until reload.
   Latent while Twilio stays configured.
