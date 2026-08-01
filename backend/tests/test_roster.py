@@ -126,3 +126,20 @@ def test_resolve_game_without_team_returns_hint():
     game = SimpleNamespace(id="g1", team_id=None, organization_id="o1")
     out = asyncio.run(roster_router.resolve_game_jerseys("g1", user=_user(), db=_FakeDB([_Result(game)])))
     assert out["links"] == [] and out["team_id"] is None
+
+
+# ── height / weight (migration 035) ──────────────────────────────────────────
+def test_player_out_includes_height_weight():
+    from backend.routers.roster import _player_out
+    p = SimpleNamespace(id="p1", jersey_number="7", first_name="Cam", last_name="N",
+                        position="QB", grade_year="2026", height="6'2\"", weight=245, is_active=True)
+    out = _player_out(p)
+    assert out["height"] == "6'2\"" and out["weight"] == 245
+
+
+def test_player_in_parses_and_coerces_weight():
+    from backend.routers.roster import PlayerIn
+    b = PlayerIn(jersey_number="7", first_name="Cam", height="6'2\"", weight=245)
+    assert b.height == "6'2\"" and b.weight == 245
+    assert PlayerIn(jersey_number="8", first_name="X", weight="185").weight == 185   # str -> int
+    assert PlayerIn(jersey_number="9", first_name="Y").weight is None                # optional

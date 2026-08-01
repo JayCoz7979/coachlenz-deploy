@@ -10,12 +10,12 @@ import { Plus, Trash2, Upload, Copy, Users, BarChart3 } from 'lucide-react'
 interface Team { id: string; name: string; sport: string; season: string | null }
 interface Player {
   id: string; jersey_number: string; first_name: string; last_name: string | null
-  position: string | null; grade_year: string | null
+  position: string | null; grade_year: string | null; height: string | null; weight: number | null
 }
 interface StatLine { plays: number; primary_plays: number; total_yards: number; games: number; by_play_type: Record<string, number> }
 interface StatRow extends Player { stats: StatLine; top_play_types: { play_type: string; count: number }[] }
 
-const BLANK = { jersey_number: '', first_name: '', last_name: '', position: '', grade_year: '' }
+const BLANK = { jersey_number: '', first_name: '', last_name: '', position: '', grade_year: '', height: '', weight: '' }
 
 export default function RosterPage() {
   const { user, isLoading, fetchMe } = useAuth()
@@ -83,7 +83,13 @@ export default function RosterPage() {
   }
 
   async function doAddPlayer() {
-    await api.post(`/rosters/${teamId}/players`, form)
+    // Omit empty height/weight; send weight as a number (backend expects int).
+    const payload = {
+      ...form,
+      height: form.height.trim() || undefined,
+      weight: form.weight.trim() && !isNaN(Number(form.weight)) ? Number(form.weight) : undefined,
+    }
+    await api.post(`/rosters/${teamId}/players`, payload)
     setForm({ ...BLANK }); setShowForm(false); await loadRoster(teamId)
   }
   async function addPlayer(e: React.FormEvent) {
@@ -176,6 +182,8 @@ export default function RosterPage() {
                     <div><label className="label">Last</label><input className="input" value={form.last_name} onChange={e => setForm(f => ({ ...f, last_name: e.target.value }))} /></div>
                     <div><label className="label">Pos</label><input className="input" value={form.position} onChange={e => setForm(f => ({ ...f, position: e.target.value }))} /></div>
                     <div><label className="label">Grade/Yr</label><input className="input" value={form.grade_year} onChange={e => setForm(f => ({ ...f, grade_year: e.target.value }))} /></div>
+                    <div><label className="label">Height</label><input className="input" value={form.height} onChange={e => setForm(f => ({ ...f, height: e.target.value }))} placeholder={`6'2"`} /></div>
+                    <div><label className="label">Weight</label><input className="input" type="number" min="0" value={form.weight} onChange={e => setForm(f => ({ ...f, weight: e.target.value }))} placeholder="lbs" /></div>
                   </div>
                   <div className="flex gap-2"><button type="submit" className="btn-primary">Add</button><button type="button" onClick={() => setShowForm(false)} className="btn-secondary">Cancel</button></div>
                 </form>
@@ -192,7 +200,7 @@ export default function RosterPage() {
               <div className="card">
                 <table className="w-full text-sm">
                   <thead><tr className="text-left text-gray-400 border-b border-gray-800">
-                    <th className="py-2 w-12">#</th><th className="py-2">Name</th><th className="py-2">Pos</th><th className="py-2">Grade/Yr</th><th></th>
+                    <th className="py-2 w-12">#</th><th className="py-2">Name</th><th className="py-2">Pos</th><th className="py-2">Grade/Yr</th><th className="py-2">Ht / Wt</th><th></th>
                   </tr></thead>
                   <tbody>
                     {players.map(p => (
@@ -201,6 +209,7 @@ export default function RosterPage() {
                         <td className="py-2">{p.first_name} {p.last_name || ''}</td>
                         <td className="py-2 text-gray-400">{p.position || '—'}</td>
                         <td className="py-2 text-gray-400">{p.grade_year || '—'}</td>
+                        <td className="py-2 text-gray-400">{[p.height, p.weight ? `${p.weight} lb` : null].filter(Boolean).join(' / ') || '—'}</td>
                         <td className="py-2 text-right">{canManage && <button onClick={() => removePlayer(p.id)} className="text-gray-500 hover:text-red-400"><Trash2 size={15} /></button>}</td>
                       </tr>
                     ))}

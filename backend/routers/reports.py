@@ -11,6 +11,7 @@ from backend.models.organization import Organization
 from backend.models.report import TendencyReport
 from backend.models.report_chat import ReportChatMessage
 from backend.models.event import Event
+from backend.models.game import Game
 from backend.models.job import Job
 from backend.services.auth import get_current_user, get_current_org
 from backend.services.entitlements import assert_feature_allowed
@@ -93,6 +94,23 @@ async def get_report(report_id: str, user: User = Depends(get_current_user), db:
                 report.prose_sections = recovered
                 await db.commit()
 
+    # Film resolution honesty (migration 021): the lowest-res source game caps how
+    # well jerseys and the down/distance score-bug can be read. Surface it so the UI
+    # can warn the coach a report is resolution-limited. None when unknown (older
+    # films predating resolution logging); we never warn without data.
+    film_min_height = None
+    low_res_film = False
+    if report.game_ids:
+        hres = await db.execute(select(Game.film_height).where(
+            Game.id.in_(report.game_ids),
+            Game.organization_id == user.organization_id,
+            Game.film_height.isnot(None),
+        ))
+        heights = [h for h in hres.scalars().all() if h]
+        if heights:
+            film_min_height = min(heights)
+            low_res_film = film_min_height < 480
+
     return {
         "id": str(report.id),
         "title": report.title,
@@ -102,6 +120,8 @@ async def get_report(report_id: str, user: User = Depends(get_current_user), db:
         "watermarked": report.watermarked,
         "sections": sections,
         "summary": summary,
+        "film_min_height": film_min_height,
+        "low_res_film": low_res_film,
         "generated_at": report.generated_at.isoformat() if report.generated_at else None,
         # status = ready | failed | generating. On failure the coach sees only a generic
         # message; the real reason (error_reason) stays server-side for the founder.

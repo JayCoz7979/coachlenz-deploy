@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from .base import Base
@@ -22,6 +22,8 @@ class RosterPlayer(Base):
     last_name = Column(String)
     position = Column(String)
     grade_year = Column(String)
+    height = Column(String)      # free-text, e.g. "6'2\""
+    weight = Column(Integer)     # pounds
     is_active = Column(Boolean, nullable=False, default=True)
     # Recruiting Board: opt-in per player. A shareable, no-login profile for college
     # scouts; token-gated with an expiry (30-day default, 90-day max).
