@@ -1370,6 +1370,88 @@ function AccuracyPanel({ gameId }: { gameId: string }) {
   )
 }
 
+// ── Situational CSV enrichment (football) ──────────────────────────────────
+// Single-camera film with no scoreboard leaves down/distance null even at 1080p.
+// This adds that context to the EXISTING detected plays from a CSV — download a
+// template, fill DOWN/DISTANCE from film, upload it back. No plays are created or
+// deleted, so the AI's formation/personnel/concept reads are untouched.
+function EnrichCsvPanel({ gameId, onDone }: { gameId: string; onDone: (msg: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<any>(null)
+  const [err, setErr] = useState('')
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const downloadTemplate = async () => {
+    setErr('')
+    try {
+      const res = await api.get(`/events/enrich-template?game_id=${gameId}`, { responseType: 'blob' })
+      const url = URL.createObjectURL(res.data)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `plays-enrich-${gameId.slice(0, 8)}.csv`
+      document.body.appendChild(a); a.click(); a.remove()
+      URL.revokeObjectURL(url)
+    } catch { setErr('Could not download the template.') }
+  }
+
+  const upload = async (file: File) => {
+    setBusy(true); setErr(''); setResult(null)
+    try {
+      const text = await file.text()
+      const res = await api.post('/events/enrich-csv', { game_id: gameId, csv_text: text })
+      setResult(res.data)
+      onDone(`Logged down/distance on ${res.data.plays_updated} plays (${res.data.plays_with_down}/${res.data.plays_total} now have it).`)
+    } catch (e: any) {
+      setErr(e.response?.data?.detail || 'Import failed — check the CSV and try again.')
+    } finally {
+      setBusy(false)
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }
+
+  return (
+    <div style={{ marginBottom: 10, border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6, overflow: 'hidden' }}>
+      <button onClick={() => setOpen(o => !o)}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', cursor: 'pointer',
+          background: 'rgba(255,255,255,0.03)', border: 'none', color: '#ede9df', fontSize: 11, fontWeight: 700, letterSpacing: '0.04em' }}>
+        <FileText size={12} style={{ color: '#C9A84C' }} />
+        ADD DOWN &amp; DISTANCE (CSV)
+        <span style={{ marginLeft: 'auto', color: '#7a7a6e' }}>{open ? '−' : '+'}</span>
+      </button>
+      {open && (
+        <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8, fontSize: 11, color: '#a8a396' }}>
+          <p style={{ lineHeight: 1.5 }}>
+            No scoreboard on the film? Add situational data to the detected plays without re-tagging.
+            Download the template, fill <span style={{ color: '#ede9df' }}>DOWN</span> and <span style={{ color: '#ede9df' }}>DISTANCE</span> from
+            the film (drive-starts and third downs are enough — the rest is inferred), and upload it back.
+          </p>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={downloadTemplate} className="btn-secondary" style={{ flex: 1, height: 32, fontSize: 11 }}>
+              1 · Download template
+            </button>
+            <button onClick={() => fileRef.current?.click()} disabled={busy} className="btn-secondary"
+              style={{ flex: 1, height: 32, fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              {busy ? <><Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> Loading…</> : '2 · Upload filled CSV'}
+            </button>
+            <input ref={fileRef} type="file" accept=".csv,text/csv" style={{ display: 'none' }}
+              onChange={e => { const f = e.target.files?.[0]; if (f) upload(f) }} />
+          </div>
+          {err && <div style={{ color: '#e07070' }}>{err}</div>}
+          {result && (
+            <div style={{ color: '#2d8c40' }}>
+              Updated {result.plays_updated} plays · {result.plays_with_down}/{result.plays_total} now have down/distance.
+              {result.unmatched_rows > 0 && <span style={{ color: '#e0a050' }}> · {result.unmatched_rows} rows didn’t match.</span>}
+              {result.row_errors?.length > 0 && <span style={{ color: '#e0a050' }}> · {result.row_errors.length} rows had errors.</span>}
+              <div style={{ color: '#7a7a6e', marginTop: 3 }}>Regenerate the report below to pick up the new tendencies.</div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────
 export default function GamePage() {
   const { id } = useParams<{ id: string }>()
@@ -1915,6 +1997,11 @@ export default function GamePage() {
             {/* Generate Report CTA */}
             {events.length >= 3 && (
               <div style={{ padding: 16, borderTop: '1px solid rgba(255,255,255,0.06)', flexShrink: 0 }}>
+                {/* Football: let a coach add down/distance to scoreboard-less film
+                    before generating, so the report gets situational tendencies. */}
+                {(game.sport === 'football' || game.sport === 'flag_football') && (
+                  <EnrichCsvPanel gameId={id} onDone={(msg) => { showToast(msg); api.get(`/events?game_id=${id}`).then(r => setEvents(r.data)).catch(() => {}) }} />
+                )}
                 {/* Opponent vs self-scout (football only — self-scout turns the same
                     engine on your own film: what you're giving away). */}
                 {(game.sport === 'football' || game.sport === 'flag_football') && (
