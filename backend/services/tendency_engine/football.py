@@ -1,4 +1,4 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from collections import Counter, defaultdict
 
 RUN_TYPES = {"run", "draw", "option", "qb sneak", "rush", "counter", "sweep", "power", "iso", "trap"}
@@ -181,54 +181,75 @@ def _hash_play_matrix(plays) -> Dict[str, Any]:
 # below it the cell shows its number but stays grey (honest small sample).
 _MATRIX_MIN_CELL = 4
 _DOWN_LABELS = {1: "1st", 2: "2nd", 3: "3rd", 4: "4th"}
-_HASH_ORDER = ["Left", "Middle", "Right", "L", "M", "R"]
+# Distance buckets for the run/pass matrix columns. Down-and-distance is the
+# classic tendency axis coaches want ("what do they call on 3rd-and-long"), and
+# `distance` is far more readable on single-camera film than `hash_position`
+# (which the wide fixed angle usually can't resolve). Fixed left->right order.
+_DISTANCE_ORDER = ["Short", "Medium", "Long"]
+
+
+def _distance_bucket(distance) -> Optional[str]:
+    """Map a to-go distance to Short (<=3, incl. goal-to-go) / Medium (4-6) /
+    Long (7+). None when distance is unreadable — that play is left out."""
+    if distance is None:
+        return None
+    try:
+        d = int(distance)
+    except (TypeError, ValueError):
+        return None
+    if d < 0:
+        return None
+    if d <= 3:
+        return "Short"
+    if d <= 6:
+        return "Medium"
+    return "Long"
 
 
 def _run_pass_matrix(plays) -> Dict[str, Any]:
-    """§12 Map 4 — run% by (down x hash). Each cell carries its run/pass counts and
-    a color band (run-heavy red -> balanced grey -> pass-heavy purple). Cells under
-    the sample floor keep their number but are flagged low_sample and left grey."""
+    """§12 Map 4 — run% by (down x distance bucket). Each cell carries its run/pass
+    counts and a color band (run-heavy red -> balanced grey -> pass-heavy purple).
+    Cells under the sample floor keep their number but are flagged low_sample and
+    left grey. Distance replaced hash as the column axis (hash is near-unreadable
+    on single-camera film); down+distance is both more available and more useful."""
     from backend.services import heatmap as _hm
 
     by = defaultdict(lambda: defaultdict(list))
-    downs, hashes = set(), []
+    downs, dists = set(), set()
     for e in plays:
-        if e.down in (1, 2, 3, 4) and e.hash_position and (_is_run(e) or _is_pass(e)):
-            by[e.down][e.hash_position].append(e)
+        if e.down in (1, 2, 3, 4) and (_is_run(e) or _is_pass(e)):
+            bucket = _distance_bucket(e.distance)
+            if not bucket:
+                continue
+            by[e.down][bucket].append(e)
             downs.add(e.down)
-            if e.hash_position not in hashes:
-                hashes.append(e.hash_position)
-    if not downs or not hashes:
+            dists.add(bucket)
+    if not downs or not dists:
         return {}
 
-    def _horder(h):
-        try:
-            return _HASH_ORDER.index(h)
-        except ValueError:
-            return len(_HASH_ORDER)
-
-    cols = sorted(hashes, key=lambda h: (_horder(h), h))
+    cols = [b for b in _DISTANCE_ORDER if b in dists]
     rows = [_DOWN_LABELS[d] for d in sorted(downs)]
     cells: Dict[str, Any] = {}
     for d in sorted(downs):
         label = _DOWN_LABELS[d]
         cells[label] = {}
-        for h in cols:
-            plist = by[d].get(h, [])
+        for b in cols:
+            plist = by[d].get(b, [])
             runs = sum(1 for p in plist if _is_run(p))
             passes = sum(1 for p in plist if _is_pass(p))
             total = runs + passes
             if total == 0:
-                cells[label][h] = {"total": 0, "run": 0, "pass": 0, "run_pct": None,
+                cells[label][b] = {"total": 0, "run": 0, "pass": 0, "run_pct": None,
                                    "low_sample": True, "band": "none", "color": "#eeeeee", "band_label": ""}
                 continue
             run_pct = round(runs / total * 100, 1)
             low = total < _MATRIX_MIN_CELL
             band = _hm.run_pass_band(None if low else run_pct)
-            cells[label][h] = {"total": total, "run": runs, "pass": passes, "run_pct": run_pct,
+            cells[label][b] = {"total": total, "run": runs, "pass": passes, "run_pct": run_pct,
                                "low_sample": low, "band": band["band"], "color": band["color"],
                                "band_label": band["label"]}
-    return {"rows": rows, "cols": cols, "cells": cells, "min_sample": _MATRIX_MIN_CELL}
+    return {"rows": rows, "cols": cols, "cells": cells, "min_sample": _MATRIX_MIN_CELL,
+            "axis": "distance"}
 
 
 def _motion_analysis(plays) -> Dict[str, Any]:
