@@ -57,6 +57,10 @@ export default function SharedReportPage() {
                 CoachLenz Trial report — upgrade at coachlenz.com to remove this banner.
               </div>
             )}
+            {/* §9 FERPA confidentiality notice */}
+            <div className="mb-5 text-xs text-gray-400 bg-white/5 border border-white/10 rounded p-2">
+              🔒 This report is confidential. It contains performance data covered under your institution&apos;s FERPA DPA with CoachLenz.
+            </div>
             <div className="space-y-5">
               {report.sections.map((s, i) => (
                 <div key={i} className="share-card card">
