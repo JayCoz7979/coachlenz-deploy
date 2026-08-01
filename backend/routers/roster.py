@@ -36,6 +36,8 @@ class PlayerIn(BaseModel):
     last_name: Optional[str] = None
     position: Optional[str] = None
     grade_year: Optional[str] = None
+    height: Optional[str] = None
+    weight: Optional[int] = None
 
 
 class PlayerPatch(BaseModel):
@@ -43,6 +45,8 @@ class PlayerPatch(BaseModel):
     last_name: Optional[str] = None
     position: Optional[str] = None
     grade_year: Optional[str] = None
+    height: Optional[str] = None
+    weight: Optional[int] = None
     is_active: Optional[bool] = None
 
 
@@ -53,6 +57,7 @@ class CsvIn(BaseModel):
 def _player_out(p: RosterPlayer) -> dict:
     return {"id": str(p.id), "jersey_number": p.jersey_number, "first_name": p.first_name,
             "last_name": p.last_name, "position": p.position, "grade_year": p.grade_year,
+            "height": getattr(p, "height", None), "weight": getattr(p, "weight", None),
             "is_active": p.is_active}
 
 
@@ -131,7 +136,8 @@ async def add_player(team_id: str, body: PlayerIn, user: User = _require_manage,
         raise HTTPException(status_code=409, detail=f"Jersey #{jersey} is already on this roster.")
     p = RosterPlayer(organization_id=user.organization_id, team_id=team_id, jersey_number=jersey,
                      first_name=body.first_name, last_name=body.last_name,
-                     position=body.position, grade_year=body.grade_year)
+                     position=body.position, grade_year=body.grade_year,
+                     height=body.height, weight=body.weight)
     db.add(p)
     await db.commit()
     await db.refresh(p)

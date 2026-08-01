@@ -27,6 +27,8 @@ interface Report {
   watermarked: boolean
   sections: Section[]
   summary: any
+  film_min_height?: number | null
+  low_res_film?: boolean
   generated_at: string | null
   status?: 'ready' | 'failed' | 'generating'
   message?: string | null
@@ -818,6 +820,22 @@ export default function ReportPage() {
             && report.summary.turnover_map && (
             <div style={{ marginBottom: 28 }}>
               <TurnoverMap summary={report.summary} />
+            </div>
+          )}
+
+          {/* Low-res film warning: the score-bug and jersey reads are capped by the
+              lowest-res source game. Only shown when we actually know it's low-res. */}
+          {report.low_res_film && (
+            <div style={{
+              background: 'rgba(224,160,80,0.08)', border: '1px dashed rgba(224,160,80,0.4)',
+              borderRadius: 6, padding: '12px 20px', marginBottom: 24,
+              display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, color: '#e0a050',
+            }}>
+              <AlertTriangle size={14} />
+              <span>
+                <b>Low-res film{report.film_min_height ? ` (${report.film_min_height}p)` : ''}.</b>{' '}
+                Jersey numbers and the down &amp; distance on the scoreboard are harder to read at this resolution, so some tags may be missing. Re-ingest this game in HD for sharper detection.
+              </span>
             </div>
           )}
 
