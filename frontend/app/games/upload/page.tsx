@@ -30,20 +30,15 @@ function detectSource(url: string): string {
   return 'generic'
 }
 
-// A Hudl "Download"/bulk-download email link wraps a pre-signed direct MP4 that
-// imports WITHOUT any Hudl login. Detect it so we can reassure the coach instead
-// of scaring them with the "needs a login" warning meant for watch-page links.
-function isHudlDirectDownloadLink(url: string): boolean {
-  if (!/hudl\.com/i.test(url)) return false
-  try {
-    const p = new URL(url)
-    const forward = p.searchParams.get('forward') || p.searchParams.get('url') || ''
-    const decoded = decodeURIComponent(forward)
-    return /vtemp\.hudl\.com|vg\.hudl\.com|\.mp4/i.test(decoded) ||
-      /notifications-tracking|bulkdownload|\/download/i.test(url)
-  } catch {
-    return /notifications-tracking|bulkdownload/i.test(url)
-  }
+// Authoritative link classification comes from the server (POST /ingest/check-url)
+// so the "no Hudl account needed" badge can never promise something the ingest
+// worker won't actually do. detectSource above is only for the instant label.
+type LinkCheck = {
+  source_type: string
+  label: string
+  status: 'no_login' | 'public_ok' | 'invalid'
+  hudl_direct: boolean
+  message: string
 }
 
 type Tab = 'upload' | 'url'
@@ -65,6 +60,7 @@ function UploadPageInner() {
   const [importing, setImporting] = useState(false)
   const [importJobId, setImportJobId] = useState<string | null>(null)
   const [importStatus, setImportStatus] = useState<string>('')
+  const [linkCheck, setLinkCheck] = useState<LinkCheck | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const [error, setError] = useState('')
@@ -100,6 +96,24 @@ function UploadPageInner() {
     }, 3000)
     return () => { if (pollRef.current) clearInterval(pollRef.current) }
   }, [importJobId])
+
+  // Ask the server how this exact link will be treated (debounced). The badge is
+  // driven ONLY by this authoritative answer, so it can't promise "no account
+  // needed" on a link the worker would actually send down the login path.
+  useEffect(() => {
+    const u = videoUrl.trim()
+    if (!u || !/^https?:\/\//i.test(u)) { setLinkCheck(null); return }
+    let cancelled = false
+    const t = setTimeout(async () => {
+      try {
+        const r = await api.post('/ingest/check-url', { url: u })
+        if (!cancelled) setLinkCheck(r.data)
+      } catch {
+        if (!cancelled) setLinkCheck(null)
+      }
+    }, 400)
+    return () => { cancelled = true; clearTimeout(t) }
+  }, [videoUrl])
 
   async function handleFileUpload(e: React.FormEvent) {
     e.preventDefault()
@@ -154,7 +168,8 @@ function UploadPageInner() {
   }
 
   const detectedSource = videoUrl ? detectSource(videoUrl) : null
-  const hudlDirect = videoUrl ? isHudlDirectDownloadLink(videoUrl) : false
+  // hudlDirect is authoritative — it comes from the server classifier, not a guess.
+  const hudlDirect = linkCheck?.hudl_direct ?? false
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -282,21 +297,27 @@ function UploadPageInner() {
                     disabled={importing}
                   />
                   {detectedSource && (
-                    <p className="text-xs text-brand-400 mt-1">Detected: {SOURCE_LABELS[detectedSource] || detectedSource}</p>
+                    <p className="text-xs text-brand-400 mt-1">Detected: {linkCheck?.label || SOURCE_LABELS[detectedSource] || detectedSource}</p>
                   )}
-                  {hudlDirect && (
+                  {/* Authoritative, server-driven badge — matches exactly what the worker will do. */}
+                  {linkCheck?.status === 'no_login' && (
                     <div className="mt-2 text-xs bg-green-500/10 border border-green-500/30 rounded-lg p-2.5 text-gray-300">
-                      <span className="text-green-400 font-medium">Hudl download link detected — no Hudl account needed.</span> This link already contains the video file, so we'll import it directly. Hudl download links expire fast, so import now while it's fresh.
+                      <span className="text-green-400 font-medium">
+                        {linkCheck.hudl_direct ? 'Hudl download link — no Hudl account needed.' : 'No account needed.'}
+                      </span> {linkCheck.message}
                     </div>
                   )}
-                  {/hudl\.com/i.test(videoUrl) && !hudlDirect && (
+                  {linkCheck?.status === 'public_ok' && (
                     <div className="mt-2 text-xs bg-green-500/10 border border-green-500/30 rounded-lg p-2.5 text-gray-300">
-                      <span className="text-green-400 font-medium">Hudl link detected.</span> We'll capture and import it automatically. <span className="text-gray-200">No Hudl account?</span> In Hudl, use <span className="text-gray-200">Download</span> on the video and paste the download link it gives you — that imports with no login. For private team film, <a href="/settings/connections" className="text-green-400 underline">connect your Hudl account</a> once and it imports with one click.
+                      <span className="text-green-400 font-medium">{linkCheck.label} link detected.</span> {linkCheck.message}
+                      {linkCheck.source_type === 'hudl' && (
+                        <> <a href="/settings/connections" className="text-green-400 underline">Connect your Hudl account</a> to import private team film in one click.</>
+                      )}
                     </div>
                   )}
-                  {/nfhsnetwork\.com/i.test(videoUrl) && (
-                    <div className="mt-2 text-xs bg-green-500/10 border border-green-500/30 rounded-lg p-2.5 text-gray-300">
-                      <span className="text-green-400 font-medium">NFHS Network link detected.</span> We'll capture and import it. NFHS film usually requires a paid subscription/login — free events import directly; for subscription games, your NFHS login must be connected (or download from NFHS and use Upload File).
+                  {linkCheck?.status === 'invalid' && videoUrl.trim().length > 6 && (
+                    <div className="mt-2 text-xs bg-yellow-400/10 border border-yellow-400/30 rounded-lg p-2.5 text-yellow-200">
+                      {linkCheck.message}
                     </div>
                   )}
                   <div className="mt-2 flex flex-wrap gap-2">

@@ -15,42 +15,13 @@ from backend.services.sports import assert_sport_allowed
 from backend.services.entitlements import assert_ready_to_analyze
 from backend.ratelimit import limiter
 from backend.utils.url_guard import validate_public_http_url
+from backend.services.ingest_classify import (
+    SUPPORTED_SOURCES,
+    detect_source_type,
+    classify_ingest_url,
+)
 
 router = APIRouter(prefix="/ingest", tags=["ingest"])
-
-SUPPORTED_SOURCES = [
-    "youtube.com", "youtu.be",
-    "hudl.com",
-    "vimeo.com",
-    "drive.google.com",
-    "dropbox.com",
-    "facebook.com", "fb.watch",
-    "twitter.com", "x.com",
-    "instagram.com",
-    "tiktok.com",
-    "streamable.com",
-    "dailymotion.com",
-    "wistia.com",
-    "loom.com",
-]
-
-def detect_source_type(url: str) -> str:
-    url_lower = url.lower()
-    if "youtube.com" in url_lower or "youtu.be" in url_lower:
-        return "youtube"
-    if "hudl.com" in url_lower:
-        return "hudl"
-    if "vimeo.com" in url_lower:
-        return "vimeo"
-    if "drive.google.com" in url_lower:
-        return "google_drive"
-    if "dropbox.com" in url_lower:
-        return "dropbox"
-    if "facebook.com" in url_lower or "fb.watch" in url_lower:
-        return "facebook"
-    if "nfhsnetwork.com" in url_lower:
-        return "nfhs"
-    return "generic"
 
 
 class IngestURLRequest(BaseModel):
@@ -139,6 +110,23 @@ async def ingest_from_url(
         "source_type": source_type,
         "message": f"Import queued from {source_type}. Processing usually takes 1–5 minutes.",
     }
+
+
+class CheckURLRequest(BaseModel):
+    url: str
+
+
+@router.post("/check-url")
+@limiter.limit("60/minute")
+async def check_url(
+    body: CheckURLRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+):
+    """Classify a pasted link the same way the ingest worker will treat it, so the
+    import UI can show a TRUTHFUL 'no account needed' badge (or the right warning)
+    before the coach commits. Pure classification — no fetch, no side effects."""
+    return classify_ingest_url(body.url)
 
 
 @router.get("/job/{job_id}")
