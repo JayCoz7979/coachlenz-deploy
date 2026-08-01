@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { Bebas_Neue, DM_Sans, DM_Mono, Syne } from 'next/font/google'
 import './globals.css'
 import './os.css'
+import ReconsentGate from '@/components/legal/ReconsentGate'
 
 const bebasNeue = Bebas_Neue({
   subsets: ['latin'],
@@ -37,6 +38,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body className={`${bebasNeue.variable} ${dmSans.variable} ${dmMono.variable} ${syne.variable}`}>
         {children}
+        <ReconsentGate />
       </body>
     </html>
   )

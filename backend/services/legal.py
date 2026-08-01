@@ -58,6 +58,35 @@ async def has_current_acceptance(db, organization_id, document: str) -> bool:
     return (res.scalar_one() or 0) > 0
 
 
+# Terms + Privacy are per-USER agreements (each individual accepts), unlike the
+# per-ORG student_data attestation. When their version bumps, every existing user
+# must re-accept — so these are checked per-user, not per-org.
+RECONSENT_DOCUMENTS = ("terms", "privacy")
+
+
+async def has_current_user_acceptance(db, user_id, document: str) -> bool:
+    """True if THIS USER has accepted `document` at its current version."""
+    res = await db.execute(
+        select(func.count()).select_from(LegalAcceptance).where(
+            LegalAcceptance.user_id == user_id,
+            LegalAcceptance.document == document,
+            LegalAcceptance.version == DOCUMENT_VERSIONS[document],
+        )
+    )
+    return (res.scalar_one() or 0) > 0
+
+
+async def user_reconsent_needed(db, user_id) -> list[str]:
+    """Which per-user agreements (terms/privacy) the user must (re)accept at the
+    current version. Empty = up to date; non-empty after a version bump until the
+    user re-accepts. Drives the app-load re-consent modal."""
+    needed = []
+    for doc in RECONSENT_DOCUMENTS:
+        if not await has_current_user_acceptance(db, user_id, doc):
+            needed.append(doc)
+    return needed
+
+
 async def assert_student_consent(db, organization_id) -> None:
     """Gate before any student-athlete roster data is created. 403s with a
     structured detail the frontend uses to prompt the one-time attestation."""

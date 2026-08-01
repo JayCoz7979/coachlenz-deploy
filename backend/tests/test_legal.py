@@ -10,8 +10,9 @@ import pytest
 from fastapi import HTTPException
 
 from backend.services.legal import (
-    DOCUMENT_VERSIONS, STUDENT_DATA_ATTESTATION,
-    has_current_acceptance, assert_student_consent, record_acceptance,
+    DOCUMENT_VERSIONS, STUDENT_DATA_ATTESTATION, RECONSENT_DOCUMENTS,
+    has_current_acceptance, has_current_user_acceptance, user_reconsent_needed,
+    assert_student_consent, record_acceptance,
 )
 
 
@@ -56,6 +57,27 @@ def test_assert_student_consent_blocks_without_passes_with():
     assert e.value.detail["attestation"]
     # With a recorded consent, the gate passes (no raise).
     asyncio.run(assert_student_consent(_DB(1), "o1"))
+
+
+@pytest.mark.unit
+def test_reconsent_documents_are_terms_and_privacy():
+    # student_data is per-ORG (gated on actions); terms/privacy are the per-USER
+    # agreements that must be re-accepted on a version bump.
+    assert set(RECONSENT_DOCUMENTS) == {"terms", "privacy"}
+
+
+@pytest.mark.unit
+def test_has_current_user_acceptance_true_false():
+    assert asyncio.run(has_current_user_acceptance(_DB(1), "u1", "terms")) is True
+    assert asyncio.run(has_current_user_acceptance(_DB(0), "u1", "privacy")) is False
+
+
+@pytest.mark.unit
+def test_user_reconsent_needed_all_or_none():
+    # No current acceptances -> must re-accept both (post version-bump state).
+    assert asyncio.run(user_reconsent_needed(_DB(0), "u1")) == ["terms", "privacy"]
+    # Current acceptances -> nothing to re-accept.
+    assert asyncio.run(user_reconsent_needed(_DB(1), "u1")) == []
 
 
 @pytest.mark.unit

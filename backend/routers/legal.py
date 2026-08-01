@@ -13,8 +13,9 @@ from backend.models.user import User
 from backend.services.auth import get_current_user, require_permission
 from backend.services.permissions import CAN_MANAGE_ROSTER
 from backend.services.legal import (
-    DOCUMENT_VERSIONS, STUDENT_DATA_ATTESTATION,
-    has_current_acceptance, record_acceptance,
+    DOCUMENT_VERSIONS, STUDENT_DATA_ATTESTATION, RECONSENT_DOCUMENTS,
+    has_current_acceptance, has_current_user_acceptance, record_acceptance,
+    user_reconsent_needed,
 )
 
 router = APIRouter(prefix="/legal", tags=["legal"])
@@ -26,7 +27,27 @@ async def legal_status(user: User = Depends(get_current_user), db: AsyncSession 
         "versions": DOCUMENT_VERSIONS,
         "student_data_consent": await has_current_acceptance(db, user.organization_id, "student_data"),
         "student_data_attestation": STUDENT_DATA_ATTESTATION,
+        # Per-user terms/privacy the current user must re-accept after a version bump
+        # (empty when up to date). Drives the app-load re-consent modal.
+        "reconsent_needed": await user_reconsent_needed(db, user.id),
     }
+
+
+@router.post("/accept-latest")
+async def accept_latest(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Record the current user's acceptance of the CURRENT Terms + Privacy versions.
+    Any authenticated user re-accepts their own agreements (no special permission).
+    Idempotent: only writes the ones not already current."""
+    ip = request.client.host if request.client else None
+    for doc in RECONSENT_DOCUMENTS:
+        if not await has_current_user_acceptance(db, user.id, doc):
+            await record_acceptance(db, user.organization_id, user.id, doc, ip=ip)
+    await db.commit()
+    return {"ok": True, "reconsent_needed": []}
 
 
 @router.post("/student-consent")
