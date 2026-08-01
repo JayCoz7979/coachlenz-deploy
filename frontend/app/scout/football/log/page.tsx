@@ -172,7 +172,9 @@ export default function LiveLoggerPage() {
       const r = await api.post('/scout/football/session', { opponent: newOpponent.trim() })
       setSession({ session_id: r.data.session_id, opponent: r.data.opponent, status: 'draft' })
     } catch (e: any) {
-      setError(e?.response?.data?.detail || 'Could not create session.')
+      // Student-consent 403 returns a structured detail; show its message, not "[object Object]".
+      const d = e?.response?.data?.detail
+      setError(typeof d === 'string' ? d : (d?.message || 'Could not create session.'))
     } finally { setBusy(false) }
   }
 

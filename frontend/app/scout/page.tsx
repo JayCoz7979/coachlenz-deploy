@@ -196,7 +196,9 @@ export default function ScoutPage() {
       const res = await api.post('/scout/analyze', { session_id: sessionId })
       router.push(`/reports/${res.data.report_id}`)
     } catch (e: any) {
-      setError(e?.response?.data?.detail || 'Something went wrong generating the report.')
+      // Student-consent 403 returns a structured detail; show its message, not "[object Object]".
+      const d = e?.response?.data?.detail
+      setError(typeof d === 'string' ? d : (d?.message || 'Something went wrong generating the report.'))
       setBusy(false)
     }
   }

@@ -125,7 +125,10 @@ export default function ScoutFootballPage() {
       const res = await api.post('/scout/football/analyze', { session_id: sessionId })
       router.push(`/reports/${res.data.report_id}`)
     } catch (e: any) {
-      setError(e?.response?.data?.detail || 'Something went wrong generating the report.')
+      // The student-consent 403 returns a structured detail ({code,message,...}); show
+      // its message rather than "[object Object]".
+      const d = e?.response?.data?.detail
+      setError(typeof d === 'string' ? d : (d?.message || 'Something went wrong generating the report.'))
       setBusy(false)
     }
   }
