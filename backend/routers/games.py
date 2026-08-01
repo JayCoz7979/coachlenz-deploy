@@ -12,6 +12,7 @@ from backend.models.job import Job
 from backend.services.auth import get_current_user, get_current_org
 from backend.services.trial import can_upload_game, is_trial_active
 from backend.services.entitlements import assert_ready_to_analyze
+from backend.services.legal import assert_student_consent
 from backend.services.r2 import generate_presigned_upload_url, safe_object_name
 
 router = APIRouter(prefix="/games", tags=["games"])
@@ -41,6 +42,11 @@ async def create_game(body: GameCreate, user: User = Depends(get_current_user), 
     # Entitlements: an active trial must verify email + lock a sport before it can
     # upload film (upload auto-chains into detection).
     assert_ready_to_analyze(org, user)
+    # COPPA/FERPA: film contains minors' images and the AI extracts jersey numbers
+    # (individual identifiers), so the org must have made the student-data authority
+    # attestation BEFORE any minors' film is stored or analyzed — not just before a
+    # name is typed into the roster. 403s with the attestation prompt if missing.
+    await assert_student_consent(db, org.id)
     key = f"games/{org.id}/{uuid.uuid4()}/{safe_object_name(body.file_name)}"
     presigned = generate_presigned_upload_url(key, "video/mp4")
     game = Game(
