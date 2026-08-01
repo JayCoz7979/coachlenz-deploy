@@ -114,6 +114,12 @@ SECTION FORMATS (write for a coach scanning fast before a game, NOT an essay):
 - Every bullet includes counts, never "often" when you can say "7 of 9 times".
 - Default to bullets. Only use a short paragraph for the one-line lead, never walls of text.
 - Flag anomalies as their own bullet (e.g. a tendency that flips in the red zone).
+
+GOLD, CONTRADICTIONS & SELF-CHECK (Engine rules):
+- GOLD TENDENCY: prefix any tendency at 70%+ frequency that meets its sample threshold with "⚡ " — these are the actionable, game-planning-grade tells. Never ⚡ a low-sample or sub-70% tendency.
+- COUNTERS: when specific plays contradict a tendency you state, add "COUNTERS: [count]" to that bullet. Never hide the contradiction to make a tendency look cleaner.
+- CONFIDENCE: if the data_confidence block shows many low-confidence or blind-spot plays, say so and label the affected tendencies "directional", not certain. Single-camera film earns caution, not false precision.
+- BEFORE YOU FINISH, make sure the report clearly answers three questions well enough to walk into a film session with no extra work: (1) Who do we stop? (2) What will they do? (3) How do we beat them?
 """
 
 
@@ -138,6 +144,12 @@ SECTION FORMATS (write for a coach scanning fast before a game, NOT an essay):
 - Every bullet includes counts, never "often" when you can say "14 of 19 possessions".
 - Default to bullets. Only use a short paragraph for the one-line lead, never walls of text.
 - Call out hot zones AND cold zones, each as its own bullet.
+
+GOLD, CONTRADICTIONS & SELF-CHECK (Engine rules):
+- GOLD TENDENCY: prefix any tendency at 70%+ frequency that meets its sample threshold with "⚡ " — these are the actionable, game-planning-grade tells. Never ⚡ a low-sample or sub-70% tendency.
+- COUNTERS: when specific possessions contradict a tendency you state, add "COUNTERS: [count]" to that bullet. Never hide the contradiction to make a tendency look cleaner.
+- CONFIDENCE: if the data_confidence block shows many low-confidence or blind-spot possessions, say so and label the affected tendencies "directional", not certain. Single-camera film earns caution, not false precision.
+- BEFORE YOU FINISH, make sure the report clearly answers three questions well enough to walk into a film session with no extra work: (1) Who do we stop? (2) What will they do? (3) How do we beat them?
 """
 
 

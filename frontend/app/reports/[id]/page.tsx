@@ -11,6 +11,7 @@ import BasketballShotChart from '@/components/report/BasketballShotChart'
 import PlayerShotSpots from '@/components/report/PlayerShotSpots'
 import TurnoverMap from '@/components/report/TurnoverMap'
 import RunPassMatrix from '@/components/report/RunPassMatrix'
+import RunDirectionArrows from '@/components/report/RunDirectionArrows'
 import ReportChat from '@/components/report/ReportChat'
 
 interface Section {
@@ -818,6 +819,15 @@ export default function ReportPage() {
             && report.summary && typeof report.summary !== 'string' && (
             <div style={{ marginBottom: 28 }}>
               <RunPassMatrix summary={report.summary} />
+            </div>
+          )}
+
+          {/* Run-direction arrows (football) — §12 Map 5 */}
+          {String(report.sport || '').toLowerCase().includes('football')
+            && report.summary && typeof report.summary !== 'string'
+            && (report.summary.offense?.run_direction_analysis?.total_runs || 0) >= 6 && (
+            <div style={{ marginBottom: 28 }}>
+              <RunDirectionArrows summary={report.summary} />
             </div>
           )}
 
