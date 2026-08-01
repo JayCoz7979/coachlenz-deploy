@@ -13,6 +13,7 @@ from backend.services.auth import get_current_user, get_current_org
 from backend.services.trial import can_upload_game, is_trial_active
 from backend.services.sports import assert_sport_allowed
 from backend.services.entitlements import assert_ready_to_analyze
+from backend.services.legal import assert_student_consent
 from backend.ratelimit import limiter
 from backend.utils.url_guard import validate_public_http_url
 from backend.services.ingest_classify import (
@@ -49,6 +50,11 @@ async def ingest_from_url(
     # Entitlements: an active trial must verify email + lock a sport before it can
     # import film (URL ingest auto-chains into detection).
     assert_ready_to_analyze(org, user)
+
+    # COPPA/FERPA: imported film carries minors' images and the AI extracts jersey
+    # numbers (individual identifiers), so the org must have made the student-data
+    # authority attestation BEFORE any minors' film is fetched, stored, or analyzed.
+    await assert_student_consent(db, org.id)
 
     # Sport lock: a client can only analyze film for the sport(s) their plan
     # includes (chosen at onboarding). Warns instead of silently mis-analyzing.

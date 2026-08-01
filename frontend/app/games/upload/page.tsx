@@ -64,6 +64,34 @@ function UploadPageInner() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const [error, setError] = useState('')
+  // Set when the backend requires the one-time student-data (COPPA/FERPA) attestation
+  // before minors' film can be imported/uploaded. `retry` re-runs the blocked action.
+  const [consent, setConsent] = useState<{ attestation: string; retry: () => Promise<void> } | null>(null)
+
+  // Route an action error: a student-consent 403 opens the attestation panel (with a
+  // retry of the blocked upload/import); anything else shows the message.
+  function onActionError(e: any, fallback: string, retry: () => Promise<void>) {
+    const d = e?.response?.data?.detail
+    if (e?.response?.status === 403 && d && typeof d === 'object' && d.code === 'student_consent_required') {
+      setConsent({ attestation: d.attestation, retry })
+      return
+    }
+    setError(typeof d === 'string' ? d : fallback)
+  }
+
+  async function attestConsent() {
+    setError('')
+    try {
+      await api.post('/legal/student-consent')
+      const retry = consent?.retry
+      setConsent(null)
+      if (retry) await retry()
+    } catch (e: any) {
+      const d = e?.response?.data?.detail
+      setError(typeof d === 'string' ? d
+        : 'Only a head coach or owner can confirm student-data consent. Ask them to confirm it, then try again.')
+    }
+  }
 
   useEffect(() => { fetchMe() }, [])
   useEffect(() => { if (!isLoading && !user) router.push('/login') }, [isLoading, user])
@@ -115,8 +143,8 @@ function UploadPageInner() {
     return () => { cancelled = true; clearTimeout(t) }
   }, [videoUrl])
 
-  async function handleFileUpload(e: React.FormEvent) {
-    e.preventDefault()
+  async function handleFileUpload(e?: React.FormEvent) {
+    e?.preventDefault()
     if (!file) return
     setUploading(true)
     setError('')
@@ -140,14 +168,14 @@ function UploadPageInner() {
       })
       router.push('/games')
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Upload failed')
+      onActionError(err, 'Upload failed', () => handleFileUpload())
     } finally {
       setUploading(false)
     }
   }
 
-  async function handleUrlImport(e: React.FormEvent) {
-    e.preventDefault()
+  async function handleUrlImport(e?: React.FormEvent) {
+    e?.preventDefault()
     if (!videoUrl.trim()) return
     setImporting(true)
     setError('')
@@ -162,7 +190,7 @@ function UploadPageInner() {
       setImportJobId(res.data.job_id)
       setImportStatus('Queued — waiting for worker...')
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Import failed to start')
+      onActionError(err, 'Import failed to start', () => handleUrlImport())
       setImporting(false)
     }
   }
@@ -197,6 +225,17 @@ function UploadPageInner() {
           </div>
 
           <div className="card space-y-4">
+            {consent && (
+              <div className="border border-brand-500/40 rounded-lg p-4 bg-brand-500/5 space-y-3">
+                <h3 className="font-semibold text-sm text-brand-300">Confirm student-data consent</h3>
+                <p className="text-xs text-gray-300">{consent.attestation}</p>
+                <p className="text-xs text-gray-500">Game film contains minors' images and the AI reads jersey numbers, so we require this one-time confirmation before any film is imported or analyzed.</p>
+                <div className="flex gap-2">
+                  <button type="button" onClick={attestConsent} className="btn-primary" style={{ fontSize: 12, height: 34 }}>I confirm &amp; continue</button>
+                  <button type="button" onClick={() => setConsent(null)} className="btn-secondary" style={{ fontSize: 12, height: 34 }}>Cancel</button>
+                </div>
+              </div>
+            )}
             {error && tab === 'url' && hudlDirect && (
               <div className="text-sm bg-yellow-400/10 border border-yellow-400/30 rounded-lg p-3 space-y-1">
                 <p className="text-yellow-300 font-medium">That Hudl download link didn't import.</p>
