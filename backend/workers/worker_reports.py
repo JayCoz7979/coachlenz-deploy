@@ -7,6 +7,7 @@ from backend.models.report import TendencyReport
 from backend.models.event import Event
 from backend.models.organization import Organization
 from backend.services import learning_loop
+from backend.services.down_distance import infer_down_distance
 from backend.services.tendency_engine import run_tendency_engine
 from backend.services.report_writer import generate_prose_sections
 from backend.services.coach_notes import collect_flagged_plays
@@ -68,6 +69,18 @@ class ReportsWorker(BaseWorker):
 
         relabeled = learning_loop.apply_adjustments(events, learn_adjustments) if learn_adjustments else 0
 
+        # §12 Map 4 support: fill down/distance the scoreboard couldn't read, from
+        # the deterministic down-and-distance chain, so the run/pass matrix and
+        # down-based tendencies populate on films with only partial score-bug reads.
+        # In-memory only (never committed); benefits existing games with no re-detect.
+        dd_inferred = 0
+        if sport in ("football", "flag_football"):
+            offense = sorted(
+                [e for e in events if (e.side or "offense") == "offense"],
+                key=lambda e: (e.time_seconds if e.time_seconds is not None else 0),
+            )
+            dd_inferred = infer_down_distance(offense)
+
         try:
             tendency_summary = await run_tendency_engine(sport, events)
             # Fold the coach's own starred plays + notes into the report context so their
@@ -120,7 +133,7 @@ class ReportsWorker(BaseWorker):
             level="success",
             detail={"report_id": str(report_id), "sections": len(prose_sections),
                     "events": len(events), "coach_flagged_plays": len(flagged),
-                    "learning_relabeled": relabeled},
+                    "learning_relabeled": relabeled, "down_distance_inferred": dd_inferred},
         )
 
         async with AsyncSessionLocal() as db:
