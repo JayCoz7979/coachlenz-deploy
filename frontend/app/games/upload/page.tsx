@@ -62,6 +62,12 @@ function UploadPageInner() {
   const [importStatus, setImportStatus] = useState<string>('')
   const [linkCheck, setLinkCheck] = useState<LinkCheck | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Stranded-spinner guard: if an import runs far past the usual 1-5 min, or the status
+  // endpoint keeps failing, stop the spinner and reassure (the import may still finish
+  // server-side) instead of spinning forever.
+  const [importStalled, setImportStalled] = useState(false)
+  const pollStartRef = useRef(0)
+  const pollErrRef = useRef(0)
 
   const [error, setError] = useState('')
   // Set when the backend requires the one-time student-data (COPPA/FERPA) attestation
@@ -99,9 +105,24 @@ function UploadPageInner() {
 
   useEffect(() => {
     if (!importJobId) return
+    pollStartRef.current = Date.now()
+    pollErrRef.current = 0
+    setImportStalled(false)
+    const STALL_MS = 7 * 60 * 1000   // imports usually finish in 1-5 min
+    const MAX_POLL_ERRORS = 6        // ~18s of consecutive status-check failures
     pollRef.current = setInterval(async () => {
+      // Give up the SPINNER (not the import) if it has run far past normal, or the
+      // status endpoint keeps erroring. The import may still finish server-side, so
+      // we reassure and point to the library rather than claim failure.
+      if (Date.now() - pollStartRef.current > STALL_MS || pollErrRef.current >= MAX_POLL_ERRORS) {
+        clearInterval(pollRef.current!)
+        setImporting(false)
+        setImportStalled(true)
+        return
+      }
       try {
         const r = await api.get(`/ingest/job/${importJobId}`)
+        pollErrRef.current = 0
         const s = r.data.status
         const statusMap: Record<string, string> = {
           queued: 'Queued — waiting for worker...',
@@ -120,7 +141,7 @@ function UploadPageInner() {
           setImporting(false)
           setError(r.data.error_message || 'Import failed')
         }
-      } catch {}
+      } catch { pollErrRef.current += 1 }
     }, 3000)
     return () => { if (pollRef.current) clearInterval(pollRef.current) }
   }, [importJobId])
@@ -388,6 +409,16 @@ function UploadPageInner() {
                       <span className="text-sm text-brand-300">{importStatus}</span>
                     </div>
                     <p className="text-xs text-gray-500 mt-2">You can leave this page — the import continues in the background.</p>
+                  </div>
+                )}
+
+                {importStalled && (
+                  <div className="bg-yellow-400/10 border border-yellow-400/30 rounded-lg p-4">
+                    <p className="text-sm text-yellow-200 font-medium">This is taking longer than usual.</p>
+                    <p className="text-xs text-gray-300 mt-1">Your import is still running in the background. It will appear in your Film Library when it&apos;s ready — you don&apos;t need to wait on this page.</p>
+                    <button type="button" onClick={() => router.push('/games')} className="btn-secondary mt-3" style={{ fontSize: 12 }}>
+                      Go to Film Library
+                    </button>
                   </div>
                 )}
 
