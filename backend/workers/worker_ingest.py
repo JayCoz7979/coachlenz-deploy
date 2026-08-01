@@ -182,15 +182,23 @@ class IngestWorker(BaseWorker):
             # film was shared with can fetch without logging in. Unwrap it and take
             # the plain-download path — no browser, no cookies, no connected account.
             if source_type == "hudl":
-                from backend.services.hudl_capture import unwrap_hudl_direct_url
+                from backend.services.hudl_capture import (
+                    unwrap_hudl_direct_url, _looks_like_direct_video,
+                )
+                # (a) Emailed Download/bulk wrapper -> unwrap to its pre-signed file.
+                # (b) A directly-pasted Hudl direct file (vtemp/vg/vcloud.hudl.com or a
+                #     video-extension URL) is ALREADY the file — download it as-is.
+                # Both are the no-login path; keep this in lockstep with is_hudl_no_login().
                 direct_url = unwrap_hudl_direct_url(source_url)
+                if not direct_url and _looks_like_direct_video(source_url):
+                    direct_url = source_url
                 if direct_url:
                     validate_public_http_url(direct_url)  # SSRF re-check on the unwrapped target
                     download_target = direct_url
                     source_type = "generic"  # download it like any direct file
                     logger.info(
-                        f"[ingest] game {game_id}: unwrapped Hudl bulk-download link to a "
-                        f"direct file — importing without login/capture"
+                        f"[ingest] game {game_id}: Hudl direct-file link — "
+                        f"importing without login/capture"
                     )
 
             if source_type in ("hudl", "nfhs"):
