@@ -1,238 +1,157 @@
 # CoachLenz Beta-Readiness Punch List
 
-Evidence-based audit of the whole product (2026-07-30), six parallel read-only
-sweeps: backend API, frontend, auth/onboarding/entitlements, billing/config,
-infra/observability, and product pipeline/legal. Severities are for a **paying**
-beta. Items marked (verify prod env) may already be resolved by Railway env vars
-this audit could not see.
+**Reconciled 2026-08-01 against the live codebase.** Original evidence audit:
+2026-07-30 (six parallel read-only sweeps). This document is the authoritative
+current status; it supersedes any older "PR pending" notes. Statuses below were
+re-verified in code on 2026-08-01, not carried over on faith.
 
-## Bottom line
+## Bottom line (2026-08-01)
 
-The core product is genuinely strong and beta-credible: the football and
-basketball loops (ingest -> multi-pass detection -> tendency+coordinator engine ->
-failure-transparent report -> privacy-stripped share links) are fully built,
-org-scoped, and defensively coded. The auth stack, job queue, SSRF guard, and
-migrations are production-grade. This is not a scaffold.
+Every **P0 code item is DONE and merged.** Nearly all P1/P2 items are DONE. What
+remains to actually launch and charge is almost entirely **yours, not code**: the
+attorney's legal text, the Stripe dashboard config, `SENTRY_DSN` on the workers, and
+confirming prod env vars. On the code side only small hardening/polish is left.
 
-The gaps are narrow but real, and they cluster in exactly the places that matter
-when money changes hands: **you would give the paid product away for free (broken
-entitlement gating), you cannot see the failures most likely to hurt a paying
-coach (workers report to nothing), you are legally uncovered for taking minors'
-film and payment (consent/COPPA exist only as draft text), and one nav page shows
-fabricated data.** None is architectural. All are fixable. Stripe itself is ~90%
-built and small; it is NOT the real blocker.
+The core product (football + basketball loops: ingest -> multi-pass detection ->
+tendency+coordinator engine -> failure-transparent report -> privacy-stripped shares)
+is fully built, org-scoped, and defensively coded. This is not a scaffold.
 
 ---
 
-## P0 — Must fix before charging a single dollar
+## P0 — all DONE (code)
 
-### 1. Trial gives away the paid product (revenue leak) — FIXED (PR pending)
-> Resolved by `backend/services/entitlements.py`: `assert_ready_to_analyze`
-> (verify email + lock a sport, active-trial only) gates upload/URL-import/
-> auto-detect; `assert_feature_allowed` blocks deep/grade analysis, multi-game
-> reports, and film packages for active trials. Unit + integration tested.
-
-- `is_feature_locked()` / `TRIAL_LOCKED_FEATURES` (`backend/services/trial.py:5,21`)
-  are **dead code — zero call sites**. A trial org can run deep multi-pass
-  analysis, multi-game reports, and film packages, all nominally trial-locked.
-- Onboarding is **not a gate**: no analysis endpoint checks `email_verified` or a
-  locked sport (`games.py:36`, `ingest.py:68`, `ai_detect.py:287` gate on sport
-  only, and `sports.py:71` short-circuits to "allowed" when no sport is chosen).
-  A user who registers (tokens issued immediately) and skips onboarding gets an
-  **unverified, any-sport, fully-featured** trial.
-- Fix: wire `is_feature_locked` into the analysis/report/package routers; require
-  `email_verified` (ideally onboarding complete) before the first analysis.
-- Size: small-medium code. **This is the highest-value fix on the list.**
-
-### 2. Legal + COPPA have zero enforcement (you ingest minors' film) — CODE GATE SHIPPED (PR pending); ToS TEXT still needs the attorney
-> Enforcement scaffolding built: migration `032_legal_consents.sql` +
-> `legal_acceptances` table; `backend/services/legal.py` (versioned docs). Signup
-> now REQUIRES a Terms/Privacy checkbox and logs the acceptance (per user, with IP).
-> A per-org student-data (COPPA/FERPA) authority attestation is REQUIRED and logged
-> before any roster player is created (`assert_student_consent` gates add/upload/
-> clone; `/legal/student-consent` records it; roster UI prompts for it). STILL
-> NEEDED (yours): the attorney must finalize the ToS/Privacy/attestation TEXT (the
-> `legal/*.md` drafts) and then bump the versions in `services/legal.py`.
-
-- ToS/Privacy: thin 4-paragraph live pages (`frontend/app/terms/page.tsx`,
-  `privacy/page.tsx`); the real 10KB drafts (`legal/*.md`) are **unreviewed
-  ("ATTORNEY REVIEW REQUIRED", [FILL-IN] date) and rendered nowhere**.
-- Consent is **text only** at signup — no checkbox, no logged acceptance, no
-  `legal_acceptances` table anywhere in migrations/models.
-- COPPA/minor handling is **aspirational only**: the words appear solely in the
-  draft markdown, never in code. No under-13 gate on player-profile creation, no
-  `student_consents` table, no age gate in onboarding.
-- Fix (code, mine to build): consent checkbox + logged acceptance table; an
-  under-13 / student-consent gate before player data is created. Fix (yours):
-  attorney-finalize the ToS/Privacy drafts before onboarding any school.
-- Size: medium code + your lawyer. Blocker for taking minors' film + money.
-
-### 3. Worker failures are invisible (you can't see what breaks) — FIXED (PR pending)
-> Resolved by `backend/observability.py`: `init_sentry()` is now called in
-> `BaseWorker.run_forever()` (every worker process) as well as the API, and the
-> worker error paths (job handle, process loop, dead-letter, watchdog) explicitly
-> `capture()` to Sentry. Still a no-op without `SENTRY_DSN` — set it on the worker
-> services. The `error_logs` table remains a separate follow-up.
-
-- Sentry is initialized only in the API process (`main.py:28`). The dedicated
-  worker services (`python -m backend.workers.worker_*`) never import it — `grep
-  sentry backend/workers/` is empty. The heaviest, most crash-prone work (film
-  ingest, multi-pass Opus detection) runs on exactly the services that report
-  nothing; errors live only in Railway stdout.
-- The CLAUDE.md-mandated `error_logs` table does not exist anywhere in `backend/`.
-- Fix: init Sentry in the worker entrypoint (or add the `error_logs` write path).
-- Size: small. Without it you are flying blind on paid workloads.
-
-### 4. Unbounded Opus spend per beta user — FIXED (PR pending)
-> Resolved: a generous default monthly analysis cap
-> (`settings.DEFAULT_MONTHLY_ANALYSIS_LIMIT=300`) now applies when a coach has no
-> explicit `CoachUsageLimit` row, so an absent row is no longer unlimited (explicit
-> rows, incl. 0=unlimited, still win). Plus slowapi rate limits on the game-creation
-> velocity vector: `/ingest/url` and `/upload/file` (20/min). The auto-detect
-> trigger is bounded by the monthly cap + the existing `already_queued` dedup.
-
-- The slowapi limiter is imported **only in `auth.py`**. `/games/{id}/auto-detect`,
-  `/ingest/url`, `/upload/file`, and scout endpoints have no per-IP/per-org rate
-  limit. The base "coach" plan has no `CoachUsageLimit` row, so the monthly cap
-  check (`ai_detect.py:329`) is skipped -> **unlimited deep-Opus runs**. A leaked
-  token or an eager coach can run up unbounded API cost.
-- Fix: frequency rate-limit on the auto-detect trigger + a default coach cap.
-- Size: small.
-
-### 5. Player Grades page shows fabricated data — FIXED (PR pending)
-> Resolved: `frontend/app/players/page.tsx` no longer ships `SAMPLE_PERFORMERS`,
-> `SAMPLE_BANDS`, or the invented "top 3%" AI insight. It now shows an honest empty
-> state (no data today, since `/players` 404s) that also sets the real expectation
-> (grading is opt-in and needs legible HD film), and a real-data path that derives
-> the grade distribution from actual grades. Also addresses the P1 "grades populate
-> automatically" oversell copy.
-
-- `frontend/app/players/page.tsx` renders hardcoded fake players ("Marcus J.",
-  "Devon W.") and an **invented AI insight** ("top 3% in our library"). `GET
-  /players` 404s (no backend), so it is always in preview, and the fake grade
-  bands + insight render **unconditionally** (not gated by `isPreview`). It is a
-  live nav item a paying user will click.
-- Fix: hide the page (or the fabricated blocks) until a real endpoint exists.
-- Size: small. Integrity issue — do not ship invented data to paying users.
+1. **Trial gave away the paid product** -> FIXED (#109). `entitlements.py`
+   `assert_ready_to_analyze` (verify email + lock a sport, active-trial only) gates
+   upload/URL-import/auto-detect; `assert_feature_allowed` blocks deep/grade analysis,
+   multi-game reports, and film packages for trials. Verified in code.
+2. **Legal + COPPA enforcement** -> CODE FULLY SHIPPED. Signup requires a Terms/Privacy
+   checkbox, logged per user with IP (#112). The per-org student-data (COPPA/FERPA)
+   attestation now gates ALL THREE minors'-data surfaces: roster (#112), film upload +
+   URL import (#137), and manual scout sessions (#139). A Terms/Privacy re-consent modal
+   fires on a version bump (#138). **YOURS:** the attorney finalizes the `-draft`
+   ToS/Privacy/attestation text, then bump `*_VERSION` in `services/legal.py`.
+3. **Worker failures invisible** -> FIXED (#110). `init_sentry()` runs in every worker
+   (`BaseWorker.run_forever`) + the API; worker error paths `capture()`. **YOURS:** set
+   `SENTRY_DSN` on the worker services (a no-op without it).
+4. **Unbounded Opus spend** -> FIXED (#110). Default monthly analysis cap (300) when a
+   coach has no explicit `CoachUsageLimit` row, + slowapi 20/min on `/ingest/url` and
+   `/upload/file`.
+5. **Player Grades fabricated data** -> FIXED (#111). Honest empty state + real-data
+   distribution; the fake `SAMPLE_*` players/insight are gone (verified). Also fixed the
+   "grades populate automatically" oversell copy.
 
 ---
 
-## P1 — Fix before broad beta (money can flow, but these bite)
+## P1 — status
 
-### Billing edges (Stripe is ~90% built; these are the unfinished corners)
-- **Enterprise tier is broken**: the UI offers an `enterprise` card
-  (`frontend/app/settings/billing/page.tsx:35`) but `PRICE_MAP`
-  (`billing.py:16`) has only coach/athletic_dept/district -> clicking 400s.
-- **Annual billing advertised but not wired**: UI shows annual prices; `PRICE_MAP`
-  maps each tier to a single monthly price ID. Every checkout bills monthly.
-- **No webhook idempotency**: `invoice.payment_succeeded` (`billing.py:110`)
-  creates a `referral_credit` job with no dedup on `event["id"]`; Stripe
-  redelivery = duplicate referral credits.
-- **Stripe calls not wrapped** (`billing.py:38,42,56`): a Stripe outage/bad price
-  raises a raw 500 at the checkout moment. Wrap in try/except -> clean error.
-- Go-live (config, yours): create products/prices in Stripe, set
-  `STRIPE_SECRET_KEY`/`STRIPE_WEBHOOK_SECRET`/`STRIPE_PRICE_*`, register the
-  `/billing/webhook` endpoint, enable the Customer Portal.
+### Billing (Stripe ~90% built)
+- **Enterprise tier 400** -> FIXED (#141). Enterprise is contact-sales; UI shows a
+  Contact Sales CTA and `billing.CONTACT_SALES_TIERS` returns a clear message.
+- **Webhook idempotency** -> FIXED (#140). `processed_stripe_events` (migration 036);
+  redelivered events are claimed-or-skipped in one transaction. Kills the double
+  referral-credit bug.
+- **Annual billing not wired** -> OPEN. Only a monthly price per tier. Needs *you* to
+  create annual Stripe price IDs, then a small `PRICE_MAP` restructure + interval field.
+  **PRICING IS ON HOLD per Jay (2026-08-01) — do not touch until he says otherwise.**
+- **Stripe checkout/portal calls not wrapped in try/except** -> OPEN (small hardening).
+  `billing.py` `Customer.create` / `checkout.Session.create` / `billing_portal` raise a
+  raw 500 on a Stripe outage. Low urgency; billing-adjacent (see pricing hold).
 
-### Product honesty (overselling vs. reality)
-- "All sports" = 3 engines, and **flag football is the lightest** (tendencies but
-  no coordinator/scout layer; `engine.py:91` adds scout only for football).
-- "grades populate automatically" (`players/page.tsx:71`) oversells: player/jersey
-  tracking silently needs **720p+** film (`worker_ingest.py:359`) while the default
-  YouTube path on Railway is throttled to **360p**, and play-grading ships
-  **disabled** (`PLAY_GRADE_ENABLED=False`). Reword to match reality.
+### Product honesty
+- **"grades populate automatically" oversell** -> FIXED (#111).
+- **Flag football is the lightest engine** (tendencies, no coordinator/scout layer) ->
+  still TRUE. A positioning/copy note, not a bug. Lives on the marketing site (yours).
 
 ### Auth / API hygiene
-- **Duplicate weak `/me/change-password`** — FIXED (PR pending). Removed; the single
-  hardened `POST /auth/change-password` (length + reject-same + token_version bump to
-  revoke other sessions) is now the only path. The web app already used it; nothing
-  called the weak one.
-- **Onboarding phone step can trap** (`frontend/app/onboarding/page.tsx:82`): hard-
-  jumps to phone even if Twilio is unset; 503 with no skip button until reload.
-  Latent while Twilio stays configured.
+- **Duplicate weak `/me/change-password`** -> FIXED. Removed; the single hardened
+  `POST /auth/change-password` (length + reject-same + token_version revoke) is the only
+  path. `me.py` has just a pointer comment. Verified.
+- **Onboarding phone step could trap when Twilio unset** -> FIXED (#40). The phone gate
+  no longer traps users when Twilio is unconfigured.
 
 ### Ops
-- **`/health` is liveness-only** (`main.py:128`) — FIXED (PR pending). Added
-  `GET /health/ready` (`backend/health.py` `db_ready()` pings the DB, 503 on
-  failure) and pointed `backend/railway.toml` `healthcheckPath` at it, so a deploy
-  whose Postgres is unreachable is not promoted to healthy. `/health` stays as the
-  cheap liveness endpoint.
-- **DB connection exhaustion risk** — FIXED (PR pending). `models/base.py` now sets
-  an explicit pool (env-driven `DB_POOL_SIZE=3` + `DB_MAX_OVERFLOW=4` -> ceiling 7
-  per process, + `pool_timeout`/`pool_recycle`), Postgres-only so the SQLite test
-  engine is untouched. Verified: prod `max_connections=100`, ~11 app processes ->
-  worst-case ~77, with headroom. Raise `DB_POOL_SIZE` per service via env if needed.
-- **SIGKILL'd ingest strands a game in a permanent spinner** — FIXED (PR pending).
-  Added `IngestWorker.on_dead_letter`: when the ingest job is finally given up on,
-  the game is marked `error` (so the spinner stops), without clobbering a game that
-  already reached `ready`/`error`. Mirrors the ReportsWorker recovery.
+- **`/health` liveness-only** -> FIXED. `/health` is cheap liveness; `/health/ready`
+  pings the DB and returns 503 if Postgres is unreachable, so a broken deploy is not
+  promoted. Verified in `main.py` + `health.py`.
+- **DB connection exhaustion** -> FIXED. `models/base.py` sets an env-driven pool
+  (`DB_POOL_SIZE=3` + `DB_MAX_OVERFLOW=4` -> 7/process, + timeout/recycle + pre_ping),
+  Postgres-only so the SQLite test engine is untouched. Verified.
+- **SIGKILL'd ingest strands a game in a spinner** -> FIXED both ends. Backend:
+  `IngestWorker.on_dead_letter` marks the game `error` unless already ready/error
+  (verified). Frontend: the import spinner now has a 7-min elapsed guard + a
+  consecutive-error counter and resolves to a "still running, check your library"
+  state (#144).
 
 ### Frontend
-- **Landing page is thin and off-brand** (`frontend/app/page.tsx`): one hero + two
-  buttons, no features/pricing/social proof, and uses **purple/gray** — a direct
-  violation of the CGE green/gold "no blue/purple" brand rule.
-- **No public pricing page**: pricing lives only behind login at
-  `/settings/billing`. A prospect cannot see prices before signing up.
-- **Sport tabs unwired** (`components/os/OSShell.tsx:144`) — FIXED (PR pending).
-  `activeSport` drives no content (purely cosmetic), so rather than fake a switch,
-  the tabs are now non-interactive `<span>` indicators of the org's plan sports.
+- **"Landing page thin/off-brand (`frontend/app/page.tsx`)"** -> PREMISE CORRECTED.
+  `page.tsx` is the APP ROOT at app.coachlenz.com, a minimal internal page — NOT the
+  public marketing landing. The real marketing site (coachlenz.com) is a separate,
+  polished, on-brand page with full pricing (confirmed via Jay's screenshot 2026-08-01).
+  So this item and "No public pricing page" below are effectively resolved by the
+  marketing site. A rebuild of the app-root `page.tsx` was attempted and REVERTED at
+  Jay's request. Do NOT touch outward-facing/marketing pages without a draft + explicit
+  approval (see [[coachlenz-no-ship-outward-without-approval]]).
+- **No public pricing page** -> resolved by the marketing site (see above).
+- **Sport tabs unwired** -> FIXED. Non-interactive plan-sport indicators (spans), not a
+  fake switch.
 
 ---
 
-## P2 — Polish / nice-to-have
+## P2 — status
 
-- **Two design systems** coexist: `.clz` green/gold OSShell (dashboard/intel/
-  reports/games) vs. legacy gray Tailwind (admin/ad/settings/billing) — a visible
-  theme jump. (Intentional per the back-office rebuild, but reads unfinished.)
-- **Survey feature is dead code** — FIXED (PR pending). Removed the unmounted
-  router, the no-op worker (it polled uselessly), and the model; no other code
-  referenced them. DB tables left in place (dropping is destructive, not worth it).
-- `window.alert()` used for errors in admin/grades/reports. Replace with toasts.
-- Presigned **download** URLs defaulted to 7 days — FIXED (PR pending): now 24h
-  (`R2_PRESIGNED_EXPIRY_SECONDS`); the app refreshes them, so a leaked URL is short-lived.
-- Access token survives logout up to 30 min (by design; documented).
-- Doc drift: `sports.py` said "2-game trial" but the limit is 1 — FIXED (PR pending).
-- No cookie/consent banner (jurisdiction-dependent).
+- **Two design systems coexist** (`.clz` OSShell vs legacy gray back-office) -> INTENTIONAL
+  per the back-office rebuild; reads slightly unfinished but is not a bug.
+- **Survey feature dead code** -> FIXED. Router/worker/model removed; DB tables left (drop
+  is destructive, not worth it).
+- **`window.alert()` for errors** in admin/grades/reports -> OPEN (P2 polish; replace with
+  toasts).
+- **Presigned download URLs 7d** -> FIXED (24h `R2_PRESIGNED_EXPIRY_SECONDS`; app refreshes).
+- **Access token survives logout up to 30 min** -> by design, documented.
+- **Doc drift "2-game trial"** -> FIXED (limit is 1).
+- **No cookie/consent banner** -> OPEN (jurisdiction-dependent; low urgency).
 
 ---
 
-## Config & secrets to VERIFY in prod (this audit cannot see Railway env)
+## Config & secrets — VERIFY in prod (yours)
 
-These silently fail if unset; confirm each is set on the relevant service:
-- **R2** (`R2_ACCOUNT_ID`/`_ACCESS_KEY_ID`/`_SECRET_ACCESS_KEY`): if unset, uploads
-  silently route to ephemeral `/tmp` and **all film is lost on redeploy** — no
-  error. Highest-severity silent failure. (`r2.py:_use_local()`)
-- **FERNET_KEY**: empty -> `MultiFernet([])` throws at first encrypt (Hudl creds,
-  encrypted fields).
-- **ANTHROPIC_API_KEY**: empty -> report + detect workers 401; core product no-ops.
-- **RESEND_API_KEY**: empty -> welcome/verify/report emails throw (not guarded like
-  Twilio).
-- **STRIPE_*** (key, webhook secret, 3 price IDs): unset -> billing 401/400.
-- **ADMIN_EMAILS**: must be set (e.g. `aiwithjaycoz@gmail.com`) for admin access.
-- **SENTRY_DSN**: unset on workers regardless (see P0 #3).
+Confirmed live during 2026-08 work: **R2** (HD film ingest works end-to-end -> R2 keys
+are set), **ANTHROPIC_API_KEY** (detection + reports run), **RESEND** (emails configured),
+**ADMIN_EMAILS** (`aiwithjaycoz@gmail.com`), **YOUTUBE_COOKIES** (the HD-ingest lever, on
+`coachlenz-worker_ingest`).
 
-Hygiene:
-- **`ADMIN_PASSWORD` defaults to `"ChangeMeNow!"`** committed in `config.py:88`.
-  `seed.py` reads the env directly and refuses to seed if empty, so it is inert
-  today — but change the default to `""` to remove the latent footgun.
-- **`.env.example` has drifted**: lists Stripe price vars the code does not read
-  (`STRIPE_PRICE_STARTER_*`, `_PROGRAM_*`, `*_MONTHLY/_ANNUAL`), omits ~9 vars the
-  code does use (`ADMIN_EMAILS`, `RESEND_DOMAIN`, `FOUNDER_REPLY_TO`,
+Still to set/confirm:
+- **`SENTRY_DSN`** on the worker services — still unset, so workers report nothing (P0 #3).
+- **`FERNET_KEY`** and **`STRIPE_*`** (key / webhook secret / price IDs) when billing goes live.
+
+Hygiene (small code, mine if you want it):
+- **`ADMIN_PASSWORD` default is still `"ChangeMeNow!"`** (`config.py:101`). Inert today
+  (`seed.py` refuses to seed on an empty env value), but change the default to `""` to
+  remove the latent footgun.
+- **`.env.example` has drifted**: lists Stripe price vars the code does not read, omits
+  ~9 vars it does use (`ADMIN_EMAILS`, `RESEND_DOMAIN`, `FOUNDER_REPLY_TO`,
   `SECRET_KEY_PREVIOUS`, `FERNET_KEYS_PREVIOUS`, `WORKERS_IN_API`, `RLS_ENABLED`,
-  `TRIAL_DAYS`, `MAX_UPLOAD_BYTES`), and shows the wrong `ANTHROPIC_MODEL`. A
-  deployer following it would misconfigure billing and miss key rotation vars.
+  `TRIAL_DAYS`, `MAX_UPLOAD_BYTES`), and shows the wrong `ANTHROPIC_MODEL`.
 
 ---
 
-## What is genuinely solid (so the picture is balanced)
+## What is genuinely solid (unchanged from the audit)
 
-Auth security (hashed single-use reset tokens, refresh revocation via
-token_version, timing-safe login, key rotation, default-deny admin); the SSRF
-guard (resolve-all-records, re-checked at the sink); the job queue (skip-locked,
-heartbeats, watchdog, circuit breaker, dead-letter); idempotent migrations; CORS
-lockdown + security headers; the multi-pass detection engine with honest
-single-camera confidence reporting; report failure transparency (two-audience);
-privacy-stripped share links; the "Powered by Cosby AI Solutions" footer; and a
-real, implemented UATP transparency layer (identity disclosure, confidence
-flagging, action logging, human escalation). API rate-limiting on auth. This is a
-strong solo build.
+Auth security (hashed single-use reset tokens, refresh revocation via token_version,
+timing-safe login, key rotation, default-deny admin); the SSRF guard (resolve-all-records,
+re-checked at the sink); the job queue (skip-locked, heartbeats, watchdog, circuit breaker,
+dead-letter); idempotent migrations; CORS lockdown + security headers; the multi-pass
+detection engine with honest single-camera confidence reporting; report failure
+transparency (two-audience); privacy-stripped share links; the "Powered by Cosby AI
+Solutions" footer; and a real, implemented UATP transparency layer (identity disclosure,
+confidence flagging, action logging, human escalation). API rate-limiting on auth.
+
+---
+
+## Net: what actually stands between here and charging money
+
+1. **Attorney** finalizes the ToS/Privacy/attestation text -> bump `*_VERSION`.
+2. **Stripe dashboard**: create products/prices (incl. annual), set `STRIPE_*` env, register
+   the webhook, enable the Customer Portal. (Pricing on hold per Jay.)
+3. **`SENTRY_DSN`** on the workers.
+4. Small code polish if wanted: wrap Stripe calls, `ADMIN_PASSWORD` default, `.env.example`,
+   `window.alert` -> toasts, cookie banner. None blocks launch.
