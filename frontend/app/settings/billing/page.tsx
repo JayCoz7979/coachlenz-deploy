@@ -38,8 +38,13 @@ const TIERS = [
     annual: 'Annual billing available',
     desc: 'State associations & large organizations',
     features: ['Everything in District', 'Custom integrations', 'White-label option', 'SLA guarantee', 'On-site onboarding'],
+    // Enterprise is contact-sales (no self-serve Stripe price), so its CTA opens an
+    // inquiry email instead of /billing/checkout — which would 400 on an unknown tier.
+    contactSales: true,
   },
 ]
+
+const SALES_EMAIL = 'info@cosbyaisolutions.com'
 
 export default function BillingPage() {
   const { user, isLoading, fetchMe } = useAuth()
@@ -116,6 +121,17 @@ export default function BillingPage() {
                   </ul>
                   {isCurrent ? (
                     <div style={{ textAlign: 'center', padding: 9, borderRadius: 8, fontSize: 12, fontWeight: 700, fontFamily: 'var(--font-syne,sans-serif)', background: 'rgba(45,80,22,0.15)', color: 'var(--green3)', border: '1px solid rgba(45,80,22,0.3)' }}>Active</div>
+                  ) : (tier as any).contactSales ? (
+                    <a href={`mailto:${SALES_EMAIL}?subject=${encodeURIComponent('CoachLenz Enterprise inquiry')}&body=${encodeURIComponent(`We're interested in the ${tier.name} plan for ${user.organization?.name || 'our organization'}.`)}`}
+                      style={{
+                        display: 'block', width: '100%', textAlign: 'center', padding: 9, borderRadius: 8,
+                        fontSize: 12, fontWeight: 700, cursor: 'pointer', textDecoration: 'none',
+                        fontFamily: 'var(--font-syne,sans-serif)',
+                        background: 'transparent', color: 'var(--text2)', border: '1px solid var(--border2)',
+                        boxSizing: 'border-box' as const,
+                      }}>
+                      Contact Sales
+                    </a>
                   ) : (
                     <button onClick={() => checkout(tier.key)} disabled={!!loading} style={{
                       display: 'block', width: '100%', textAlign: 'center', padding: 9, borderRadius: 8,
