@@ -430,9 +430,45 @@ def _onepager_do(prios: List[Dict[str, Any]]) -> List[str]:
     return out
 
 
+# Player-layer 3-color palette (matches services.heatmap): red = worry, green = go.
+_HEAT_RED = "#c0392b"
+_HEAT_YELLOW = "#c9a227"
+_HEAT_GREEN = "#1f7a3a"
+
+
+def _onepager_football_heat(summary: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Static 3-color 'where they run' strip for the football one-pager. Uses run
+    direction (Left/Right/Inside/Outside) colored by volume — where they run most is
+    red (load up), where they rarely go is green. Needs a real run sample; None when
+    they're pass-heavy or the run map is thin (honest, no fabricated field)."""
+    off = summary.get("offense") or {}
+    rda = off.get("run_direction_analysis") or {}
+    if (rda.get("total_runs") or 0) < 6:
+        return None
+    cells = []
+    for label, key in (("Left", "left_pct"), ("Right", "right_pct"),
+                       ("Inside", "inside_pct"), ("Outside", "outside_pct")):
+        pct = rda.get(key)
+        if pct is None:
+            continue
+        if pct >= 60:
+            band, color = "red", _HEAT_RED
+        elif pct >= 40:
+            band, color = "yellow", _HEAT_YELLOW
+        else:
+            band, color = "green", _HEAT_GREEN
+        cells.append({"zone": label, "band": band, "color": color, "label": ""})
+    if not cells:
+        return None
+    return {"zones": cells, "caption": "Red = they run here most. Green = they rarely go here."}
+
+
 def _onepager_heatmap(summary: Dict[str, Any], sport: Optional[str]) -> Optional[Dict[str, Any]]:
-    """Static, print-safe 3-color shot-zone strip (basketball). Football's spatial
-    field heat map is a §12 follow-up; None here keeps this honest."""
+    """Static, print-safe 3-color heat strip for the one-pager: shot zones for
+    basketball, run direction for football. None when the data is too thin, which
+    keeps it honest."""
+    if sport in ("football", "flag_football"):
+        return _onepager_football_heat(summary)
     if sport != "basketball":
         return None
     szm = summary.get("shot_zone_map") or {}

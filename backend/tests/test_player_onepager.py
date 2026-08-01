@@ -105,9 +105,25 @@ def test_football_onepager_run_and_readability():
     out = build_export(_fball_report(), "player_onepager")
     assert any("run the ball" in r for r in out["run"])     # 68% run -> plain
     assert any("I-Form" in r for r in out["run"])
-    assert out["heatmap"] is None                            # football spatial map is a §12 follow-up
+    assert out["heatmap"] is None                            # this fixture has no run-direction data
     assert out["key"] and "%" not in out["key"]
     _assert_readable(out)
+
+
+def test_football_onepager_heat_from_run_direction():
+    from backend.services.report_export import _onepager_heatmap
+    summary = {"offense": {"run_direction_analysis": {
+        "total_runs": 20, "left_pct": 70, "right_pct": 30, "inside_pct": 55, "outside_pct": 45}}}
+    hm = _onepager_heatmap(summary, "football")
+    assert hm and {c["zone"] for c in hm["zones"]} == {"Left", "Right", "Inside", "Outside"}
+    bands = {c["zone"]: c["band"] for c in hm["zones"]}
+    assert bands["Left"] == "red" and bands["Right"] == "green"   # run left 70% -> red, right 30% -> green
+
+
+def test_football_onepager_heat_none_when_thin():
+    from backend.services.report_export import _onepager_heatmap
+    assert _onepager_heatmap({"offense": {"run_direction_analysis": {"total_runs": 3}}}, "football") is None
+    assert _onepager_heatmap({"offense": {}}, "football") is None
 
 
 def test_thin_report_degrades_gracefully():

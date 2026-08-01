@@ -8,6 +8,7 @@ import Link from 'next/link'
 import { ChevronLeft, Loader2, FileText, AlertTriangle, TrendingUp, Shield, Zap, Target, Printer, Download, ChevronDown, Share2, Star, Trash2 } from 'lucide-react'
 import FieldHeatMap from '@/components/report/FieldHeatMap'
 import BasketballShotChart from '@/components/report/BasketballShotChart'
+import PlayerShotSpots from '@/components/report/PlayerShotSpots'
 import TurnoverMap from '@/components/report/TurnoverMap'
 import RunPassMatrix from '@/components/report/RunPassMatrix'
 import ReportChat from '@/components/report/ReportChat'
@@ -825,6 +826,15 @@ export default function ReportPage() {
             && report.summary && typeof report.summary !== 'string' && (
             <div style={{ marginBottom: 28 }}>
               <BasketballShotChart summary={report.summary} />
+            </div>
+          )}
+
+          {/* Individual player shot spots (basketball) — §12 Map 2 */}
+          {String(report.sport || '').toLowerCase() === 'basketball'
+            && report.summary && typeof report.summary !== 'string'
+            && report.summary.player_shot_zones?.length > 0 && (
+            <div style={{ marginBottom: 28 }}>
+              <PlayerShotSpots summary={report.summary} />
             </div>
           )}
 
