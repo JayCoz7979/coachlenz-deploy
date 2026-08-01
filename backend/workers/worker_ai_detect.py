@@ -22,6 +22,7 @@ from backend.models.event import Event
 from backend.models.game import Game
 from backend.models.job import Job
 from backend.services.r2 import generate_presigned_download_url, _use_local, LOCAL_STORAGE_DIR
+from backend.services.frame_enhance import enhance_lowlight_frame, LOWLIGHT_ENHANCE
 from backend.services.agent_log import (
     log_agent_action, confidence_band,
     AGENT_NAME, AGENT_ROLE, HARD_FLOOR, ESCALATION_THRESHOLD,
@@ -1223,14 +1224,34 @@ class AiDetectWorker(BaseWorker):
         graphic usually sits. The full frame loses overlay legibility once Vision
         downsamples it; the zoomed crops keep the small digits readable.
         """
+        import io
         blocks = []
-        with open(path, "rb") as f:
-            full = base64.standard_b64encode(f.read()).decode()
+        # Low-light shadow-lift: night frames bury players (especially dark jerseys) in
+        # deep shadow, which is where play recognition drops. Lift the shadows BEFORE
+        # Vision sees the frame. No-op on day / well-lit film, and wrapped so a failure
+        # can never break the pass — we just fall back to the raw frame.
+        pil_img = None
+        enhanced = False
+        if LOWLIGHT_ENHANCE:
+            try:
+                from PIL import Image
+                pil_img, enhanced = enhance_lowlight_frame(Image.open(path))
+            except Exception as e:
+                logger.warning(f"[ai_detect] low-light enhance failed for {path}: {e}")
+                pil_img, enhanced = None, False
+        if enhanced and pil_img is not None:
+            buf = io.BytesIO()
+            pil_img.save(buf, format="JPEG", quality=90)
+            full = base64.standard_b64encode(buf.getvalue()).decode()
+        else:
+            with open(path, "rb") as f:
+                full = base64.standard_b64encode(f.read()).decode()
         blocks.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": full}})
         try:
-            import io
             from PIL import Image
-            img = Image.open(path).convert("RGB")
+            # Reuse the enhanced image for the overlay crops when we have it, so the
+            # score-bug zones get the same shadow-lift; else load the original.
+            img = pil_img if pil_img is not None else Image.open(path).convert("RGB")
             w, h = img.size
             # Score bugs live in the lower bar or the upper bar depending on broadcast.
             regions = [("lower", (0, int(h * 0.74), w, h)), ("upper", (0, 0, w, int(h * 0.16)))]
