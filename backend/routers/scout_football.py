@@ -41,6 +41,7 @@ from backend.services.auth import (
 )
 from backend.services.agent_log import log_agent_action
 from backend.services.sports import assert_sport_allowed
+from backend.services.legal import assert_student_consent
 from backend.services.tendency_engine import run_tendency_engine
 
 router = APIRouter(prefix="/scout/football", tags=["scout-football"])
@@ -131,6 +132,10 @@ async def create_session(
     db: AsyncSession = Depends(get_db),
 ):
     assert_sport_allowed(org, "football")
+    # COPPA/FERPA: a scout session exists to log opponent student-athletes by jersey
+    # number (individual identifiers), so require the student-data authority
+    # attestation before one can be started — same gate as roster and film.
+    await assert_student_consent(db, org.id)
     gd = None
     if body.game_date:
         try:

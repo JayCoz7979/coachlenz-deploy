@@ -51,9 +51,21 @@ def test_upload_blocked_without_student_consent():
     assert isinstance(d, dict) and d.get("code") == "student_consent_required", d
 
 
+def test_scout_session_blocked_without_student_consent():
+    # Manual opponent scouting also logs minors' jersey numbers, so starting a scout
+    # session must require the same attestation.
+    from backend.routers.scout_football import create_session, SessionCreate
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(create_session(body=SessionCreate(opponent="Rivals"),
+                                   user=_user(), org=_org(), db=_ConsentDB(0)))
+    assert exc.value.status_code == 403
+    assert exc.value.detail.get("code") == "student_consent_required"
+
+
 def run():
     test_upload_blocked_without_student_consent()
-    print("FILM CONSENT GATE GUARD PASSED")
+    test_scout_session_blocked_without_student_consent()
+    print("FILM + SCOUT CONSENT GATE GUARD PASSED")
 
 
 if __name__ == "__main__":
