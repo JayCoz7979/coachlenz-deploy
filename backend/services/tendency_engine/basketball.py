@@ -53,6 +53,8 @@ def analyze_basketball(events) -> Dict[str, Any]:
         "scouting": build_scouting_report(events),
         "shooting_overview": _shooting_overview(shots),
         "shot_zone_map": _shot_zone_map(shots),
+        # §12 Map 2 — per-player shot spots (eFG by zone, hot/cold).
+        "player_shot_zones": _player_shot_zones(shots),
         "shot_creation": _shot_creation(shots),
         "pick_and_roll": _pick_and_roll_analysis(offense_events),
         "isolation": _isolation_analysis(offense_events),
@@ -123,6 +125,54 @@ def _shooting_overview(shots) -> Dict[str, Any]:
 # A zone must take at least this share of all shots to count as HIGH volume for a
 # priority take-away flag (§12 F).
 PRIORITY_MIN_SHARE_PCT = 15.0
+
+
+def _player_jersey(e):
+    """The shooter's jersey for a shot event (first-class column, then extra_data)."""
+    return getattr(e, "player", None) or _x(e, "primary_player_jersey") or _x(e, "ball_carrier_jersey")
+
+
+# §12 Map 2 — a player needs this many shots before we map their spots, and this
+# many in a zone before it can be called a hot/cold zone (small samples lie).
+_PSZ_MIN_SHOTS = 3
+_PSZ_ZONE_MIN = 2
+_PSZ_MAX_PLAYERS = 6
+
+
+def _player_shot_zones(shots) -> list:
+    """Per-player shot-spot map: for each notable scorer, their eFG by zone plus
+    their hot (best-eFG) and cold (worst-eFG) zones. Zones are the same reads the
+    team shot chart uses; no fabricated court coordinates."""
+    by_player = defaultdict(list)
+    for e in shots:
+        j = _player_jersey(e)
+        if j:
+            by_player[str(j).lstrip("#")].append(e)
+
+    out = []
+    for jersey, ps in by_player.items():
+        if len(ps) < _PSZ_MIN_SHOTS:
+            continue
+        by_zone = defaultdict(list)
+        for e in ps:
+            z = _x(e, "shot_zone")
+            if z:
+                by_zone[z].append(e)
+        zones = []
+        for z, zs in sorted(by_zone.items(), key=lambda kv: -len(kv[1])):
+            makes = [e for e in zs if _is_made(e)]
+            tm = [e for e in makes if _is_three(e)]
+            zones.append({"zone": z, "attempts": len(zs), "made": len(makes),
+                          "efg_pct": round((len(makes) + 0.5 * len(tm)) / len(zs) * 100, 1)})
+        if not zones:
+            continue
+        rankable = [z for z in zones if z["attempts"] >= _PSZ_ZONE_MIN]
+        hot = [z["zone"] for z in sorted(rankable, key=lambda z: -z["efg_pct"])[:2]]
+        cold = [z["zone"] for z in sorted(rankable, key=lambda z: z["efg_pct"])[:2] if z["zone"] not in hot]
+        out.append({"jersey": jersey, "shots": len(ps), "zones": zones,
+                    "hot_zones": hot, "cold_zones": cold})
+    out.sort(key=lambda p: -p["shots"])
+    return out[:_PSZ_MAX_PLAYERS]
 
 
 def _zone_confidence(zshots):

@@ -8,6 +8,7 @@ import Link from 'next/link'
 import { ChevronLeft, Loader2, FileText, AlertTriangle, TrendingUp, Shield, Zap, Target, Printer, Download, ChevronDown, Share2, Star, Trash2 } from 'lucide-react'
 import FieldHeatMap from '@/components/report/FieldHeatMap'
 import BasketballShotChart from '@/components/report/BasketballShotChart'
+import PlayerShotSpots from '@/components/report/PlayerShotSpots'
 import TurnoverMap from '@/components/report/TurnoverMap'
 import RunPassMatrix from '@/components/report/RunPassMatrix'
 import ReportChat from '@/components/report/ReportChat'
@@ -43,6 +44,9 @@ const unitChip: CSSProperties = {
   background: 'rgba(201,168,76,0.1)', border: '1px solid rgba(201,168,76,0.25)', color: '#C9A84C',
   borderRadius: 6, padding: '4px 9px', fontSize: 12, fontWeight: 700, cursor: 'pointer',
 }
+
+// §9 FERPA governance: every report output carries this confidentiality notice.
+const FERPA_NOTE = "This report is confidential. It contains performance data covered under your institution's FERPA DPA with CoachLenz."
 
 const SECTION_ICONS: Record<string, any> = {
   run: TrendingUp,
@@ -367,11 +371,13 @@ export default function ReportPage() {
         strong { color: #111; }
         .footer { margin-top: 24px; border-top: 1px solid #ccc; padding-top: 10px; font-size: 10px; color: #999; text-align: center; }
         .wm { color: #C9A84C; font-size: 11px; border: 1px dashed #C9A84C; padding: 6px 10px; border-radius: 6px; margin-bottom: 16px; }
+        .ferpa { font-size: 10px; color: #777; border: 1px solid #ddd; background: #fafafa; border-radius: 5px; padding: 6px 10px; margin-bottom: 14px; }
       </style></head><body>
       <div class="brand">CoachLenz — AI Film Analyst</div>
       <h1>${esc(opts.title)}</h1>
       <div class="sub">${esc(opts.subtitle)}</div>
       <div class="meta">${esc(report?.sport || '')} · Opponent Scouting${date ? ' · ' + date : ''}</div>
+      <div class="ferpa">${FERPA_NOTE}</div>
       ${opts.hint ? `<div class="hint">${esc(opts.hint)}</div>` : ''}
       ${opts.watermarked ? '<div class="wm">TRIAL REPORT — Upgrade at coachlenz.com to remove watermark</div>' : ''}
       ${counts.length ? `<div class="counts">${counts.map(([l, v]) => `<div class="count"><div class="n">${v}</div><div class="l">${esc(l)}</div></div>`).join('')}</div>` : ''}
@@ -729,6 +735,15 @@ export default function ReportPage() {
         </div>
 
         <div style={{ maxWidth: 860, margin: '0 auto', padding: '32px 32px 64px' }}>
+          {/* §9 FERPA confidentiality notice — on every report output */}
+          <div style={{
+            fontSize: 11, color: '#7a7a6e', background: 'rgba(255,255,255,0.02)',
+            border: '1px solid rgba(255,255,255,0.06)', borderRadius: 6,
+            padding: '8px 14px', marginBottom: 20,
+          }}>
+            🔒 {FERPA_NOTE}
+          </div>
+
           {/* Processing state */}
           {isProcessing && (
             <div style={{
@@ -811,6 +826,15 @@ export default function ReportPage() {
             && report.summary && typeof report.summary !== 'string' && (
             <div style={{ marginBottom: 28 }}>
               <BasketballShotChart summary={report.summary} />
+            </div>
+          )}
+
+          {/* Individual player shot spots (basketball) — §12 Map 2 */}
+          {String(report.sport || '').toLowerCase() === 'basketball'
+            && report.summary && typeof report.summary !== 'string'
+            && report.summary.player_shot_zones?.length > 0 && (
+            <div style={{ marginBottom: 28 }}>
+              <PlayerShotSpots summary={report.summary} />
             </div>
           )}
 
