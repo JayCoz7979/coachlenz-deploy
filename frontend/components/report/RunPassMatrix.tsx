@@ -43,17 +43,17 @@ export default function RunPassMatrix({ summary }: { summary: any }) {
     <div style={card}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
         <h3 style={{ fontSize: 14, fontWeight: 700, color: '#f8f6f0', letterSpacing: '0.04em' }}>Run / Pass Matrix</h3>
-        <span style={{ fontSize: 11, color: '#7a7a6e' }}>what they call, by down &amp; hash</span>
+        <span style={{ fontSize: 11, color: '#7a7a6e' }}>what they call, by down &amp; distance</span>
       </div>
 
       {!hasCells ? (
         <div style={{ fontSize: 12, color: '#7ea88a', background: '#123a1e', border: '1px solid rgba(45,140,64,0.25)', borderRadius: 6, padding: 16, lineHeight: 1.6, marginTop: 12 }}>
-          Not enough down-and-hash detail on this film yet. Run a full or DEEP breakdown of the whole game and the matrix fills in.
+          Not enough down-and-distance detail on this film yet (needs the down &amp; distance on the scoreboard). Run a full or DEEP breakdown of the whole game and the matrix fills in.
         </div>
       ) : (
         <>
           <div style={{ fontSize: 10, color: '#7a7a6e', margin: '10px 0 8px' }}>
-            Number = run share of that down &amp; hash. Grey = fewer than {m!.min_sample} plays (too thin to call).
+            Number = run share of that down &amp; distance. Grey = fewer than {m!.min_sample} plays (too thin to call).
           </div>
           <div style={{ display: 'inline-grid', gridTemplateColumns: `56px repeat(${m!.cols.length}, minmax(72px, 1fr))`, gap: 4 }}>
             <div />

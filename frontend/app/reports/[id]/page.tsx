@@ -313,7 +313,7 @@ export default function ReportPage() {
       }).join('')
       return `<tr><td style="font-size:11px;color:#222;font-weight:bold;text-align:right;padding-right:8px">${row}</td>${tds}</tr>`
     }).join('')
-    return `<section><h2>Run / Pass Matrix — By Down &amp; Hash</h2><table style="border-collapse:collapse"><thead>${head}</thead><tbody>${body}</tbody></table><div style="font-size:10px;color:#888;margin-top:5px">Number = run share of that down &amp; hash (small number = plays). Grey = too few to call. Red = run, purple = pass.</div></section>`
+    return `<section><h2>Run / Pass Matrix — By Down &amp; Distance</h2><table style="border-collapse:collapse"><thead>${head}</thead><tbody>${body}</tbody></table><div style="font-size:10px;color:#888;margin-top:5px">Number = run share of that down &amp; distance (small number = plays). Grey = too few to call. Red = run, purple = pass.</div></section>`
   }
 
   // Print/PDF turnover map (§12 Map 3) — clustered bars, top flagged. Appended to
