@@ -2,12 +2,14 @@ import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
 from typing import Optional
 from backend.models.base import get_db
 from backend.models.user import User
 from backend.models.organization import Organization
 from backend.models.job import Job
+from backend.models.billing_event import ProcessedStripeEvent
 from backend.services.auth import get_current_user, get_current_org
 from backend.config import settings
 
@@ -80,6 +82,19 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None),
     et = event["type"]
     data = event["data"]["object"]
 
+    # Idempotency: Stripe delivers at-least-once and WILL redeliver events. Claim this
+    # event id atomically by inserting its marker; if it's already recorded, this is a
+    # redelivery — ack and skip so effects (subscription flips, referral credits) are
+    # never applied twice. The marker is committed in the SAME transaction as the
+    # effects below, so a mid-processing failure leaves the event UN-marked and Stripe
+    # safely retries it.
+    db.add(ProcessedStripeEvent(event_id=event["id"], event_type=et))
+    try:
+        await db.flush()
+    except IntegrityError:
+        await db.rollback()
+        return {"received": True, "duplicate": True}
+
     if et == "checkout.session.completed":
         org_id = data.get("metadata", {}).get("org_id")
         tier = data.get("metadata", {}).get("tier")
@@ -90,13 +105,11 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None),
                 stripe_subscription_id=data.get("subscription"),
                 stripe_subscription_status="active",
             ))
-            await db.commit()
 
     elif et == "customer.subscription.updated":
         sub_id = data["id"]
         status = data["status"]
         await db.execute(update(Organization).where(Organization.stripe_subscription_id == sub_id).values(stripe_subscription_status=status))
-        await db.commit()
 
     elif et == "customer.subscription.deleted":
         sub_id = data["id"]
@@ -105,7 +118,6 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None),
             subscription_tier="trial",
             is_trial=True,
         ))
-        await db.commit()
 
     elif et == "invoice.payment_succeeded":
         customer_id = data.get("customer")
@@ -114,7 +126,6 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None),
             if sub:
                 job = Job(job_type="referral_credit", payload={"customer_id": customer_id, "invoice_id": data["id"]})
                 db.add(job)
-                await db.commit()
 
     elif et == "invoice.payment_failed":
         customer_id = data.get("customer")
@@ -123,6 +134,7 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None),
             org = result.scalar_one_or_none()
             if org:
                 await db.execute(update(Organization).where(Organization.id == org.id).values(stripe_subscription_status="past_due"))
-                await db.commit()
 
+    # One commit: the idempotency marker + all effects persist atomically (or not at all).
+    await db.commit()
     return {"received": True}

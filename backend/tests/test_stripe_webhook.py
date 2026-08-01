@@ -19,6 +19,7 @@ import time
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 
 from backend.config import settings
 from backend.routers.billing import stripe_webhook
@@ -40,41 +41,96 @@ class _FakeRequest:
         return self._body
 
 
-class _NoDB:
-    """Fails loudly if any accepted path tries to touch the database — these smoke
-    payloads are intentionally side-effect-free."""
-    async def execute(self, *_a, **_k):
-        raise AssertionError("webhook should not hit the DB for this payload")
+class _FakeResult:
+    def scalar_one_or_none(self):
+        return None
+
+    def scalar_one(self):
+        return 0
+
+
+class _StubDB:
+    """Minimal fake session. Records the idempotency marker (add) and effect writes
+    (execute), and lets flush() simulate a redelivery via `duplicate=True` (the marker
+    insert collides -> IntegrityError)."""
+    def __init__(self, duplicate=False):
+        self.duplicate = duplicate
+        self.added = []
+        self.executed = 0
+        self.committed = False
+        self.rolled_back = False
+
+    def add(self, obj):
+        self.added.append(obj)
+
+    async def flush(self):
+        if self.duplicate:
+            raise IntegrityError("duplicate event", {}, Exception("unique_violation"))
 
     async def commit(self):
-        raise AssertionError("webhook should not commit for this payload")
+        self.committed = True
+
+    async def rollback(self):
+        self.rolled_back = True
+
+    async def execute(self, *_a, **_k):
+        self.executed += 1
+        return _FakeResult()
 
 
-def _event(event_type: str, obj: dict) -> str:
+def _event(event_type: str, obj: dict, event_id: str = "evt_test") -> str:
     # "object": "event" is present on every real Stripe event envelope; stripe>=15
     # reads it in construct_event to tell v1 from v2.core events.
-    return json.dumps({"id": "evt_test", "object": "event", "type": event_type,
+    return json.dumps({"id": event_id, "object": "event", "type": event_type,
                        "data": {"object": obj}})
 
 
-def _call(body: str, header):
+def _call(body: str, header, db=None):
     return asyncio.run(stripe_webhook(
-        _FakeRequest(body.encode()), stripe_signature=header, db=_NoDB(),
+        _FakeRequest(body.encode()), stripe_signature=header, db=db or _StubDB(),
     ))
 
 
 def test_correctly_signed_event_is_accepted():
-    # No metadata -> handler routes but writes nothing (NoDB guards that).
+    # No metadata -> handler records the idempotency marker + commits, no effect write.
+    db = _StubDB()
     body = _event("checkout.session.completed", {"metadata": {}})
-    out = _call(body, _sign(body, int(time.time())))
+    out = _call(body, _sign(body, int(time.time())), db)
     assert out == {"received": True}
+    assert len(db.added) == 1 and db.committed        # marker persisted
+    assert db.executed == 0                            # no metadata -> no subscription flip
 
 
 def test_signed_event_without_side_effects_is_routed():
-    # invoice.payment_failed with no customer -> harmless, no DB.
+    # invoice.payment_failed with no customer -> marker only, no effect.
+    db = _StubDB()
     body = _event("invoice.payment_failed", {})
-    out = _call(body, _sign(body, int(time.time())))
+    out = _call(body, _sign(body, int(time.time())), db)
     assert out == {"received": True}
+    assert db.executed == 0 and db.committed
+
+
+def test_first_delivery_processes_and_records_marker():
+    # A checkout with metadata: the effect runs once AND the event id is recorded.
+    from backend.models.billing_event import ProcessedStripeEvent
+    db = _StubDB()
+    body = _event("checkout.session.completed", {"metadata": {"org_id": "o1", "tier": "coach"}})
+    out = _call(body, _sign(body, int(time.time())), db)
+    assert out == {"received": True}
+    assert db.executed == 1 and db.committed           # subscription flip ran once
+    assert isinstance(db.added[0], ProcessedStripeEvent) and db.added[0].event_id == "evt_test"
+
+
+def test_redelivered_event_is_skipped_no_double_effect():
+    # Stripe redelivers the same event id -> marker insert collides -> skip. The effect
+    # (which would grant a second referral credit / re-flip the subscription) must NOT run.
+    db = _StubDB(duplicate=True)
+    body = _event("invoice.payment_succeeded",
+                  {"customer": "cus_1", "subscription": "sub_1", "id": "in_1"})
+    out = _call(body, _sign(body, int(time.time())), db)
+    assert out == {"received": True, "duplicate": True}
+    assert db.executed == 0            # effect never applied a second time
+    assert db.rolled_back and not db.committed
 
 
 def test_tampered_payload_is_rejected():
