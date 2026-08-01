@@ -21,6 +21,11 @@ PRICE_MAP = {
     "district": settings.STRIPE_PRICE_DISTRICT,
 }
 
+# Tiers with no self-serve Stripe price — they're sales-assisted. Kept out of
+# PRICE_MAP on purpose; checkout returns a clear "contact sales" message instead of
+# the bare "Invalid tier" (the UI already routes these to a Contact Sales CTA).
+CONTACT_SALES_TIERS = {"enterprise"}
+
 router = APIRouter(prefix="/billing", tags=["billing"])
 
 class CheckoutRequest(BaseModel):
@@ -30,6 +35,11 @@ class CheckoutRequest(BaseModel):
 
 @router.post("/checkout")
 async def create_checkout(body: CheckoutRequest, user: User = Depends(get_current_user), org: Organization = Depends(get_current_org), db: AsyncSession = Depends(get_db)):
+    if body.tier in CONTACT_SALES_TIERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"The {body.tier.title()} plan is sales-assisted — email info@cosbyaisolutions.com to get set up.",
+        )
     if body.tier not in PRICE_MAP:
         raise HTTPException(status_code=400, detail="Invalid tier")
     price_id = PRICE_MAP[body.tier]
