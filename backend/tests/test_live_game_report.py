@@ -261,6 +261,26 @@ def test_chart_summary_opponent_shot_points():
     assert opp[0]["jersey"] == "10"
 
 
+def test_fouled_shots_counted_and_flagged():
+    evs = [
+        # our And-1: made + drew a foul
+        ev(side="offense", extra_data={"half": 1, "shooter_jersey": "5", "shot_zone": "paint",
+                                       "shot_x": 50.0, "shot_y": 82.0, "shot_result": "And-1"}),
+        # our fouled miss: counts as an attempt, drew a foul
+        ev(side="offense", extra_data={"half": 1, "shooter_jersey": "5", "shot_zone": "paint",
+                                       "shot_x": 48.0, "shot_y": 80.0, "shot_result": "Fouled No Shot"}),
+        # opponent fouled attempt we allowed
+        ev(side="defense", result="Fouled - FT Allowed",
+           extra_data={"half": 1, "opp_shooter": "10", "shot_x": 50.0, "shot_y": 84.0}),
+    ]
+    s = build_chart_summary("basketball", evs, {})
+    us = s["live_shot_chart"]
+    assert len(us) == 2                      # both fouled shots are on the map
+    assert us[0]["made"] is True and us[0]["fouled"] is True   # And-1
+    assert us[1]["made"] is False and us[1]["fouled"] is True  # fouled miss, still an attempt
+    assert s["live_shot_chart_opp"][0]["fouled"] is True
+
+
 def test_generate_short_circuits_without_enough_plays():
     # < 3 plays returns a guidance section and never calls the LLM
     out = asyncio.run(

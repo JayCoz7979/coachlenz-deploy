@@ -509,8 +509,11 @@ def build_chart_summary(sport: str, events, config: Dict[str, Any]) -> Dict[str,
                     d["made"] += 1
             sx, sy = x.get("shot_x"), x.get("shot_y")
             if isinstance(sx, (int, float)) and isinstance(sy, (int, float)):
+                sr = _rp(x.get("shot_result"))
                 points.append({"x": round(float(sx), 1), "y": round(float(sy), 1),
-                               "made": _made(x.get("shot_result")), "jersey": x.get("shooter_jersey")})
+                               "made": _made(x.get("shot_result")),
+                               "fouled": ("foul" in sr) or ("and-1" in sr),
+                               "jersey": x.get("shooter_jersey")})
         # Opponent shots (our defensive possessions): the defense court tap stored
         # shot_x/shot_y, and the defensive result says whether the shot went in.
         opp_points: List[Dict[str, Any]] = []
@@ -521,7 +524,9 @@ def build_chart_summary(sport: str, events, config: Dict[str, Any]) -> Dict[str,
                 res = _rp(getattr(e, "result", ""))
                 made = ("gave up" in res) or ("and-1" in res)  # a made FG we allowed
                 opp_points.append({"x": round(float(sx), 1), "y": round(float(sy), 1),
-                                   "made": made, "jersey": x.get("opp_shooter")})
+                                   "made": made,
+                                   "fouled": ("foul" in res) or ("and-1" in res),
+                                   "jersey": x.get("opp_shooter")})
 
         out: Dict[str, Any] = {}
         if zones:
