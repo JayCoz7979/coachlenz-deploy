@@ -213,6 +213,21 @@ def test_chart_summary_football_run_gaps():
     assert by_gap["B-R"]["count"] == 1
 
 
+def test_chart_summary_football_pass_areas():
+    evs = [
+        ev(side="offense", play_type="Pass", yards_gained=18,
+           extra_data={"quarter": 1, "target_area": "Deep Left", "pass_result": "Completion"}),
+        ev(side="offense", play_type="Pass", yards_gained=0,
+           extra_data={"quarter": 1, "target_area": "Deep Left", "pass_result": "Incompletion"}),
+        ev(side="offense", play_type="Pass", yards_gained=6,
+           extra_data={"quarter": 1, "target_area": "Short Middle", "pass_result": "Completion"}),
+    ]
+    by_area = build_chart_summary("football", evs, {})["offense"]["pass_distribution"]["by_area"]
+    assert by_area["Deep Left"]["count"] == 2
+    assert by_area["Deep Left"]["success_rate"] == 50   # 1 of 2 complete
+    assert by_area["Short Middle"]["count"] == 1
+
+
 def test_chart_summary_basketball_zones_and_points():
     evs = [
         ev(side="offense", extra_data={"half": 1, "shooter_jersey": "5", "shot_zone": "wing3_left",

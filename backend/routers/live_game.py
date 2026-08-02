@@ -71,8 +71,8 @@ _EXTRA_KEYS = (
     "score_us", "score_them", "late_game",
     # football / flag offense
     "passer_jersey", "ball_carrier_jersey", "target_jersey", "run_category",
-    "run_gap", "run_gap_label", "route", "rush_lane", "rush_type", "pass_result",
-    "custom_route",
+    "run_gap", "run_gap_label", "route", "target_area", "rush_lane", "rush_type",
+    "pass_result", "custom_route",
     # football / flag defense (ours) + opponent detail
     # (defensive_front is a first-class Event column — set below, not here)
     "opp_formation", "opp_play_type", "opp_ball_carrier", "opp_run_concept",

@@ -524,30 +524,44 @@ def build_chart_summary(sport: str, events, config: Dict[str, Any]) -> Dict[str,
             out["live_shot_chart"] = points
         return out
 
-    # football / flag football: run-gap heat tiles
+    # football / flag football: run-gap heat tiles + pass-target field grid
     is_flag = sport == "flag_football"
     label_map = _LANE_LABEL if is_flag else _GAP_LABEL
     by_gap: Dict[str, Dict[str, int]] = {}
+    by_area: Dict[str, Dict[str, int]] = {}
     for e in off:
-        if not _is_run(e.play_type):
-            continue
         x = _extra(e)
-        g = x.get("rush_lane") if is_flag else x.get("run_gap")
-        if not g:
-            continue
-        d = by_gap.setdefault(label_map.get(g, g), {"count": 0, "yards": 0, "succ": 0})
         yg = _int(getattr(e, "yards_gained", 0))
-        d["count"] += 1
-        d["yards"] += yg
-        if yg >= 4:
-            d["succ"] += 1
-    if not by_gap:
-        return {}
-    return {"offense": {"run_gap_analysis": {"by_gap": {
-        lbl: {"count": d["count"],
-              "avg_yards": round(d["yards"] / d["count"], 1) if d["count"] else 0,
-              "success_rate": round(100 * d["succ"] / d["count"]) if d["count"] else 0}
-        for lbl, d in by_gap.items()}}}}
+        if _is_run(e.play_type):
+            g = x.get("rush_lane") if is_flag else x.get("run_gap")
+            if g:
+                d = by_gap.setdefault(label_map.get(g, g), {"count": 0, "yards": 0, "succ": 0})
+                d["count"] += 1
+                d["yards"] += yg
+                if yg >= 4:
+                    d["succ"] += 1
+        elif _is_pass(e.play_type):
+            a = x.get("target_area")
+            if a:
+                d = by_area.setdefault(a, {"count": 0, "yards": 0, "comp": 0})
+                d["count"] += 1
+                d["yards"] += yg
+                if _rp(x.get("pass_result")) == "completion":
+                    d["comp"] += 1
+    offense: Dict[str, Any] = {}
+    if by_gap:
+        offense["run_gap_analysis"] = {"by_gap": {
+            lbl: {"count": d["count"],
+                  "avg_yards": round(d["yards"] / d["count"], 1) if d["count"] else 0,
+                  "success_rate": round(100 * d["succ"] / d["count"]) if d["count"] else 0}
+            for lbl, d in by_gap.items()}}
+    if by_area:
+        offense["pass_distribution"] = {"by_area": {
+            a: {"count": d["count"],
+                "avg_yards": round(d["yards"] / d["count"], 1) if d["count"] else 0,
+                "success_rate": round(100 * d["comp"] / d["count"]) if d["count"] else 0}
+            for a, d in by_area.items()}}
+    return {"offense": offense} if offense else {}
 
 
 def _football_spec(scope_label: str, has_season: bool) -> List[Dict[str, str]]:
