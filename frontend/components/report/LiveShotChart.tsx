@@ -32,18 +32,19 @@ export default function LiveShotChart({ summary }: { summary: any }) {
   const dot = (p: any, team: 'us' | 'opp', i: number) => {
     const cx = (Number(p.x) / 100) * W, cy = (Number(p.y) / 100) * H
     if (!isFinite(cx) || !isFinite(cy)) return null
-    const k = team + i
-    if (team === 'us') {
-      return p.made
-        ? <circle key={k} cx={cx} cy={cy} r={8} fill="rgba(45,140,64,0.85)" stroke="#eafaee" strokeWidth={1.5} />
-        : <g key={k} stroke={MISS} strokeWidth={3}>
-            <line x1={cx - 6} y1={cy - 6} x2={cx + 6} y2={cy + 6} /><line x1={cx - 6} y1={cy + 6} x2={cx + 6} y2={cy - 6} />
-          </g>
-    }
-    const d = 9, path = `M${cx} ${cy - d} L${cx + d} ${cy} L${cx} ${cy + d} L${cx - d} ${cy} Z`
-    return p.made
-      ? <path key={k} d={path} fill="rgba(45,140,64,0.8)" stroke="#eafaee" strokeWidth={1.5} />
-      : <path key={k} d={path} fill="none" stroke={MISS} strokeWidth={2.5} />
+    // A gold ring marks a shot that drew a foul (and-1 or fouled attempt).
+    const ring = p.fouled ? <circle cx={cx} cy={cy} r={12.5} fill="none" stroke={GOLD} strokeWidth={1.5} /> : null
+    const mark = team === 'us'
+      ? (p.made
+          ? <circle cx={cx} cy={cy} r={8} fill="rgba(45,140,64,0.85)" stroke="#eafaee" strokeWidth={1.5} />
+          : <g stroke={MISS} strokeWidth={3}>
+              <line x1={cx - 6} y1={cy - 6} x2={cx + 6} y2={cy + 6} /><line x1={cx - 6} y1={cy + 6} x2={cx + 6} y2={cy - 6} />
+            </g>)
+      : (() => { const d = 9, path = `M${cx} ${cy - d} L${cx + d} ${cy} L${cx} ${cy + d} L${cx - d} ${cy} Z`
+          return p.made
+            ? <path d={path} fill="rgba(45,140,64,0.8)" stroke="#eafaee" strokeWidth={1.5} />
+            : <path d={path} fill="none" stroke={MISS} strokeWidth={2.5} /> })()
+    return <g key={team + i}>{ring}{mark}</g>
   }
 
   return (
@@ -79,6 +80,7 @@ export default function LiveShotChart({ summary }: { summary: any }) {
       <div style={{ display: 'flex', gap: 16, justifyContent: 'center', marginTop: 10, fontSize: 11, color: '#9a9a8e', flexWrap: 'wrap' }}>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><span style={{ width: 10, height: 10, borderRadius: '50%', background: MADE, display: 'inline-block' }} /> Made</span>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><span style={{ color: MISS, fontWeight: 800 }}>✕</span> Missed</span>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><span style={{ display: 'inline-block', width: 11, height: 11, borderRadius: '50%', border: '1.5px solid ' + GOLD }} /> Drew foul</span>
         {hasUs && hasOpp && <span style={{ color: '#7a7a6e' }}>● circle = us · ◆ diamond = opponent</span>}
       </div>
     </div>
