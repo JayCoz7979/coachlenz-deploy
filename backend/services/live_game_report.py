@@ -573,7 +573,10 @@ async def generate_live_game_sections(
     plays, meta = _split_plays(events)
     config = _extra(meta) if meta else {}
     scope = _rp(params.get("scope")) or "full"
-    scope_label = "Halftime" if scope == "halftime" else "Full Game"
+    scope_label = params.get("label") or ("Halftime" if scope == "halftime" else "Full Game")
+    # Season trend compares to full-game baselines, so it is meaningless for a single
+    # segment (e.g. a Q3 adjustment report). Only offer it on whole-game / half scopes.
+    season_ok = scope not in ("this_quarter",)
 
     if len([e for e in plays]) < 3:
         return [{
@@ -586,14 +589,14 @@ async def generate_live_game_sections(
     if sport == "basketball":
         stats = compute_basketball_stats(events, config)
         foul_trouble = bool(stats["defense"]["foul_trouble"])
-        season = compute_season_baseline(sport, season_events, prior_game_count, config)
+        season = compute_season_baseline(sport, season_events, prior_game_count, config) if season_ok else None
         if season:
             stats["season_baseline"] = season
         stats["coaching_points"] = _coaching_points(tendency_summary)
         spec = _basketball_spec(scope_label, bool(season), foul_trouble)
     else:
         stats = compute_football_stats(events, config)
-        season = compute_season_baseline(sport, season_events, prior_game_count, config)
+        season = compute_season_baseline(sport, season_events, prior_game_count, config) if season_ok else None
         if season:
             stats["season_baseline"] = season
         stats["coaching_points"] = _coaching_points(tendency_summary)
