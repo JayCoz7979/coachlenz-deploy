@@ -233,8 +233,42 @@ class FlagRequest(BaseModel):
 
 class ReportRequest(BaseModel):
     session_id: str
-    scope: str = "full"                       # halftime | full
+    scope: str = "full"                       # full | halftime | this_half | this_quarter
+    period: Optional[int] = None              # current quarter (football) or half (basketball)
     title: Optional[str] = None
+
+
+VALID_SCOPES = ("full", "halftime", "this_half", "this_quarter")
+
+
+def _scope_filter(sport: str, scope: str, period: Optional[int]):
+    """Map a report scope + the current period to (event_filter, label).
+
+    This is what powers the 'adjustment report': a coach can scope the report to the
+    current quarter/half only, to isolate what the opponent changed after halftime,
+    instead of diluting it with the first-half book. event_filter is None for a
+    whole-game report (no filtering).
+    """
+    is_bb = sport == "basketball"
+    p = period or 1
+    if scope == "full":
+        return None, "Full Game"
+    if scope == "halftime":
+        return ({"max_half": 1} if is_bb else {"max_quarter": 2}), "Halftime"
+    if scope == "this_half":
+        if is_bb:
+            return {"min_half": p, "max_half": p}, ("Overtime" if p >= 3 else f"Half {p}")
+        if p >= 5:
+            return {"min_quarter": 5}, "Overtime"
+        return ({"min_quarter": 1, "max_quarter": 2}, "1st Half") if p <= 2 \
+            else ({"min_quarter": 3, "max_quarter": 4}, "2nd Half")
+    if scope == "this_quarter":
+        if is_bb:  # basketball logger is half-granular
+            return {"min_half": p, "max_half": p}, ("Overtime" if p >= 3 else f"Half {p}")
+        if p >= 5:
+            return {"min_quarter": 5}, "Overtime"
+        return {"min_quarter": p, "max_quarter": p}, f"Q{p}"
+    return None, "Full Game"
 
 
 def _play_to_event(org_id, game_id, p: PlayEntry) -> Event:
@@ -547,8 +581,8 @@ async def generate_report(
 ):
     game = await _load_session(db, body.session_id, user.organization_id)
     scope = (body.scope or "full").lower()
-    if scope not in ("halftime", "full"):
-        raise HTTPException(status_code=422, detail="scope must be 'halftime' or 'full'")
+    if scope not in VALID_SCOPES:
+        raise HTTPException(status_code=422, detail=f"scope must be one of: {', '.join(VALID_SCOPES)}")
 
     ev = await db.execute(
         select(Event).where(Event.game_id == game.id, Event.event_type == "play")
@@ -558,16 +592,15 @@ async def generate_report(
         raise HTTPException(status_code=422,
                             detail="No plays logged yet. Log at least one play before generating a report.")
 
-    # params carries the report scope and, for halftime, the first-half event filter
-    # the worker applies. Basketball scopes by 'half', football/flag by 'quarter'.
-    params: Dict[str, Any] = {"scope": scope}
-    if scope == "halftime":
-        params["event_filter"] = ({"max_half": 1} if game.sport == "basketball"
-                                  else {"max_quarter": 2})
+    # params carries the report scope + the event filter the worker applies to narrow
+    # the report to that segment (whole game / a half / a single quarter).
+    event_filter, label = _scope_filter(game.sport, scope, body.period)
+    params: Dict[str, Any] = {"scope": scope, "label": label}
+    if event_filter:
+        params["event_filter"] = event_filter
 
     meta = await _meta_event(db, game.id)
     team_name = ((meta.extra_data if meta else {}) or {}).get("team_name") or "Us"
-    label = "Halftime" if scope == "halftime" else "Full Game"
     report = TendencyReport(
         organization_id=org.id,
         team_id=game.team_id,

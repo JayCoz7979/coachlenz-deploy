@@ -83,6 +83,7 @@ export default function LoggerPage() {
   const [ok, setOk] = useState('')
   const [filterSide, setFilterSide] = useState('all')
   const [editing, setEditing] = useState<string | null>(null)
+  const [reportScope, setReportScope] = useState('full')
 
   useEffect(() => { fetchMe() }, [])
   useEffect(() => { if (!isLoading && !user) router.push('/login') }, [isLoading, user])
@@ -100,6 +101,8 @@ export default function LoggerPage() {
   const isBB = sport === 'basketball'
   const term: TermSystem = (config?.terminology_system as TermSystem) || 'gap_letters'
   const lateGame = isBB && (() => { const s = mmssToSec(clock); return s !== null && s < 120 })()
+  // Numeric current period (OT -> 5 for football, 3 for basketball) for logging + report scope.
+  const periodNum = period === 'OT' ? (isBB ? 3 : 5) : (Number(period) || 1)
 
   const set = (k: string, v: any) => setCur(c => ({ ...c, [k]: v }))
   const roster = (opp: boolean) => (opp ? config?.opponent_roster : config?.our_roster) || []
@@ -117,8 +120,8 @@ export default function LoggerPage() {
       is_quick_log: quick || undefined,
       ...cur,
     }
-    if (isBB) { p.half = Number(period) || 1; if (lateGame) p.late_game = true }
-    else { p.quarter = Number(period) || 1 }
+    if (isBB) { p.half = periodNum; if (lateGame) p.late_game = true }
+    else { p.quarter = periodNum }
     // Derive the primary player (-> Event.player, which the tendency engine reads
     // for player-level tendencies) from whichever jersey fits this play.
     if (!p.primary_player_jersey) {
@@ -197,10 +200,10 @@ export default function LoggerPage() {
     setEditing(null)
   }
 
-  async function report(scope: 'halftime' | 'full') {
+  async function report(scope: string) {
     setBusy(true); setError('')
     try {
-      const r = await api.post('/live/report', { session_id: sessionId, scope })
+      const r = await api.post('/live/report', { session_id: sessionId, scope, period: periodNum })
       router.push(`/reports/${r.data.report_id}`)
     } catch (e: any) {
       setError(e?.response?.data?.detail || 'Could not generate the report.')
@@ -299,14 +302,35 @@ export default function LoggerPage() {
           </div>
         </div>
 
-        {/* REPORTS */}
-        <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
-          <button onClick={() => report('halftime')} disabled={busy || !plays.length} style={reportBtn(true)}>
-            {busy ? <Loader2 size={15} className="animate-spin" /> : <FileBarChart size={15} />} Halftime Report
+        {/* REPORTS — scope selector + one Generate button (as of this moment) */}
+        <div style={{ ...card, marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 10 }}>
+            <span style={lbl}>Report scope</span>
+            <span style={{ fontSize: 11, color: 'var(--text3)' }}>as of {isBB ? `Half ${period}` : (period === 'OT' ? 'OT' : `Q${period}`)}</span>
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <TapGroup
+              options={isBB
+                ? [{ value: 'full', label: 'Whole game' }, { value: 'this_half', label: 'This half' }]
+                : [{ value: 'full', label: 'Whole game' }, { value: 'this_half', label: 'This half' }, { value: 'this_quarter', label: 'This quarter' }]}
+              value={reportScope}
+              onChange={setReportScope}
+              cols={isBB ? 2 : 3}
+            />
+          </div>
+          <button onClick={() => report(reportScope)} disabled={busy || !plays.length} style={{
+            width: '100%', minHeight: 50, borderRadius: 10, border: 'none', cursor: 'pointer',
+            background: 'var(--green3)', color: '#fff', fontSize: 15, fontWeight: 800,
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+            opacity: (busy || !plays.length) ? 0.5 : 1,
+          }}>
+            {busy ? <Loader2 size={16} className="animate-spin" /> : <FileBarChart size={16} />} Generate Report
           </button>
-          <button onClick={() => report('full')} disabled={busy || !plays.length} style={reportBtn(false)}>
-            <FileBarChart size={15} /> Full Game Report
-          </button>
+          <p style={{ fontSize: 11.5, color: 'var(--text3)', margin: '10px 0 0', textAlign: 'center' }}>
+            {reportScope === 'this_quarter' ? 'Isolates what is happening now — the adjustment view.'
+              : reportScope === 'this_half' ? 'This half only.'
+              : 'Everything logged so far.'}
+          </p>
         </div>
 
         {/* REVIEW */}
@@ -359,13 +383,6 @@ export default function LoggerPage() {
     </div>
   )
 }
-
-const reportBtn = (primary: boolean): CSSProperties => ({
-  flex: 1, minHeight: 48, borderRadius: 10, cursor: 'pointer', fontSize: 14, fontWeight: 800,
-  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-  border: primary ? 'none' : '1px solid var(--border2)',
-  background: primary ? 'var(--green3)' : 'var(--bg2)', color: primary ? '#fff' : 'var(--text2)',
-})
 
 // ── situational row (down/distance/field position) ───────────────────────────
 function Situational({ cur, set }: { cur: Cur; set: (k: string, v: any) => void }) {

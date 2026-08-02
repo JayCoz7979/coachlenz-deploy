@@ -10,7 +10,7 @@ import types
 import pytest
 
 from backend.routers.live_game import (
-    _side_from_possession, _play_to_event, _event_to_play, PlayEntry,
+    _side_from_possession, _play_to_event, _event_to_play, PlayEntry, _scope_filter,
 )
 from backend.workers.worker_reports import _apply_event_filter
 
@@ -127,3 +127,48 @@ def test_untimed_and_meta_events_are_kept_on_scope():
     evs = [_ev(quarter=1), _ev(), _ev(quarter=3)]
     kept = _apply_event_filter(evs, {"max_quarter": 2})
     assert len(kept) == 2   # q1 + the untimed one; q3 dropped
+
+
+def test_this_quarter_range_filter():
+    # min==max isolates a single quarter (the adjustment report)
+    evs = [_ev(quarter=2), _ev(quarter=3), _ev(quarter=4)]
+    kept = _apply_event_filter(evs, {"min_quarter": 3, "max_quarter": 3})
+    assert [e.extra_data["quarter"] for e in kept] == [3]
+
+
+def test_second_half_range_filter():
+    evs = [_ev(quarter=1), _ev(quarter=2), _ev(quarter=3), _ev(quarter=4)]
+    kept = _apply_event_filter(evs, {"min_quarter": 3, "max_quarter": 4})
+    assert [e.extra_data["quarter"] for e in kept] == [3, 4]
+
+
+def test_min_half_filter_basketball():
+    evs = [_ev(half=1), _ev(half=2)]
+    kept = _apply_event_filter(evs, {"min_half": 2, "max_half": 2})
+    assert [e.extra_data["half"] for e in kept] == [2]
+
+
+# ── scope -> filter helper ───────────────────────────────────────────────────
+def test_scope_full_has_no_filter():
+    flt, label = _scope_filter("football", "full", 3)
+    assert flt is None and label == "Full Game"
+
+
+def test_scope_this_quarter_football():
+    flt, label = _scope_filter("football", "this_quarter", 3)
+    assert flt == {"min_quarter": 3, "max_quarter": 3} and label == "Q3"
+
+
+def test_scope_this_half_football_second_half():
+    flt, label = _scope_filter("football", "this_half", 3)
+    assert flt == {"min_quarter": 3, "max_quarter": 4} and label == "2nd Half"
+
+
+def test_scope_this_half_basketball():
+    flt, label = _scope_filter("basketball", "this_half", 2)
+    assert flt == {"min_half": 2, "max_half": 2} and label == "Half 2"
+
+
+def test_scope_overtime_football():
+    flt, label = _scope_filter("football", "this_quarter", 5)
+    assert flt == {"min_quarter": 5} and label == "Overtime"

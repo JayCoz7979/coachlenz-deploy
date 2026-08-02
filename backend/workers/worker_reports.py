@@ -24,33 +24,39 @@ logger = logging.getLogger(__name__)
 
 
 def _apply_event_filter(events, flt):
-    """Scope a report's events to a subset (Live Game halftime report).
+    """Scope a report's events to a segment (Live Game scoped / adjustment report).
 
-    ``flt`` is the optional ``params.event_filter`` dict:
-      • ``max_quarter``  keep plays whose extra_data.quarter <= N (football/flag)
-      • ``max_half``     keep plays whose extra_data.half    <= N (basketball)
-    Meta events (side='meta') and events with no recorded period are always kept
-    so setup context and un-timed plays are never silently dropped. A falsy filter
-    returns the events unchanged, which is the path every scout/film report takes.
+    ``flt`` is the optional ``params.event_filter`` dict, any of:
+      • ``min_quarter`` / ``max_quarter``  bound plays by extra_data.quarter (football/flag)
+      • ``min_half``    / ``max_half``      bound plays by extra_data.half    (basketball)
+    A range gives "this quarter" (min==max) or "this half"; a bare max gives "halftime".
+    Meta events and plays with no recorded period are always kept, so setup context and
+    un-timed plays are never silently dropped. A falsy filter returns events unchanged,
+    which is the path every scout/film report and every whole-game live report takes.
     """
     if not flt:
         return events
-    max_q = flt.get("max_quarter")
-    max_h = flt.get("max_half")
-    if max_q is None and max_h is None:
+    min_q, max_q = flt.get("min_quarter"), flt.get("max_quarter")
+    min_h, max_h = flt.get("min_half"), flt.get("max_half")
+    if all(v is None for v in (min_q, max_q, min_h, max_h)):
         return events
+
+    def _num(v):
+        return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
 
     def keep(e):
         extra = e.extra_data or {}
-        if max_q is not None:
-            q = extra.get("quarter")
-            # OT (quarter 5+) is second-half; keep only quarters at/under the cap.
-            if isinstance(q, (int, float)):
-                return q <= max_q
-        if max_h is not None:
-            h = extra.get("half")
-            if isinstance(h, (int, float)):
-                return h <= max_h
+        q, h = _num(extra.get("quarter")), _num(extra.get("half"))
+        if q is not None:
+            if max_q is not None and q > max_q:
+                return False
+            if min_q is not None and q < min_q:
+                return False
+        if h is not None:
+            if max_h is not None and h > max_h:
+                return False
+            if min_h is not None and h < min_h:
+                return False
         return True  # no period recorded -> keep (don't lose data on a scope pass)
 
     return [e for e in events if keep(e)]
