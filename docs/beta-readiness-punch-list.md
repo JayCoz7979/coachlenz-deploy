@@ -123,14 +123,12 @@ Still to set/confirm:
 - **`SENTRY_DSN`** on the worker services — still unset, so workers report nothing (P0 #3).
 - **`FERNET_KEY`** and **`STRIPE_*`** (key / webhook secret / price IDs) when billing goes live.
 
-Hygiene (small code, mine if you want it):
-- **`ADMIN_PASSWORD` default is still `"ChangeMeNow!"`** (`config.py:101`). Inert today
-  (`seed.py` refuses to seed on an empty env value), but change the default to `""` to
-  remove the latent footgun.
-- **`.env.example` has drifted**: lists Stripe price vars the code does not read, omits
-  ~9 vars it does use (`ADMIN_EMAILS`, `RESEND_DOMAIN`, `FOUNDER_REPLY_TO`,
-  `SECRET_KEY_PREVIOUS`, `FERNET_KEYS_PREVIOUS`, `WORKERS_IN_API`, `RLS_ENABLED`,
-  `TRIAL_DAYS`, `MAX_UPLOAD_BYTES`), and shows the wrong `ANTHROPIC_MODEL`.
+Hygiene:
+- **`ADMIN_PASSWORD` default `"ChangeMeNow!"`** -> FIXED (#146). Default is now `""`
+  (nothing reads `settings.ADMIN_PASSWORD`; `seed.py` already refuses empty/weak).
+- **`.env.example` drift** -> FIXED (#146). Rewritten to mirror `config.py` exactly:
+  correct `ANTHROPIC_MODEL` (4-6), the real three `STRIPE_PRICE_*`, and the ~13 vars
+  that were missing, plus the optional ingest cookie/proxy levers.
 
 ---
 
