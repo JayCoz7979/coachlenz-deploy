@@ -1,0 +1,16 @@
+{
+  "id": "/",
+  "name": "CoachLenz — AI Film Analyst OS",
+  "short_name": "CoachLenz",
+  "description": "See Every Tendency. Win Every Game. Real-time sideline play logging and AI film analysis.",
+  "start_url": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#1c1c1c",
+  "theme_color": "#1c1c1c",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
