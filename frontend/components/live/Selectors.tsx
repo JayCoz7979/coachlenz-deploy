@@ -103,7 +103,9 @@ export function RouteTree({ value, onChange, customRoutes }: {
 /** Realistic half-court shot chart. Tap the spot the shot came from: a marker drops
  *  and it resolves to the correct zone (Corner 3, Wing 3, Top 3, Paint, FT, Mid-range),
  *  which feeds the same 10-zone stats the report reads. Looks like a court, one tap. */
-export function ShotZoneCourt({ value, onChange }: { value?: string | null; onChange: (v: string) => void }) {
+export function ShotZoneCourt({ value, onChange, onPoint }: {
+  value?: string | null; onChange: (v: string) => void; onPoint?: (p: { x: number; y: number }) => void
+}) {
   const W = 300, H = 284, RIMX = 150, RIMY = 246, R3 = 132
   const [pt, setPt] = useState<{ x: number; y: number } | null>(null)
   const ref = useRef<SVGSVGElement | null>(null)
@@ -128,6 +130,8 @@ export function ShotZoneCourt({ value, onChange }: { value?: string | null; onCh
     const y = Math.max(14, Math.min(272, ((e.clientY - r.top) / r.height) * H))
     setPt({ x, y })
     onChange(classify(x, y))
+    // Normalised 0-100 court coordinates for the report's true shot-location map.
+    onPoint?.({ x: Math.round((x / W) * 1000) / 10, y: Math.round((y / H) * 1000) / 10 })
   }
 
   const line = GOLD, faint = 'rgba(201,168,76,0.30)'

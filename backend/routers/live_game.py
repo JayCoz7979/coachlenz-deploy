@@ -82,7 +82,7 @@ _EXTRA_KEYS = (
     "st_unit", "kicker_jersey", "returner_jersey", "st_result", "st_yards",
     # basketball offense
     "ball_handler_jersey", "ball_entry", "primary_action", "shooter_jersey",
-    "shot_zone", "shot_result", "turnover_type", "turnover_jersey",
+    "shot_zone", "shot_x", "shot_y", "shot_result", "turnover_type", "turnover_jersey",
     "offensive_rebound", "second_chance", "foul_drawn_jersey", "possession_result",
     # basketball defense (ours) + opponent detail
     "defensive_set", "pressure_applied", "help_defense", "opp_ball_handler",

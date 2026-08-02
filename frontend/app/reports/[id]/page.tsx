@@ -8,6 +8,7 @@ import Link from 'next/link'
 import { ChevronLeft, Loader2, FileText, AlertTriangle, TrendingUp, Shield, Zap, Target, Printer, Download, ChevronDown, Share2, Star, Trash2 } from 'lucide-react'
 import FieldHeatMap from '@/components/report/FieldHeatMap'
 import BasketballShotChart from '@/components/report/BasketballShotChart'
+import LiveShotChart from '@/components/report/LiveShotChart'
 import PlayerShotSpots from '@/components/report/PlayerShotSpots'
 import TurnoverMap from '@/components/report/TurnoverMap'
 import RunPassMatrix from '@/components/report/RunPassMatrix'
@@ -828,6 +829,15 @@ export default function ReportPage() {
             && (report.summary.offense?.run_direction_analysis?.total_runs || 0) >= 6 && (
             <div style={{ marginBottom: 28 }}>
               <RunDirectionArrows summary={report.summary} />
+            </div>
+          )}
+
+          {/* True shot-location map (Live Game basketball) — plotted from tap coords */}
+          {String(report.sport || '').toLowerCase() === 'basketball'
+            && report.summary && typeof report.summary !== 'string'
+            && report.summary.live_shot_chart?.length > 0 && (
+            <div style={{ marginBottom: 28 }}>
+              <LiveShotChart summary={report.summary} />
             </div>
           )}
 

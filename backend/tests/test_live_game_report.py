@@ -11,7 +11,8 @@ import pytest
 
 from backend.services.live_game_report import (
     compute_football_stats, compute_basketball_stats, compute_season_baseline,
-    generate_live_game_sections, _in_red_zone, _converted, _poss_points, _score_momentum,
+    generate_live_game_sections, build_chart_summary,
+    _in_red_zone, _converted, _poss_points, _score_momentum,
 )
 
 pytestmark = pytest.mark.unit
@@ -199,6 +200,34 @@ def test_season_baseline_requires_three_games():
     assert compute_season_baseline("football", _football_events(), 2, {}) is None
     base = compute_season_baseline("football", _football_events(), 3, {})
     assert base and base["games"] == 3 and "yards_per_play" in base
+
+
+def test_chart_summary_football_run_gaps():
+    evs = _football_events() + [
+        ev(side="offense", play_type="Run", yards_gained=8,
+           extra_data={"quarter": 1, "ball_carrier_jersey": "28", "run_gap": "right_b"}),
+    ]
+    by_gap = build_chart_summary("football", evs, {})["offense"]["run_gap_analysis"]["by_gap"]
+    # #22 ran left_a twice, #28 right_b once -> readable gap labels with counts
+    assert by_gap["A-L"]["count"] == 2
+    assert by_gap["B-R"]["count"] == 1
+
+
+def test_chart_summary_basketball_zones_and_points():
+    evs = [
+        ev(side="offense", extra_data={"half": 1, "shooter_jersey": "5", "shot_zone": "wing3_left",
+                                       "shot_result": "Made", "shot_x": 12.0, "shot_y": 30.0}),
+        ev(side="offense", extra_data={"half": 1, "shooter_jersey": "5", "shot_zone": "paint",
+                                       "shot_result": "Missed", "shot_x": 50.0, "shot_y": 80.0}),
+    ]
+    s = build_chart_summary("basketball", evs, {})
+    zmap = s["shot_zone_map"]["zones"]
+    assert zmap["Wing 3 Left"]["attempts"] == 1 and zmap["Wing 3 Left"]["made"] == 1
+    assert zmap["Paint"]["made"] == 0
+    # true shot-location points carry through with made/miss
+    pts = s["live_shot_chart"]
+    assert len(pts) == 2
+    assert pts[0]["made"] is True and pts[1]["made"] is False
 
 
 def test_generate_short_circuits_without_enough_plays():

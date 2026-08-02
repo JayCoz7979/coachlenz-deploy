@@ -510,7 +510,7 @@ function BasketballPanel({ mode, cur, set, lateGame, roster }: any) {
           </div>
           <Field label="Ball entry"><TapGroup options={BB_BALL_ENTRY} value={cur.ball_entry} onChange={v => set('ball_entry', v)} cols={3} /></Field>
           <Field label="Primary action"><TapGroup options={BB_PRIMARY_ACTION} value={cur.primary_action} onChange={v => set('primary_action', v)} cols={3} /></Field>
-          <Field label="Shot zone (tap the court)"><ShotZoneCourt value={cur.shot_zone} onChange={v => set('shot_zone', v)} /></Field>
+          <Field label="Shot zone (tap the court)"><ShotZoneCourt value={cur.shot_zone} onChange={v => set('shot_zone', v)} onPoint={p => { set('shot_x', p.x); set('shot_y', p.y) }} /></Field>
           <Field label="Shot result"><TapGroup options={BB_SHOT_RESULT} value={cur.shot_result} onChange={v => { set('shot_result', v); set('result', v) }} cols={3} /></Field>
           {/turnover/i.test(String(cur.shot_result || '')) && (
             <Field label="Turnover type"><TapGroup options={BB_TURNOVER_TYPE} value={cur.turnover_type} onChange={v => set('turnover_type', v)} cols={3} /></Field>
@@ -533,7 +533,7 @@ function BasketballPanel({ mode, cur, set, lateGame, roster }: any) {
             <Jersey label="Opp shooter #" value={cur.opp_shooter} onChange={v => set('opp_shooter', v)} />
           </div>
           <Field label="Opp primary action"><TapGroup options={BB_OPP_ACTION} value={cur.opp_primary_action} onChange={v => set('opp_primary_action', v)} cols={3} /></Field>
-          <Field label="Shot zone allowed (tap the court)"><ShotZoneCourt value={cur.shot_zone_allowed} onChange={v => set('shot_zone_allowed', v)} /></Field>
+          <Field label="Shot zone allowed (tap the court)"><ShotZoneCourt value={cur.shot_zone_allowed} onChange={v => set('shot_zone_allowed', v)} onPoint={p => { set('shot_x', p.x); set('shot_y', p.y) }} /></Field>
           <Field label="Result"><TapGroup options={BB_DEF_RESULT} value={cur.result} onChange={v => set('result', v)} cols={3} /></Field>
           <div style={{ display: 'flex', gap: 10 }}>
             <TapGroup options={[{ value: 'dreb', label: 'Def. Rebound' }]} value={cur.defensive_rebound ? 'dreb' : ''} onChange={() => set('defensive_rebound', !cur.defensive_rebound)} cols={1} />
