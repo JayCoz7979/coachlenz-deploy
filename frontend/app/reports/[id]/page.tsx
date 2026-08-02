@@ -835,7 +835,7 @@ export default function ReportPage() {
           {/* True shot-location map (Live Game basketball) — plotted from tap coords */}
           {String(report.sport || '').toLowerCase() === 'basketball'
             && report.summary && typeof report.summary !== 'string'
-            && report.summary.live_shot_chart?.length > 0 && (
+            && ((report.summary.live_shot_chart?.length > 0) || (report.summary.live_shot_chart_opp?.length > 0)) && (
             <div style={{ marginBottom: 28 }}>
               <LiveShotChart summary={report.summary} />
             </div>
