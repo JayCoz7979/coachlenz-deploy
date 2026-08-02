@@ -4,11 +4,12 @@
  * Mobile-first, one-handed, high-contrast. Auto-saves every play immediately.
  * Consumes only existing CoachLenz CSS tokens; no global styles are modified.
  */
-import { useEffect, useState, useCallback, useMemo, type CSSProperties } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef, type CSSProperties } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
+import { newUid, loadPlays, savePlays, loadCfg, saveCfg } from '@/components/live/offline'
 import { SPORT_META } from '@/lib/sports'
 import {
   FB_FORMATIONS, FB_PLAY_TYPES, FB_RUN_CATEGORIES, FLAG_RUSH_TYPES, FB_PASS_RESULTS, FB_OUTCOMES,
@@ -21,7 +22,7 @@ import { TapGroup, GapSelector, RushLaneSelector, RouteTree, TargetAreaGrid, Sho
 import { Zap, Loader2, Undo2, FileBarChart, ClipboardList, Flag, Trash2, X, ChevronDown } from 'lucide-react'
 
 type Cur = Record<string, any>
-type Play = { event_id?: string; _pending?: boolean; [k: string]: any }
+type Play = { event_id?: string; client_uid?: string; synced?: boolean; _pending?: boolean; [k: string]: any }
 type Config = {
   sport: string; team_name?: string; terminology_system?: TermSystem; custom_routes?: string[]
   league_format?: string; our_roster?: { jersey: string; name?: string }[]
@@ -84,16 +85,77 @@ export default function LoggerPage() {
   const [filterSide, setFilterSide] = useState('all')
   const [editing, setEditing] = useState<string | null>(null)
   const [reportScope, setReportScope] = useState('full')
+  const [online, setOnline] = useState(true)
+
+  const playsRef = useRef<Play[]>([])
+  const syncing = useRef(false)
+  useEffect(() => { playsRef.current = plays }, [plays])
+  // Persist every play the instant it changes, so a crash / reload / dead zone
+  // never loses the log (survives with the session config cache below).
+  useEffect(() => { if (config) savePlays(sessionId, plays) }, [plays, sessionId, config])
+
+  // Flush unsynced plays to the server. Idempotent: the server dedupes on client_uid,
+  // so re-sending queued plays after a reconnect never duplicates. Stable (reads a ref).
+  const sync = useCallback(async () => {
+    if (syncing.current) return
+    const pending = playsRef.current.filter(p => !p.synced && p.client_uid)
+    if (!pending.length) return
+    syncing.current = true
+    try {
+      const payloads = pending.map(({ synced, event_id, _pending, _failed, ...rest }) => rest)
+      const r = await api.post('/live/plays', { session_id: sessionId, plays: payloads })
+      const syncedUids: string[] = r.data?.synced_uids || []
+      const uidToEvent: Record<string, string> = {}
+      ;(r.data?.written || []).forEach((w: any) => { if (w.client_uid) uidToEvent[w.client_uid] = w.event_id })
+      setPlays(ps => ps.map(p => (p.client_uid && syncedUids.includes(p.client_uid))
+        ? { ...p, synced: true, _failed: false, event_id: p.event_id || uidToEvent[p.client_uid!] }
+        : p))
+      setOnline(true)
+    } catch {
+      setOnline(false)   // stays queued + persisted; retried on reconnect / interval
+    } finally { syncing.current = false }
+  }, [sessionId])
 
   useEffect(() => { fetchMe() }, [])
   useEffect(() => { if (!isLoading && !user) router.push('/login') }, [isLoading, user])
 
+  // Load: recover from local cache instantly, then reconcile with the server. If the
+  // server is unreachable, keep the cached config + queued plays so logging continues.
   useEffect(() => {
     if (!user) return
+    const localPlays = loadPlays(sessionId)
+    const localCfg = loadCfg(sessionId)
+    if (localCfg) setConfig(localCfg)
+    if (localPlays.length) setPlays(localPlays)
     api.get(`/live/session/${sessionId}`).then(r => {
-      setConfig(r.data.config); setOpponent(r.data.opponent || 'Opponent'); setPlays(r.data.plays || [])
-    }).catch(e => setError(e?.response?.data?.detail || 'Could not load this game session.'))
+      setConfig(r.data.config); saveCfg(sessionId, r.data.config)
+      setOpponent(r.data.opponent || 'Opponent')
+      const server: Play[] = (r.data.plays || []).map((p: any) => ({ ...p, synced: true, client_uid: p.client_uid || p.event_id }))
+      const serverUids = new Set(server.map(s => s.client_uid))
+      const unsynced = (localPlays.length ? localPlays : []).filter(p => !p.synced && p.client_uid && !serverUids.has(p.client_uid))
+      setPlays([...server, ...unsynced])
+      setOnline(true)
+      setTimeout(() => sync(), 0)
+    }).catch(e => {
+      // Offline / server error: only hard-fail if we have nothing cached to work from.
+      if (localCfg) { setOnline(false) }
+      else { setError(e?.response?.data?.detail || 'Could not load this game session.') }
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, sessionId])
+
+  // Reconnect + periodic retry so a queued log flushes the moment the network returns.
+  useEffect(() => {
+    const goOnline = () => { setOnline(true); sync() }
+    const goOffline = () => setOnline(false)
+    if (typeof navigator !== 'undefined') setOnline(navigator.onLine)
+    window.addEventListener('online', goOnline)
+    window.addEventListener('offline', goOffline)
+    const id = setInterval(() => { if (typeof navigator === 'undefined' || navigator.onLine) sync() }, 12000)
+    return () => { window.removeEventListener('online', goOnline); window.removeEventListener('offline', goOffline); clearInterval(id) }
+  }, [sync])
+
+  const unsynced = plays.filter(p => !p.synced).length
 
   const sport = config?.sport || 'football'
   const isFB = sport === 'football' || sport === 'flag_football'
@@ -155,26 +217,18 @@ export default function LoggerPage() {
     setCur({ down: String(nDown), distance: String(nDist), field_position: nSpot })
   }
 
-  const log = useCallback(async () => {
+  const log = useCallback(() => {
     if (!config) return
     const play = buildPlay()
     setError(''); setOk('')
-    const optimistic: Play = { ...play, _pending: true }
-    setPlays(ps => [...ps, optimistic])
-    const carry = { down: cur.down, distance: cur.distance, field_position: cur.field_position }
+    // Add to the local queue immediately (persisted by the effect above); the play is
+    // safe even with no connection. Then attempt a flush — offline, it just stays queued.
+    setPlays(ps => [...ps, { ...play, client_uid: newUid(), synced: false }])
     advance()
-    try {
-      const r = await api.post('/live/plays', { session_id: sessionId, plays: [play] })
-      const id = r.data.event_ids?.[0]
-      setPlays(ps => ps.map(p => (p === optimistic ? { ...p, event_id: id, _pending: false } : p)))
-      setOk('saved'); setTimeout(() => setOk(''), 1200)
-    } catch (e: any) {
-      setPlays(ps => ps.map(p => (p === optimistic ? { ...p, _pending: false, _failed: true } : p)))
-      setError(e?.response?.data?.detail || 'Save failed, the play is kept locally.')
-      setCur(carry)  // restore so the coach can retry
-    }
+    setOk('logged'); setTimeout(() => setOk(''), 1000)
+    setTimeout(() => sync(), 0)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config, cur, mode, period, clock, scoreUs, scoreThem, quick, sessionId, plays.length])
+  }, [config, cur, mode, period, clock, scoreUs, scoreThem, quick, sync, plays.length])
 
   const undo = async () => {
     const last = plays[plays.length - 1]
@@ -183,19 +237,20 @@ export default function LoggerPage() {
     if (last.event_id) { try { await api.delete(`/live/play/${last.event_id}`) } catch {} }
   }
 
+  // Edits are keyed by client_uid (stable offline). A synced play also hits the server;
+  // an unsynced (queued) play just updates locally and carries the change when it syncs.
   async function flagPlay(p: Play) {
-    if (!p.event_id) return
     const next = !p.is_coaching_point
-    setPlays(ps => ps.map(x => (x.event_id === p.event_id ? { ...x, is_coaching_point: next } : x)))
-    try { await api.post(`/live/play/${p.event_id}/flag`, { is_coaching_point: next }) } catch {}
+    setPlays(ps => ps.map(x => (x.client_uid === p.client_uid ? { ...x, is_coaching_point: next } : x)))
+    if (p.event_id) { try { await api.post(`/live/play/${p.event_id}/flag`, { is_coaching_point: next }) } catch {} }
   }
   async function deletePlay(p: Play) {
-    setPlays(ps => ps.filter(x => x.event_id !== p.event_id))
+    setPlays(ps => ps.filter(x => x.client_uid !== p.client_uid))
     setEditing(null)
     if (p.event_id) { try { await api.delete(`/live/play/${p.event_id}`) } catch {} }
   }
   async function saveEdit(p: Play, patch: any) {
-    setPlays(ps => ps.map(x => (x.event_id === p.event_id ? { ...x, ...patch } : x)))
+    setPlays(ps => ps.map(x => (x.client_uid === p.client_uid ? { ...x, ...patch } : x)))
     if (p.event_id) { try { await api.patch(`/live/play/${p.event_id}`, patch) } catch {} }
     setEditing(null)
   }
@@ -249,6 +304,12 @@ export default function LoggerPage() {
         <div style={{ maxWidth: 720, margin: '6px auto 0', display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, color: 'var(--text3)' }}>
           <span>{plays.length} plays</span>
           {ok && <span style={{ color: 'var(--green3)' }}>✓ {ok}</span>}
+          {/* Offline / sync status: green = all saved, gold = queued locally, red = offline */}
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontWeight: 700,
+            color: !online ? 'var(--red)' : unsynced ? 'var(--gold)' : 'var(--green3)' }}>
+            <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'currentColor' }} />
+            {!online ? `Offline · ${unsynced} queued` : unsynced ? `Saving ${unsynced}…` : 'All saved'}
+          </span>
           <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6 }}>
             <input style={{ ...input, width: 74, minHeight: 32, textAlign: 'center', padding: 5 }} placeholder="MM:SS" value={clock} onChange={e => setClock(e.target.value)} />
           </span>
@@ -354,19 +415,20 @@ export default function LoggerPage() {
                     : /penalty/i.test(String(p.result || '')) ? 'rgba(201,168,76,0.12)' : 'transparent'
                 const num = plays.length - i
                 const side = p.side || (p.possession === 'them' ? 'defense' : 'offense')
+                const rowKey = p.client_uid || p.event_id || `t${num}`
                 return (
-                  <div key={p.event_id || `t${num}`}>
-                    <div onClick={() => setEditing(editing === (p.event_id || `t${num}`) ? null : (p.event_id || `t${num}`))}
+                  <div key={rowKey}>
+                    <div onClick={() => setEditing(editing === rowKey ? null : rowKey)}
                       style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 8, cursor: 'pointer', background: rowColor, border: '1px solid var(--border2)' }}>
                       <span style={{ color: 'var(--text3)', fontSize: 12, width: 22 }}>{num}</span>
                       <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text3)', width: 30 }}>{side === 'special_teams' ? 'ST' : side === 'defense' ? 'DEF' : 'OFF'}</span>
                       <span style={{ fontSize: 13, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{playSummary(p, isBB)}</span>
                       {p.is_coaching_point && <Flag size={13} style={{ color: 'var(--gold)' }} />}
-                      {p._pending && <span style={{ fontSize: 11, color: 'var(--gold)' }}>•</span>}
-                      {p._failed && <span style={{ fontSize: 11, color: 'var(--red)' }}>!</span>}
+                      {/* sync dot: gold = queued (not yet on server), else saved */}
+                      {p.synced === false && <span title="queued" style={{ fontSize: 13, color: 'var(--gold)' }}>•</span>}
                       <ChevronDown size={14} style={{ color: 'var(--text3)' }} />
                     </div>
-                    {editing === (p.event_id || `t${num}`) && (
+                    {editing === rowKey && (
                       <EditRow p={p} onFlag={() => flagPlay(p)} onDelete={() => deletePlay(p)} onSave={(patch: any) => saveEdit(p, patch)} onClose={() => setEditing(null)} />
                     )}
                   </div>

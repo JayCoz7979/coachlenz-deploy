@@ -91,7 +91,7 @@ _EXTRA_KEYS = (
     # basketball special situations
     "special_situation", "set_play_name", "intended_outcome",
     # logging metadata
-    "penalty_type", "penalty_on", "penalty_jersey", "is_quick_log",
+    "penalty_type", "penalty_on", "penalty_jersey", "is_quick_log", "client_uid",
 )
 
 
@@ -201,6 +201,9 @@ class PlayEntry(BaseModel):
 
     is_coaching_point: Optional[bool] = False
     note: Optional[str] = None
+    # Client-generated stable id for offline-safe, idempotent sync: a reconnect flush
+    # that re-sends a play already stored is deduped on this, never duplicated.
+    client_uid: Optional[str] = None
 
     class Config:
         extra = "allow"                       # tolerate any extra sport-specific tag
@@ -327,6 +330,7 @@ def _event_to_play(e: Event) -> Dict[str, Any]:
         "is_coaching_point": bool(e.is_highlight),
         "note": e.coach_note,
         "is_quick_log": bool(extra.get("is_quick_log")),
+        "client_uid": extra.get("client_uid"),
         "extra": extra,
     }
 
@@ -473,20 +477,39 @@ async def add_plays(
     db: AsyncSession = Depends(get_db),
 ):
     game = await _load_session(db, body.session_id, user.organization_id)
-    objs = [_play_to_event(user.organization_id, game.id, p) for p in body.plays]
+
+    # Idempotent offline sync: skip any play whose client_uid is already stored, so a
+    # reconnect flush that re-sends queued plays can never create duplicates. Plays with
+    # no client_uid (legacy/online path) are always written.
+    existing = await db.execute(
+        select(Event).where(Event.game_id == game.id, Event.event_type == "play")
+    )
+    existing_uids = {
+        (e.extra_data or {}).get("client_uid")
+        for e in existing.scalars().all() if (e.extra_data or {}).get("client_uid")
+    }
+    to_write = [p for p in body.plays if not (p.client_uid and p.client_uid in existing_uids)]
+    already = [p.client_uid for p in body.plays if p.client_uid and p.client_uid in existing_uids]
+
+    objs = [_play_to_event(user.organization_id, game.id, p) for p in to_write]
     db.add_all(objs)
     await db.commit()
     for o in objs:
         await db.refresh(o)
 
     # On-the-fly jersey numbers auto-join the session roster (spec: setup rosters).
-    await _absorb_new_jerseys(db, game, body.plays)
+    await _absorb_new_jerseys(db, game, to_write)
 
     by_side: Dict[str, int] = {}
     for o in objs:
         by_side[o.side] = by_side.get(o.side, 0) + 1
+    written = [{"client_uid": (o.extra_data or {}).get("client_uid"), "event_id": str(o.id)} for o in objs]
+    # Every uid the server now holds (freshly written + already present) so the client
+    # can mark them synced and stop re-sending them.
+    synced_uids = [w["client_uid"] for w in written if w["client_uid"]] + already
     return {"session_id": str(game.id), "plays_written": len(objs),
-            "by_side": by_side, "event_ids": [str(o.id) for o in objs]}
+            "by_side": by_side, "event_ids": [str(o.id) for o in objs],
+            "written": written, "skipped_duplicates": len(already), "synced_uids": synced_uids}
 
 
 async def _absorb_new_jerseys(db: AsyncSession, game: Game, plays: List[PlayEntry]) -> None:
