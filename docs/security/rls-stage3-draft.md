@@ -69,6 +69,26 @@ Everything else — every authenticated request handler that runs under
 `set_org_context(jwt.org)` before its first query, so the users lookup is itself
 org-scoped and returns the caller's own user (no bootstrap deadlock).
 
+## Validation status (2026-08-01)
+
+The **SQL / policy half is validated** against the real schema, in isolation, with no
+prod app table touched:
+
+- **Policy mechanism** (throwaway schema on the real Postgres, cleaned up) — 6/6:
+  `app.org_id=''` (Stage 2's fail-closed value) returns 0 rows and does NOT error on
+  `''::uuid` (this is the `NULLIF` fix); unset context -> 0 rows; org A -> A only;
+  org B -> B only; cross-org INSERT rejected by `WITH CHECK`; same-org INSERT allowed.
+- **Coverage on the full real schema** (stood up an isolated `rls_stage3_val` database,
+  applied all 36 migrations -> 47 tables, then `stage3_enable_rls.sql`, then dropped it):
+  all **32** org-scoped tables got ENABLE+FORCE RLS + the `org_isolation` policy; the
+  15 non-org tables (incl. `processed_stripe_events`) got none; zero missing, zero
+  over-reach. The dynamic script applies cleanly to every real table.
+
+**Still to validate (the app-code half):** the actual application running as `app_rls`
+with RLS on — that login/refresh/signup, share links, workers, and every org-scoped
+handler still return rows. That needs the router/worker wiring (step 5) plus a
+Postgres-backed run of the suite + a live cross-org probe. That is the remaining work.
+
 ## Validation runbook (DB-branch only)
 
 1. **Create a Railway Postgres DB-branch** from prod (a throwaway copy of the schema).
