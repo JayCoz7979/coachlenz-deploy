@@ -71,6 +71,9 @@ export default function LiveSetupPage() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [sessions, setSessions] = useState<Session[]>([])
+  // Set when the backend requires the one-time student-data (COPPA/FERPA)
+  // attestation before a session can be created. `retry` re-runs start().
+  const [consent, setConsent] = useState<{ attestation: string } | null>(null)
 
   useEffect(() => { fetchMe() }, [])
   useEffect(() => { if (!isLoading && !user) router.push('/login') }, [isLoading, user])
@@ -101,8 +104,25 @@ export default function LiveSetupPage() {
       router.push(`/live/${r.data.session_id}`)
     } catch (e: any) {
       const d = e?.response?.data?.detail
-      setError(typeof d === 'string' ? d : (d?.message || 'Could not start the game session.'))
+      // A student-consent 403 opens the one-time attestation panel (not a dead end).
+      if (e?.response?.status === 403 && d && typeof d === 'object' && d.code === 'student_consent_required') {
+        setConsent({ attestation: d.attestation })
+      } else {
+        setError(typeof d === 'string' ? d : (d?.message || 'Could not start the game session.'))
+      }
       setBusy(false)
+    }
+  }
+
+  // Record the one-time COPPA/FERPA attestation, then continue starting the game.
+  async function attestConsent() {
+    setError('')
+    try {
+      await api.post('/legal/student-consent')
+      setConsent(null)
+      await start()
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || 'Could not record your confirmation.')
     }
   }
 
@@ -120,6 +140,23 @@ export default function LiveSetupPage() {
         </p>
 
         {error && <div style={{ background: 'var(--redl)', color: 'var(--red)', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 13 }}>{error}</div>}
+
+        {consent && (
+          <div style={{ ...card, border: '1px solid var(--gold)' }}>
+            <div style={{ fontWeight: 800, marginBottom: 8, color: 'var(--gold)' }}>Confirm student-data consent</div>
+            <p style={{ fontSize: 13, color: 'var(--text2)', lineHeight: 1.5, marginBottom: 14 }}>{consent.attestation}</p>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={attestConsent} disabled={busy} style={{
+                flex: 1, minHeight: 46, borderRadius: 8, border: 'none', cursor: 'pointer',
+                background: 'var(--gold)', color: '#1c1c1c', fontWeight: 800, fontSize: 14,
+              }}>I confirm &amp; continue</button>
+              <button onClick={() => setConsent(null)} style={{
+                minHeight: 46, padding: '0 18px', borderRadius: 8, cursor: 'pointer', fontWeight: 700, fontSize: 14,
+                background: 'transparent', border: '1px solid var(--border2)', color: 'var(--text3)',
+              }}>Cancel</button>
+            </div>
+          </div>
+        )}
 
         {sessions.length > 0 && (
           <div style={card}>

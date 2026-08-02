@@ -30,8 +30,22 @@ function OnboardingForm() {
   const [maxSports, setMaxSports] = useState(1)
   const [tier, setTier] = useState('trial')
   const [picked, setPicked] = useState<string[]>([])
+  // COPPA/FERPA student-data attestation, captured on this final step.
+  const [attestation, setAttestation] = useState('')
+  const [alreadyConsented, setAlreadyConsented] = useState(false)
+  const [dataConsent, setDataConsent] = useState(false)
 
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, [k]: e.target.value }))
+
+  // On the sport step, load the student-data attestation text (and whether the org
+  // already attested, in which case the checkbox is not needed).
+  useEffect(() => {
+    if (phase !== 'sport') return
+    api.get('/legal/status').then(r => {
+      setAttestation(r.data.student_data_attestation || '')
+      setAlreadyConsented(!!r.data.student_data_consent)
+    }).catch(() => {})
+  }, [phase])
 
   // Resume in place if a signed-in-but-unfinished user lands here.
   useEffect(() => {
@@ -120,7 +134,7 @@ function OnboardingForm() {
     if (picked.length === 0) { setError('Pick your sport to continue.'); return }
     setLoading(true); setError('')
     try {
-      await api.post('/onboarding/sports', { sports: picked })
+      await api.post('/onboarding/sports', { sports: picked, student_data_consent: dataConsent })
       router.push('/dashboard')
     } catch (err: any) { setError(err.response?.data?.detail || 'Could not save your sport.') }
     finally { setLoading(false) }
@@ -218,7 +232,13 @@ function OnboardingForm() {
               })}
             </div>
             <p className="text-xs text-gray-500">Selected {picked.length} of {maxSports}.</p>
-            <button onClick={chooseSport} disabled={loading || picked.length === 0} className="btn-primary w-full">{loading ? 'Locking in...' : 'Continue'}</button>
+            {!alreadyConsented && (
+              <label className="flex items-start gap-3 rounded-lg px-4 py-3" style={{ background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.25)' }}>
+                <input type="checkbox" checked={dataConsent} onChange={e => setDataConsent(e.target.checked)} className="mt-1" />
+                <span className="text-xs text-gray-300 leading-relaxed">{attestation || 'I confirm I have consent to provide student-athlete information to CoachLenz.'}</span>
+              </label>
+            )}
+            <button onClick={chooseSport} disabled={loading || picked.length === 0 || (!alreadyConsented && !dataConsent)} className="btn-primary w-full">{loading ? 'Locking in...' : 'Continue'}</button>
           </div>
         )}
 

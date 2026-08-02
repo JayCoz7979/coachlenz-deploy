@@ -11,7 +11,7 @@ This router owns:
 Email / phone verification endpoints live in the auth router alongside login.
 """
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
@@ -24,6 +24,7 @@ from backend.services.sports import (
     CHOOSABLE_SPORTS, VALID_SPORTS, label, max_sports_for_tier, chosen_sports,
 )
 from backend.services.twilio_verify import phone_verification_configured
+from backend.services import legal as legal_service
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
 
@@ -63,11 +64,16 @@ async def onboarding_status(
 
 class ChooseSportsRequest(BaseModel):
     sports: List[str]
+    # COPPA/FERPA: the org's one-time student-data authority attestation, captured
+    # here at onboarding so coaches aren't stopped by the just-in-time gate later
+    # (on roster / film / scout / live). The checkbox on the sport step sets this.
+    student_data_consent: bool = False
 
 
 @router.post("/sports")
 async def choose_sports(
     body: ChooseSportsRequest,
+    request: Request,
     user: User = Depends(get_current_user),
     org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db),
@@ -120,6 +126,18 @@ async def choose_sports(
                 f"Upgrade your plan to add more sports."
             ),
         )
+
+    # COPPA/FERPA student-data attestation: capture it here, once, so the coach is
+    # not stopped by the just-in-time gate on roster / film / scout / live later.
+    # Idempotent — skip if the org already attested at the current version.
+    if not await legal_service.has_current_acceptance(db, org.id, "student_data"):
+        if not body.student_data_consent:
+            raise HTTPException(
+                status_code=422,
+                detail="Confirm you have consent to provide student-athlete information to continue.",
+            )
+        ip = request.client.host if request.client else None
+        await legal_service.record_acceptance(db, org.id, user.id, "student_data", ip=ip)
 
     org.chosen_sports = picked
     org.onboarding_completed = True
