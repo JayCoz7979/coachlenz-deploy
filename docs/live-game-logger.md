@@ -71,11 +71,16 @@ The report renders in the existing `/reports/[id]` viewer. It carries:
   games; the worker pools their events via `compute_season_baseline` and the section
   compares tonight's rates to that baseline. Suppressed on single-quarter scopes.
 
-**Worked examples** (illustrative — real pipeline stats + heat maps, hand-authored
-prose to show the format): [`docs/examples/live-game-flag-report.example.html`](examples/live-game-flag-report.example.html)
-is a full flag-football game report (all 9 sections + rush-lane / pass field heat
-maps). Basketball and football full-game reports (with shot charts, opponent shots,
-fouled-attempt rings, and an active season-trend example) were produced the same way.
+**Worked examples** in [`docs/examples/`](examples/) — one full-game report per sport,
+illustrative (real-pipeline stats + heat maps; hand-authored prose to show the format).
+Open in a browser:
+- [`live-game-football-report.example.html`](examples/live-game-football-report.example.html)
+  — run-gap + pass field heat maps; A-gap-keyed / B-gap-counter tell.
+- [`live-game-flag-report.example.html`](examples/live-game-flag-report.example.html)
+  — rush-lane + pass field heat maps (flag terminology).
+- [`live-game-basketball-report.example.html`](examples/live-game-basketball-report.example.html)
+  — Foul-Trouble Alert, shot-zone chart, true shot-location court (us + opponent +
+  fouled-attempt rings), and an **active Season Trend** (game 4 vs a 3-game baseline).
 
 ## Delivered vs. deferred
 
