@@ -5,6 +5,7 @@ from backend.workers.base import BaseWorker
 from backend.models.base import AsyncSessionLocal
 from backend.models.report import TendencyReport
 from backend.models.event import Event
+from backend.models.game import Game
 from backend.models.organization import Organization
 from backend.services import learning_loop
 from backend.services.down_distance import infer_down_distance
@@ -20,6 +21,40 @@ from sqlalchemy import select, update, func, or_
 from sqlalchemy.dialects.postgresql import array
 
 logger = logging.getLogger(__name__)
+
+
+def _apply_event_filter(events, flt):
+    """Scope a report's events to a subset (Live Game halftime report).
+
+    ``flt`` is the optional ``params.event_filter`` dict:
+      • ``max_quarter``  keep plays whose extra_data.quarter <= N (football/flag)
+      • ``max_half``     keep plays whose extra_data.half    <= N (basketball)
+    Meta events (side='meta') and events with no recorded period are always kept
+    so setup context and un-timed plays are never silently dropped. A falsy filter
+    returns the events unchanged, which is the path every scout/film report takes.
+    """
+    if not flt:
+        return events
+    max_q = flt.get("max_quarter")
+    max_h = flt.get("max_half")
+    if max_q is None and max_h is None:
+        return events
+
+    def keep(e):
+        extra = e.extra_data or {}
+        if max_q is not None:
+            q = extra.get("quarter")
+            # OT (quarter 5+) is second-half; keep only quarters at/under the cap.
+            if isinstance(q, (int, float)):
+                return q <= max_q
+        if max_h is not None:
+            h = extra.get("half")
+            if isinstance(h, (int, float)):
+                return h <= max_h
+        return True  # no period recorded -> keep (don't lose data on a scope pass)
+
+    return [e for e in events if keep(e)]
+
 
 class ReportsWorker(BaseWorker):
     job_type = "report"
@@ -58,6 +93,32 @@ class ReportsWorker(BaseWorker):
             )
             events = events_result.scalars().all()
 
+            # Live Game Play Logger (migration 037): an optional per-report filter
+            # scopes a halftime report to first-half plays only. Absent/NULL for
+            # every scout & film report, so this is a no-op for all existing reports.
+            report_params = report.params or {}
+            events = _apply_event_filter(events, report_params.get("event_filter"))
+
+            # For a live-game report, pull the team's PRIOR live games (same org+sport)
+            # so the writer can build the Season Trend Comparison (spec Section 9,
+            # 3+ games). Scoped to this org only; empty for every other report type.
+            season_events, prior_game_count = [], 0
+            if report_type == "live_game":
+                cur_ids = set(str(g) for g in (report.game_ids or []))
+                prior_q = await db.execute(
+                    select(Game.id).where(
+                        Game.organization_id == org_id, Game.sport == sport,
+                        Game.status == "live",
+                    ).order_by(Game.created_at.desc()).limit(30)
+                )
+                prior_ids = [gid for gid in prior_q.scalars().all() if str(gid) not in cur_ids]
+                prior_game_count = len(prior_ids)
+                if prior_ids:
+                    se = await db.execute(
+                        select(Event).where(Event.game_id.in_(prior_ids), Event.event_type == "play")
+                    )
+                    season_events = se.scalars().all()
+
             # §14 learning loop: unless the coach is in Manual Mode, apply this
             # account's ACTIVE learned relabels to the report's view of the film.
             # In-memory only — we never commit these events, so the stored plays are
@@ -88,12 +149,25 @@ class ReportsWorker(BaseWorker):
             flagged = collect_flagged_plays(events)
             if flagged:
                 tendency_summary["coach_flagged_plays"] = flagged
-            prose_sections = await generate_prose_sections(
-                sport=sport,
-                tendency_summary=tendency_summary,
-                report_type=report_type,
-                is_trial=is_trial,
-            )
+            if report_type == "live_game":
+                # Bespoke 9-section halftime / full-game report from the logged plays.
+                from backend.services.live_game_report import generate_live_game_sections
+                prose_sections = await generate_live_game_sections(
+                    sport=sport,
+                    events=events,
+                    params=report_params,
+                    tendency_summary=tendency_summary,
+                    is_trial=is_trial,
+                    season_events=season_events,
+                    prior_game_count=prior_game_count,
+                )
+            else:
+                prose_sections = await generate_prose_sections(
+                    sport=sport,
+                    tendency_summary=tendency_summary,
+                    report_type=report_type,
+                    is_trial=is_trial,
+                )
             encrypted = encrypt_json(tendency_summary)
         except Exception as e:
             # Record the failure on the report so the UI stops spinning and offers a

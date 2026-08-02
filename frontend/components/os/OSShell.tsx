@@ -21,6 +21,7 @@ const NAV: { section: string; items: NavItem[] }[] = [
     items: [
       { href: '/dashboard', label: 'Dashboard', icon: '📊' },
       { href: '/games', label: 'Film Room', icon: '🎬' },
+      { href: '/live', label: 'Live Game', icon: '⚡', badge: 'New', badgeKind: 'gold' },
       { href: '/tendencies', label: 'Tendency Engine', icon: '🧠' },
       { href: '/reports', label: 'Scout Reports', icon: '📋' },
     ],
