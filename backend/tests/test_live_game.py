@@ -80,6 +80,16 @@ def test_coaching_point_sets_highlight_and_note():
     assert e.coach_note == "watch the backside"
 
 
+def test_client_uid_round_trips_for_idempotent_sync():
+    # The offline queue tags each play with a client_uid; it must persist to
+    # extra_data and come back on read so a reconnect flush can dedupe on it.
+    p = PlayEntry(possession="us", play_type="Run", client_uid="abc-123")
+    e = _play_to_event(ORG, GAME, p)
+    assert e.extra_data["client_uid"] == "abc-123"
+    e.id = GAME
+    assert _event_to_play(e)["client_uid"] == "abc-123"
+
+
 def test_event_to_play_round_trip_exposes_extra():
     p = PlayEntry(possession="us", quarter=2, play_type="Pass", route="Slant",
                   target_jersey="80", primary_player_jersey="80", yards_gained=12)
