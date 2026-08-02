@@ -554,13 +554,12 @@ async def generate_report(
         raise HTTPException(status_code=422,
                             detail="No plays logged yet. Log at least one play before generating a report.")
 
-    # Halftime scoping: first half only. Basketball uses 'half', football/flag 'quarter'.
-    params = None
+    # params carries the report scope and, for halftime, the first-half event filter
+    # the worker applies. Basketball scopes by 'half', football/flag by 'quarter'.
+    params: Dict[str, Any] = {"scope": scope}
     if scope == "halftime":
-        if game.sport == "basketball":
-            params = {"event_filter": {"max_half": 1}}
-        else:
-            params = {"event_filter": {"max_quarter": 2}}
+        params["event_filter"] = ({"max_half": 1} if game.sport == "basketball"
+                                  else {"max_quarter": 2})
 
     meta = await _meta_event(db, game.id)
     team_name = ((meta.extra_data if meta else {}) or {}).get("team_name") or "Us"
@@ -570,7 +569,7 @@ async def generate_report(
         team_id=game.team_id,
         game_ids=[str(game.id)],
         sport=game.sport,
-        report_type="self_scout",              # an "us"-oriented report (our tendencies)
+        report_type="live_game",               # dispatches to the bespoke 9-section writer
         title=body.title or f"{label} Report: {team_name} vs {game.opponent or 'Opponent'}",
         params=params,
         is_trial=getattr(org, "is_trial", False),

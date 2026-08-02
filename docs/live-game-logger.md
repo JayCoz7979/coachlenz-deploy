@@ -12,8 +12,8 @@ modified (only additive files + two additive migrations).
 | Session            | `games` row, `status='live'` (migration 038)                       |
 | Setup + rosters    | one `game_meta` event (`side='meta'`), like the proven `scout_meta`|
 | Plays              | shared `events` table (`event_type='play'`, `side`, `extra_data`)  |
-| Reports            | `Job` → `worker_reports` → `report_writer` → `/reports/[id]`        |
-| Report type        | `self_scout` (an "us"-oriented report of our own tendencies)       |
+| Reports            | `Job` → `worker_reports` → `live_game_report` → `/reports/[id]`     |
+| Report type        | `live_game` (dispatches to the bespoke 9-section writer)           |
 | Halftime scoping   | `tendency_reports.params.event_filter` (migration 037)             |
 
 **Side mapping** (we log our own team): possession *us* → `side='offense'`,
@@ -50,18 +50,27 @@ engine and ONE report pipeline serve the logger — no new play tables.
 
 **Delivered & tested:** all three sports; game setup; the logger with touch SVG
 selectors; quick log; play review (edit/delete/flag/filter); halftime + full-game
-report generation wired to the live report pipeline; delivery via the existing
-`/reports/[id]` viewer (on-screen, share link, read-only for staff), saved as a
-unified game record on the dashboard.
+report generation; delivery via the existing `/reports/[id]` viewer (on-screen, share
+link, read-only for staff), saved as a unified game record on the dashboard.
+
+**The bespoke 9-section report** (`backend/services/live_game_report.py`): a dedicated
+writer that computes every stat DETERMINISTICALLY in Python from the logged plays
+(counts are trustworthy because code counted them), then makes ONE LLM call to write
+the coordinator voice. Sections, per the spec:
+1. Offensive Summary · 2. Player Tendencies (Our Offense) · 3. Defensive Summary ·
+4. Player Tendencies (Opponent) · 5. Special Teams · 6. Top 3 Adjustments ·
+7. Coaching Points · 8. Score & Momentum · 9. Season Trend (only when 3+ prior live
+games exist for the team+sport; the worker gathers those prior events). Basketball
+uses the same nine, shot-zone / possession framed, with a Foul-Trouble Alert banner
+(any of our players with 3+ fouls) pinned to the top. Dispatched from `worker_reports`
+on `report_type == "live_game"`. Stats layer is unit-tested in `test_live_game_report.py`.
 
 **Deferred (each a separate system, intentionally not stubbed):**
 1. Offline PWA sync (service worker + local queue + reconnect flush).
-2. Cross-game adaptive-learning suggestions (needs 3+ games; suggestion banners).
+2. Cross-game adaptive-learning suggestions (in-logger banners; the report's Season
+   Trend section already uses prior games, but the live suggestion layer is separate).
 3. Anonymous collective scouting network (opt-in, cross-team opponent profiles).
 4. Native PDF export (report currently shares via the existing link/viewer).
-5. A **bespoke live-game report writer** matching the exact 9-section spec format
-   (opponent player tendencies, special-teams, momentum). Today the report uses the
-   existing `self_scout` writer — a real, first-half-scoped breakdown of our tendencies.
 
 ## Discoverability
 
