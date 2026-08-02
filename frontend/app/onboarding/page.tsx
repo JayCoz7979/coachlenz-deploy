@@ -239,6 +239,9 @@ function OnboardingForm() {
               </label>
             )}
             <button onClick={chooseSport} disabled={loading || picked.length === 0 || (!alreadyConsented && !dataConsent)} className="btn-primary w-full">{loading ? 'Locking in...' : 'Continue'}</button>
+            <p className="text-center text-xs text-gray-500">
+              Curious what you get? <a href="/examples" target="_blank" rel="noreferrer" className="text-brand-400 hover:underline">See example reports →</a>
+            </p>
           </div>
         )}
 
