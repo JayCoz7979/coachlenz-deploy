@@ -543,11 +543,11 @@ def build_chart_summary(sport: str, events, config: Dict[str, Any]) -> Dict[str,
         elif _is_pass(e.play_type):
             a = x.get("target_area")
             if a:
-                d = by_area.setdefault(a, {"count": 0, "yards": 0, "comp": 0})
+                d = by_area.setdefault(a, {"count": 0, "yards": 0, "succ": 0})
                 d["count"] += 1
                 d["yards"] += yg
-                if _rp(x.get("pass_result")) == "completion":
-                    d["comp"] += 1
+                if yg >= 4:  # gain-of-4+ = successful, same definition as run gaps
+                    d["succ"] += 1
     offense: Dict[str, Any] = {}
     if by_gap:
         offense["run_gap_analysis"] = {"by_gap": {
@@ -559,7 +559,7 @@ def build_chart_summary(sport: str, events, config: Dict[str, Any]) -> Dict[str,
         offense["pass_distribution"] = {"by_area": {
             a: {"count": d["count"],
                 "avg_yards": round(d["yards"] / d["count"], 1) if d["count"] else 0,
-                "success_rate": round(100 * d["comp"] / d["count"]) if d["count"] else 0}
+                "success_rate": round(100 * d["succ"] / d["count"]) if d["count"] else 0}
             for a, d in by_area.items()}}
     return {"offense": offense} if offense else {}
 

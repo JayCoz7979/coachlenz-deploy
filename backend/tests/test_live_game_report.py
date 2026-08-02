@@ -214,18 +214,20 @@ def test_chart_summary_football_run_gaps():
 
 
 def test_chart_summary_football_pass_areas():
+    # success_rate is gain-of-4+ (same as run gaps), NOT completion %.
     evs = [
         ev(side="offense", play_type="Pass", yards_gained=18,
            extra_data={"quarter": 1, "target_area": "Deep Left", "pass_result": "Completion"}),
         ev(side="offense", play_type="Pass", yards_gained=0,
            extra_data={"quarter": 1, "target_area": "Deep Left", "pass_result": "Incompletion"}),
-        ev(side="offense", play_type="Pass", yards_gained=6,
+        # a completed pass short of 4 yards is NOT a "success" under gain-of-4+
+        ev(side="offense", play_type="Pass", yards_gained=2,
            extra_data={"quarter": 1, "target_area": "Short Middle", "pass_result": "Completion"}),
     ]
     by_area = build_chart_summary("football", evs, {})["offense"]["pass_distribution"]["by_area"]
     assert by_area["Deep Left"]["count"] == 2
-    assert by_area["Deep Left"]["success_rate"] == 50   # 1 of 2 complete
-    assert by_area["Short Middle"]["count"] == 1
+    assert by_area["Deep Left"]["success_rate"] == 50    # 18-yd gain succeeds, incompletion fails
+    assert by_area["Short Middle"]["success_rate"] == 0  # 2-yd completion is not gain-of-4+
 
 
 def test_chart_summary_basketball_zones_and_points():
