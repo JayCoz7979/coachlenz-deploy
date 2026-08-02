@@ -1,0 +1,226 @@
+<!--
+  ILLUSTRATIVE EXAMPLE of a Live Game Logger basketball full-game report.
+  Stats/heat-map values (incl. the 3-game season-trend baseline) are computed by the
+  real pipeline (compute_basketball_stats + build_chart_summary + compute_season_baseline)
+  on representative logged games; coordinator prose is hand-authored to show the format.
+-->
+<title>Full Game Report — Tanner vs Athens (Basketball)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{--bg:#1c1c1c;--bg2:#26251f;--bg3:#2e2c24;--line:rgba(201,168,76,.14);--line2:rgba(255,255,255,.08);
+    --text:#f8f6f0;--text2:#d9d4c6;--text3:#8f8a7a;--gold:#C9A84C;--gold2:#e2c06a;--goldbg:rgba(201,168,76,.10);
+    --green:#2d8c40;--green2:#42b25c;--greenbg:rgba(45,140,64,.12);--red:#e07070;--redbg:rgba(224,112,112,.13)}
+  *{box-sizing:border-box} body{margin:0}
+  .wrap{background:var(--bg);color:var(--text);font-family:-apple-system,"Segoe UI",system-ui,Roboto,sans-serif;
+    font-size:15px;line-height:1.55;font-variant-numeric:tabular-nums;padding:0 0 56px;-webkit-text-size-adjust:100%}
+  .sheet{max-width:780px;margin:0 auto;padding:0 20px}
+  .alert{margin:20px 0 0;background:var(--redbg);border:1px solid rgba(224,112,112,.4);border-radius:12px;padding:14px 18px}
+  .alert .t{font-size:11px;font-weight:850;letter-spacing:.14em;text-transform:uppercase;color:var(--red);margin-bottom:6px}
+  .alert .b{font-size:14px;color:var(--text)}
+  .banner{padding:26px 0 20px}
+  .eyebrow{font-size:11px;font-weight:800;letter-spacing:.2em;text-transform:uppercase;color:var(--gold);display:flex;align-items:center;gap:8px;margin-bottom:14px}
+  .eyebrow .dot{width:6px;height:6px;border-radius:50%;background:var(--gold);box-shadow:0 0 0 4px var(--goldbg)}
+  .matchup{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;flex-wrap:wrap}
+  h1{font-size:clamp(26px,5.5vw,40px);line-height:1.02;margin:0;font-weight:850;letter-spacing:-.02em}
+  h1 .vs{color:var(--text3);font-weight:600;font-size:.6em}
+  .score{text-align:right;font-weight:850;letter-spacing:-.02em;line-height:1;font-size:clamp(28px,6.5vw,42px);white-space:nowrap}
+  .score .tag{display:block;font-size:11px;font-weight:800;letter-spacing:.2em;text-transform:uppercase;color:var(--gold);margin-bottom:6px}
+  .score .res{color:var(--green2);font-weight:700;font-size:12px;letter-spacing:.14em;text-transform:uppercase;margin-top:6px}
+  .meta{margin-top:16px;display:flex;flex-wrap:wrap;gap:8px 18px;color:var(--text3);font-size:12.5px;font-weight:600} .meta b{color:var(--text2)}
+  .strip{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line2);border:1px solid var(--line2);border-radius:12px;overflow:hidden;margin:22px 0 8px}
+  .strip .cell{background:var(--bg2);padding:15px 14px} .strip .num{font-size:22px;font-weight:850;letter-spacing:-.02em;line-height:1}
+  .strip .num.g{color:var(--gold2)} .strip .num.pos{color:var(--green2)} .strip .num.neg{color:var(--red)}
+  .strip .lbl{font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--text3);margin-top:7px}
+  @media(max-width:560px){.strip{grid-template-columns:repeat(2,1fr)}}
+  section{padding:24px 0 6px;border-top:1px solid var(--line2)} section:first-of-type{border-top:0}
+  .head{display:flex;align-items:baseline;gap:12px;margin-bottom:12px}
+  .no{font-size:12px;font-weight:850;color:var(--gold);border:1px solid var(--line);border-radius:6px;padding:3px 8px;background:var(--goldbg);flex:none}
+  h2{font-size:17px;margin:0;font-weight:800;letter-spacing:-.01em}
+  .lead{color:var(--text2);margin:0 0 14px;font-size:15.5px}
+  ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:9px}
+  li{position:relative;padding-left:20px;color:var(--text2)} li::before{content:"";position:absolute;left:2px;top:9px;width:6px;height:6px;border-radius:1px;background:var(--gold);transform:rotate(45deg)}
+  b{color:var(--text);font-weight:750} .pos{color:var(--green2);font-weight:750} .neg{color:var(--red);font-weight:750}
+  .adjust{background:var(--greenbg);border:1px solid rgba(45,140,64,.32);border-radius:14px;padding:22px 22px 8px;margin-top:8px}
+  .adjust .no{color:var(--green2);background:var(--greenbg);border-color:rgba(45,140,64,.3)} .adjust h2{color:#eaf6ec} .adjust .lead{color:#bfe0c6}
+  ol.calls{list-style:none;counter-reset:c;margin:14px 0 0;padding:0;display:flex;flex-direction:column;gap:14px}
+  ol.calls li{counter-increment:c;padding:0 0 14px 46px;border-bottom:1px solid rgba(45,140,64,.18)} ol.calls li:last-child{border-bottom:0}
+  ol.calls li::before{content:counter(c);left:0;top:-2px;width:30px;height:30px;border-radius:8px;transform:none;background:var(--green);color:#0e1f13;font-weight:850;font-size:15px;display:flex;align-items:center;justify-content:center} ol.calls b{color:#fff}
+  .cp{display:flex;gap:12px;align-items:flex-start;background:var(--bg2);border:1px solid var(--line2);border-left:3px solid var(--gold);border-radius:9px;padding:12px 14px} .cp+.cp{margin-top:9px} .cp .clk{font-size:11px;font-weight:800;color:var(--gold);background:var(--goldbg);border-radius:5px;padding:3px 7px;flex:none;margin-top:1px} .cp .note{color:var(--text)}
+  .qtbl{width:100%;border-collapse:collapse;margin-top:6px} .qtbl th,.qtbl td{text-align:center;padding:8px 6px;border-bottom:1px solid var(--line2)}
+  .qtbl th{font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--text3)} .qtbl td:first-child,.qtbl th:first-child{text-align:left;color:var(--text2);font-weight:700}
+  .qtbl tr:last-child td{border-bottom:0} .qtbl .tot td{font-weight:850;color:var(--text)} .mini{color:var(--text3);font-size:12.5px;margin:12px 0 0}
+  .locked{margin-top:6px;border:1px dashed var(--line);border-radius:12px;padding:16px 18px;color:var(--text3);font-size:13.5px;background:rgba(201,168,76,.04)} .locked b{color:var(--gold)}
+  .trend{display:flex;flex-direction:column;gap:10px}
+  .trow{display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:var(--bg2);border:1px solid var(--line2);border-radius:9px;padding:12px 14px}
+  .trow .tlabel{font-size:13px;font-weight:750;color:var(--text);width:170px}
+  .trow .tvals{font-size:14px;color:var(--text2);flex:1;min-width:150px} .trow .tvals .tmut{color:var(--text3);font-size:12.5px}
+  .trow .tflag{font-size:12px;font-weight:800;color:var(--green2);background:var(--greenbg);border:1px solid rgba(45,140,64,.3);border-radius:6px;padding:4px 9px}
+  .zrow{display:flex;align-items:center;gap:10px;margin-bottom:6px} .zname{width:120px;flex-shrink:0;font-size:11px;color:var(--text2);text-align:right}
+  .zbarwrap{flex:1;height:20px;background:rgba(255,255,255,.04);border-radius:3px;overflow:hidden} .zbar{height:100%;border-radius:3px}
+  .znum{width:150px;flex-shrink:0;display:flex;justify-content:flex-end;gap:8px;font-size:11px}
+  .toggle{display:flex;gap:4px;max-width:230px} .toggle button{padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer;border-radius:4px;border:none;background:rgba(255,255,255,.06);color:var(--text3)} .toggle button.on{background:var(--gold);color:#1c1c1c}
+  footer{max-width:780px;margin:32px auto 0;padding:20px 20px 0;border-top:1px solid var(--line2);display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;color:var(--text3);font-size:12px} footer .pb{color:var(--gold);font-weight:700}
+</style>
+<div class="wrap"><div class="sheet">
+
+  <div class="alert"><div class="t">⚠ Foul Trouble Alert</div>
+    <div class="b"><b>#12 (4 fouls)</b> and <b>#24 (4 fouls)</b> are both one away from fouling out. Manage their minutes and keep them out of the paint scramble in the fourth.</div></div>
+
+  <div class="banner">
+    <div class="eyebrow"><span class="dot"></span> Live Game Logger · Full Game Report · Basketball</div>
+    <div class="matchup"><h1>Tanner <span class="vs">vs</span> Athens</h1>
+      <div class="score"><span class="tag">Final</span>30<span style="color:var(--text3)">–</span>22<span class="res">Won by 8</span></div></div>
+    <div class="meta"><span><b>Full game</b></span><span>38 possessions charted</span><span>Regular Season</span><span><b>Game 4</b> · season trend active</span></div>
+  </div>
+
+  <div class="strip">
+    <div class="cell"><div class="num g">1.36</div><div class="lbl">Points / possession</div></div>
+    <div class="cell"><div class="num pos">6/7</div><div class="lbl">Paint FG</div></div>
+    <div class="cell"><div class="num pos">9%</div><div class="lbl">Turnover rate</div></div>
+    <div class="cell"><div class="num neg">2</div><div class="lbl">Players in foul trouble</div></div>
+  </div>
+
+  <section><div class="head"><span class="no">01</span><h2>Offensive Summary</h2></div>
+    <p class="lead">We won this game in the paint: <b>30 points on 22 possessions, 1.36 per possession</b>, which is a winning number.</p>
+    <ul>
+      <li><b class="pos">The rim is ours: 6 of 7 in the paint (86%).</b> Everything good ran through the block.</li>
+      <li><b class="neg">The perimeter was cold: 1 of 5 from the wings.</b> We settled a few times we did not need to.</li>
+      <li>We took care of it: <b class="pos">2 turnovers all game (9%)</b>, and we played our pace, <b>19 half-court to 3 transition</b>.</li>
+      <li>Our one BLOB set scored (#13 at the rim). Free throws were the miss: <b class="neg">0 for 2 at the line</b>.</li>
+    </ul>
+  </section>
+
+  <section><div class="head"><span class="no">02</span><h2>Player Tendencies · Our Offense</h2></div>
+    <p class="lead">#5 was the whole offense inside; #10 ran the show; #23 has to stop settling.</p>
+    <ul>
+      <li><b class="pos">#5: 6 of 8 (75%), all at the rim.</b> Keep feeding the post, he cannot be guarded one-on-one.</li>
+      <li><b>#10 initiated 16 of 22 possessions</b> and hit both his top-of-the-key threes.</li>
+      <li><b class="neg">#23: 1 of 5, all from three.</b> He is forcing it, get him a better look or off the line.</li>
+      <li>#3 chipped in (1 of 2), #13 scored the BLOB.</li>
+    </ul>
+  </section>
+
+  <section><div class="head"><span class="no">03</span><h2>Defensive Summary</h2></div>
+    <p class="lead">We held Athens to 22, but we did it fouling, and their scorer keeps getting to the rim.</p>
+    <ul>
+      <li>We were mostly <b>Man (10 possessions)</b> with a Zone 2-3 changeup (4) and a couple of press looks.</li>
+      <li><b class="neg">They got downhill: 6 shots in our paint</b>, the most of any zone we gave up.</li>
+      <li><b class="neg">Foul trouble is self-inflicted:</b> #12 and #24 each picked up 4 reaching in help. See the alert up top.</li>
+    </ul>
+  </section>
+
+  <section><div class="head"><span class="no">04</span><h2>Player Tendencies · Opponent</h2></div>
+    <p class="lead">Their #10 is a downhill driver; #11 is a spot-up threat.</p>
+    <ul>
+      <li><b class="neg">#10 took 7 shots, 5 in the paint.</b> He is beating us off the bounce, wall him off and make him a passer.</li>
+      <li><b>#11 lives on the perimeter</b> (top of key + right wing). Close out under control, do not fly by.</li>
+      <li>#32 floated around (3 shots, no real home). Help off him to load to #10's drive.</li>
+    </ul>
+  </section>
+
+  <section><div class="head"><span class="no">05</span><h2>Special Situations</h2></div>
+    <p class="lead">One special set logged, and it worked.</p>
+    <ul><li><b class="pos">BLOB: 1 for 1</b>, #13 scored at the rim. No SLOB, ATO, or late-game possessions charted.</li></ul>
+  </section>
+
+  <div class="adjust"><div class="head"><span class="no">06</span><h2>Top 3 Adjustments</h2></div>
+    <p class="lead">We are up 8; here is how we close it and stay in front.</p>
+    <ol class="calls">
+      <li><b>Keep pounding the paint through #5.</b> He is 6 of 7 down there. Every possession should touch the post before we settle for a three.</li>
+      <li><b>Get #23 off the three-point line.</b> He is 1 of 5 and forcing it. Put him on the move or let #10 and #5 carry the scoring.</li>
+      <li><b>Protect #12 and #24 and wall off #10.</b> Both are at 4 fouls and #10 has 5 paint shots. Sink the help, build a wall, and make him kick it out instead of reaching.</li>
+    </ol>
+  </div>
+
+  <section><div class="head"><span class="no">07</span><h2>Coaching Points</h2></div>
+    <div class="cp"><span class="clk">1H</span><span class="note">"#5 living at the rim, feed the post."</span></div>
+    <div class="cp"><span class="clk">1H</span><span class="note">"#12 reaching, get him help early."</span></div>
+  </section>
+
+  <section><div class="head"><span class="no">08</span><h2>Score &amp; Momentum</h2></div>
+    <p class="lead">Led wire to wire: up <b>14-10 at the half</b>, then pulled away to <b>30-22</b> by controlling tempo (22 possessions to 16).</p>
+    <table class="qtbl"><tr><th>Half</th><th>Tanner</th><th>Athens</th></tr>
+      <tr><td>1st</td><td>14</td><td>10</td></tr><tr><td>2nd</td><td>16</td><td>12</td></tr>
+      <tr class="tot"><td>Final</td><td>30</td><td>22</td></tr></table>
+    <p class="mini">We outscored them in both halves and never trailed. The slower, half-court pace favored us, fewer possessions kept their driver in check and let #5 go to work inside.</p>
+  </section>
+
+  <section><div class="head"><span class="no">09</span><h2>Season Trend Comparison</h2></div>
+    <p class="lead">Tonight vs your <b>3-game</b> baseline (60 possessions): this was your best and cleanest game of the year.</p>
+    <div class="trend">
+      <div class="trow">
+        <div class="tlabel">Points per possession</div>
+        <div class="tvals"><b class="pos">1.36</b> tonight · <span class="tmut">0.95 season avg</span></div>
+        <div class="tflag">▲ +0.41 · season high</div>
+      </div>
+      <div class="trow">
+        <div class="tlabel">Turnover rate</div>
+        <div class="tvals"><b class="pos">9%</b> tonight · <span class="tmut">15% season avg</span></div>
+        <div class="tflag">▼ 6 pts cleaner</div>
+      </div>
+    </div>
+    <p class="mini">The jump tracks the shift to a paint-first offense: feeding #5 inside pushed efficiency well past your norm while cutting the live-ball mistakes that have hurt you all year.</p>
+  </section>
+
+  <section><div class="head"><span class="no">+</span><h2>Shot Chart</h2></div>
+    <div class="mini" style="margin:0 0 12px">Bar length = shot volume · color = FG% (cold <span style="color:var(--red)">red</span> → <span style="color:var(--gold)">gold</span> → <span style="color:var(--green)">hot green</span>)</div>
+    <div id="zonebars"></div>
+    <div class="mini" style="margin-top:12px">🔥 Hottest: <b style="color:var(--green2)">Top of Key 3</b> (2/2) · 📍 Most shots: <b style="color:var(--gold)">Paint</b> (7)</div>
+  </section>
+
+  <section><div class="head"><span class="no">+</span><h2>Shot Locations</h2>
+    <div class="toggle" id="tgc" style="margin-left:auto"><button data-v="us">Us</button><button data-v="opp">Opponent</button><button data-v="both" class="on">Both</button></div></div>
+    <div id="cstat" style="display:flex;gap:16px;margin-bottom:8px;font-size:12px;color:var(--text2)"></div>
+    <svg viewBox="0 0 500 424" style="width:100%;max-width:400px;height:auto;display:block;margin:0 auto" id="court"></svg>
+    <div style="display:flex;gap:14px;justify-content:center;margin-top:10px;font-size:11px;color:var(--text3);flex-wrap:wrap">
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--green)"></span> Made</span>
+      <span><span style="color:var(--red);font-weight:800">✕</span> Missed</span>
+      <span><span style="display:inline-block;width:11px;height:11px;border-radius:50%;border:1.5px solid var(--gold)"></span> Drew foul</span>
+      <span>● us · ◆ opponent</span>
+    </div>
+  </section>
+
+</div>
+<footer><span>Generated by CoachLenz Live Game Logger · deterministic stats, coordinator voice</span><span class="pb">Powered by Cosby AI Solutions</span></footer>
+</div>
+<script>
+  const hex=h=>[1,3,5].map(i=>parseInt(h.slice(i,i+2),16));
+  const mix=(a,b,t)=>{t=Math.max(0,Math.min(1,t));const A=hex(a),B=hex(b);return 'rgb('+A.map((x,i)=>Math.round(x+(B[i]-x)*t)).join(',')+')';};
+  const quality=t=>t<.5?mix('b45c5c','C9A84C',t*2):mix('C9A84C','2d8c40',(t-.5)*2);
+  // zone bars (name, att, made, fg, pct)
+  const Z=[['Paint',7,6,86,35],['Wing 3 Left',3,1,33,15],['Top of Key 3',2,2,100,10],['Wing 3 Right',2,0,0,10],
+    ['Free Throw',2,0,0,10],['Mid-Range Left',1,1,100,5],['Corner 3 Right',1,1,100,5],['Corner 3 Left',1,0,0,5],['Mid-Range Right',1,0,0,5]];
+  const maxAtt=7;
+  document.getElementById('zonebars').innerHTML=Z.map(([n,a,m,fg,pct])=>{const w=Math.max(6,a/maxAtt*100),col=quality(fg/100);
+    return '<div class="zrow"><div class="zname">'+n+'</div><div class="zbarwrap"><div class="zbar" style="width:'+w+'%;background:'+col+'"></div></div>'
+      +'<div class="znum"><span style="color:var(--text2)">'+m+'/'+a+'</span><span style="color:var(--text3)">'+pct+'%</span><span style="width:50px;text-align:right;font-weight:700;color:'+col+'">'+fg+'% FG</span></div></div>';}).join('');
+
+  // shot-location court [x,y,made,fouled]
+  const US=[[50,82,1,0],[47,79,1,1],[13,33,0,0],[15,36,0,0],[50,25,1,0],[33,60,1,0],[90,86,1,0],[52,84,0,0],[86,35,0,0],[50,52,0,1],[49,80,1,0],[51,83,1,0],[48,27,1,0],[14,34,1,0],[9,85,0,0],[68,58,0,0],[50,81,1,1],[85,36,0,0],[50,50,0,1],[50,84,1,0]];
+  const OPP=[[50,84,1,0],[48,80,1,1],[84,34,0,0],[52,86,0,1],[50,24,1,0],[12,84,0,0],[67,60,0,0],[50,82,1,0],[49,85,0,1],[86,33,1,0],[50,22,0,0],[48,80,1,0],[90,86,0,0],[85,35,1,1]];
+  const G='#C9A84C',MS='#b45c5c';
+  const dot=(x,y,made,fouled,team)=>{const cx=x/100*500,cy=y/100*424;
+    const ring=fouled?'<circle cx="'+cx+'" cy="'+cy+'" r="12.5" fill="none" stroke="'+G+'" stroke-width="1.5"/>':'';
+    let m;
+    if(team==='us') m=made?'<circle cx="'+cx+'" cy="'+cy+'" r="8" fill="rgba(45,140,64,.85)" stroke="#eafaee" stroke-width="1.5"/>'
+      :'<g stroke="'+MS+'" stroke-width="3"><line x1="'+(cx-6)+'" y1="'+(cy-6)+'" x2="'+(cx+6)+'" y2="'+(cy+6)+'"/><line x1="'+(cx-6)+'" y1="'+(cy+6)+'" x2="'+(cx+6)+'" y2="'+(cy-6)+'"/></g>';
+    else{const d=9,p='M'+cx+' '+(cy-d)+' L'+(cx+d)+' '+cy+' L'+cx+' '+(cy+d)+' L'+(cx-d)+' '+cy+' Z';
+      m=made?'<path d="'+p+'" fill="rgba(45,140,64,.8)" stroke="#eafaee" stroke-width="1.5"/>':'<path d="'+p+'" fill="none" stroke="'+MS+'" stroke-width="2.5"/>';}
+    return ring+m;};
+  const SKIN='<rect x="3" y="3" width="494" height="418" rx="6" fill="#242018" stroke="rgba(201,168,76,.30)"/>'
+    +'<rect x="190" y="230" width="120" height="190" fill="rgba(201,168,76,.06)" stroke="rgba(201,168,76,.30)"/>'
+    +'<circle cx="250" cy="230" r="60" fill="none" stroke="rgba(201,168,76,.30)"/>'
+    +'<line x1="220" y1="380" x2="280" y2="380" stroke="'+G+'" stroke-width="2.5"/>'
+    +'<circle cx="250" cy="367.5" r="7.5" fill="none" stroke="#e2c06a" stroke-width="2.5"/>'
+    +'<path d="M59.6 420 A197.5 197.5 0 0 1 250 170 A197.5 197.5 0 0 1 440.4 420" fill="none" stroke="'+G+'" stroke-width="2"/>';
+  const mn=a=>a.filter(s=>s[2]).length;
+  function draw(v){let s=SKIN;
+    if(v!=='opp')US.forEach(([x,y,m,f])=>s+=dot(x,y,m,f,'us'));
+    if(v!=='us')OPP.forEach(([x,y,m,f])=>s+=dot(x,y,m,f,'opp'));
+    document.getElementById('court').innerHTML=s;
+    const us='Us <b style="color:#42b25c">'+mn(US)+'</b>/'+US.length+' · <b style="color:'+G+'">'+Math.round(mn(US)/US.length*100)+'%</b>';
+    const op='Opponent <b style="color:#42b25c">'+mn(OPP)+'</b>/'+OPP.length+' · <b style="color:'+G+'">'+Math.round(mn(OPP)/OPP.length*100)+'%</b>';
+    document.getElementById('cstat').innerHTML=(v!=='opp'?'<span>'+us+'</span>':'')+(v!=='us'?'<span>'+op+'</span>':'');}
+  document.querySelectorAll('#tgc button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#tgc button').forEach(x=>x.classList.remove('on'));b.classList.add('on');draw(b.dataset.v);});
+  draw('both');
+</script>
