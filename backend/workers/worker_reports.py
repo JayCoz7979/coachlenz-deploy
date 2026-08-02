@@ -21,6 +21,40 @@ from sqlalchemy.dialects.postgresql import array
 
 logger = logging.getLogger(__name__)
 
+
+def _apply_event_filter(events, flt):
+    """Scope a report's events to a subset (Live Game halftime report).
+
+    ``flt`` is the optional ``params.event_filter`` dict:
+      • ``max_quarter``  keep plays whose extra_data.quarter <= N (football/flag)
+      • ``max_half``     keep plays whose extra_data.half    <= N (basketball)
+    Meta events (side='meta') and events with no recorded period are always kept
+    so setup context and un-timed plays are never silently dropped. A falsy filter
+    returns the events unchanged, which is the path every scout/film report takes.
+    """
+    if not flt:
+        return events
+    max_q = flt.get("max_quarter")
+    max_h = flt.get("max_half")
+    if max_q is None and max_h is None:
+        return events
+
+    def keep(e):
+        extra = e.extra_data or {}
+        if max_q is not None:
+            q = extra.get("quarter")
+            # OT (quarter 5+) is second-half; keep only quarters at/under the cap.
+            if isinstance(q, (int, float)):
+                return q <= max_q
+        if max_h is not None:
+            h = extra.get("half")
+            if isinstance(h, (int, float)):
+                return h <= max_h
+        return True  # no period recorded -> keep (don't lose data on a scope pass)
+
+    return [e for e in events if keep(e)]
+
+
 class ReportsWorker(BaseWorker):
     job_type = "report"
     # Report generation is short (2-5 min) and idempotent (a re-run overwrites the
@@ -57,6 +91,11 @@ class ReportsWorker(BaseWorker):
                 select(Event).where(Event.game_id.in_(report.game_ids))
             )
             events = events_result.scalars().all()
+
+            # Live Game Play Logger (migration 037): an optional per-report filter
+            # scopes a halftime report to first-half plays only. Absent/NULL for
+            # every scout & film report, so this is a no-op for all existing reports.
+            events = _apply_event_filter(events, (report.params or {}).get("event_filter"))
 
             # §14 learning loop: unless the coach is in Manual Mode, apply this
             # account's ACTIVE learned relabels to the report's view of the film.

@@ -36,9 +36,9 @@ def latest_allowed_statuses():
 
 
 def game_status_literals():
-    """Every status="X" assigned on a Game(...) construction in the scout routers."""
+    """Every status="X" assigned on a Game(...) construction in the scout/live routers."""
     used = set()
-    for name in ("scout.py", "scout_football.py"):
+    for name in ("scout.py", "scout_football.py", "live_game.py"):
         src = (ROUTERS / name).read_text(encoding="utf-8")
         # Game(...) constructions may span lines; scan status="..." near Game(.
         for block in re.split(r"\bGame\s*\(", src)[1:]:
@@ -65,6 +65,7 @@ def run():
         f"INSERT will fail in Postgres."
     )
     assert "manual" in allowed, "the scout flows rely on 'manual' being an allowed game status"
+    assert "live" in allowed, "the Live Game Play Logger relies on 'live' being an allowed game status"
 
     print("\nGAME STATUS CONSTRAINT GUARD PASSED")
 

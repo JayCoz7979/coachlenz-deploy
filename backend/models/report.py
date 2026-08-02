@@ -15,6 +15,11 @@ class TendencyReport(Base):
     title = Column(String, nullable=False)
     summary_json = Column(LargeBinary)
     prose_sections = Column(JSONB, default=list)
+    # Optional per-report generation parameters (migration 037). The Live Game
+    # halftime report stores {"event_filter": {"max_quarter": 2}} (or {"max_half": 1}
+    # for basketball) so the worker scopes the report to first-half plays only.
+    # NULL for every scout/film report — the worker treats absence as "no filter".
+    params = Column(JSONB)
     is_trial = Column(Boolean, nullable=False, default=False)
     watermarked = Column(Boolean, nullable=False, default=False)
     # Read-only public share link. Null until a coach enables sharing; the token is
