@@ -1,6 +1,6 @@
 'use client'
 /**
- * Live Game Play Logger — Game Setup (Feature 1) + resume list.
+ * Live Game Play Logger, Game Setup (Feature 1) + resume list.
  * A mobile-first, full-screen sideline tool. Consumes the existing CoachLenz CSS
  * design tokens only; it does not modify any global styles or existing pages.
  */
@@ -180,7 +180,7 @@ export default function LiveSetupPage() {
         <div style={card}>
           <div style={section}>Rosters (optional)</div>
           <p style={{ color: 'var(--text3)', fontSize: 12, marginTop: -4, marginBottom: 12 }}>
-            One player per line — <code>jersey name</code> (e.g. <code>12 Smith</code>). New jerseys you tap during the game are saved automatically.
+            One player per line, <code>jersey name</code> (e.g. <code>12 Smith</code>). New jerseys you tap during the game are saved automatically.
           </p>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div><span style={lbl}>Our roster</span><textarea style={{ ...input, minHeight: 100, resize: 'vertical', fontFamily: 'monospace' }} value={ourRoster} onChange={e => setOurRoster(e.target.value)} placeholder={'7 Johnson\n12 Smith'} /></div>

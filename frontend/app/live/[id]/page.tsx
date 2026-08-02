@@ -1,6 +1,6 @@
 'use client'
 /**
- * Live Game Play Logger — the sideline logger (Features 2-8).
+ * Live Game Play Logger, the sideline logger (Features 2-8).
  * Mobile-first, one-handed, high-contrast. Auto-saves every play immediately.
  * Consumes only existing CoachLenz CSS tokens; no global styles are modified.
  */
@@ -45,7 +45,7 @@ function Jersey({ label, value, onChange }: { label: string; value?: string; onC
   )
 }
 
-// field position helpers (football) — mirrors the existing scout logger
+// field position helpers (football), mirrors the existing scout logger
 const toAbs = (spot: string): number | null => {
   const m = (spot || '').trim().toUpperCase().match(/^(OWN|OPP)?\s*(\d{1,2})$/)
   if (!m) return null
@@ -167,7 +167,7 @@ export default function LoggerPage() {
       setOk('saved'); setTimeout(() => setOk(''), 1200)
     } catch (e: any) {
       setPlays(ps => ps.map(p => (p === optimistic ? { ...p, _pending: false, _failed: true } : p)))
-      setError(e?.response?.data?.detail || 'Save failed — the play is kept locally.')
+      setError(e?.response?.data?.detail || 'Save failed, the play is kept locally.')
       setCur(carry)  // restore so the coach can retry
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -265,7 +265,7 @@ export default function LoggerPage() {
             {modeBtn('them', 'Their Ball')}
             {!isBB && modeBtn('st', 'Special Teams')}
           </div>
-          {lateGame && <div style={{ marginTop: 10, fontSize: 12, color: 'var(--gold)', fontWeight: 700 }}>⏱ Late game (&lt;2:00) — flagged automatically</div>}
+          {lateGame && <div style={{ marginTop: 10, fontSize: 12, color: 'var(--gold)', fontWeight: 700 }}>⏱ Late game (&lt;2:00), flagged automatically</div>}
         </div>
 
         {/* quick log toggle */}
@@ -274,7 +274,7 @@ export default function LoggerPage() {
           border: '1px solid ' + (quick ? 'var(--gold)' : 'var(--border2)'),
           background: quick ? 'rgba(201,168,76,0.14)' : 'var(--bg2)', color: quick ? 'var(--gold)' : 'var(--text2)',
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-        }}><ClipboardList size={15} /> {quick ? 'Quick Log ON — minimal taps' : 'Switch to Quick Log'}</button>
+        }}><ClipboardList size={15} /> {quick ? 'Quick Log ON, minimal taps' : 'Switch to Quick Log'}</button>
 
         {/* ENTRY PANEL */}
         <div style={card}>
@@ -526,7 +526,7 @@ function QuickPanel({ isBB, cur, set }: any) {
       <Field label="Play type"><TapGroup options={isBB ? ['Shot', 'Turnover', 'Foul'] : ['Run', 'Pass', 'Special Teams']} value={cur.play_type} onChange={v => set('play_type', v)} cols={3} /></Field>
       <Field label="Result"><TapGroup options={['Positive', 'Negative', 'Turnover', 'Score']} value={cur.result} onChange={v => set('result', v)} cols={4} /></Field>
       <Field label={isBB ? 'Points' : 'Yards'}><input style={input} inputMode="numeric" value={cur.yards_gained ?? ''} onChange={e => set('yards_gained', e.target.value)} /></Field>
-      <div style={{ fontSize: 12, color: 'var(--text3)' }}>Quick entries are flagged incomplete — tap them in the Play Log to finish during dead-ball time.</div>
+      <div style={{ fontSize: 12, color: 'var(--text3)' }}>Quick entries are flagged incomplete, tap them in the Play Log to finish during dead-ball time.</div>
     </>
   )
 }

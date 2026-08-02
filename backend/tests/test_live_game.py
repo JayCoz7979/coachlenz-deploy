@@ -64,6 +64,15 @@ def test_defense_play_maps_to_defense_side():
     assert e.extra_data["opp_target"] == "11"
 
 
+def test_defensive_front_maps_to_column_not_extra():
+    # Regression: defensive_front must land on the Event COLUMN (which the report's
+    # fronts analysis reads), not buried in extra_data where it was silently lost.
+    p = PlayEntry(possession="them", defensive_front="4-3", coverage="Cover 3")
+    e = _play_to_event(ORG, GAME, p)
+    assert e.defensive_front == "4-3"
+    assert "defensive_front" not in (e.extra_data or {})
+
+
 def test_coaching_point_sets_highlight_and_note():
     p = PlayEntry(possession="us", is_coaching_point=True, note="watch the backside")
     e = _play_to_event(ORG, GAME, p)

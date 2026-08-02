@@ -1,6 +1,6 @@
 'use client'
 /**
- * Live Game Play Logger — touch-optimized selectors.
+ * Live Game Play Logger, touch-optimized selectors.
  * Pure presentational components that consume the existing CoachLenz CSS design
  * tokens (var(--gold), var(--bg3), ...). They do not import or alter any global
  * styles, so the live site is untouched. All tap targets are >= 44px.
@@ -17,7 +17,7 @@ const sel = (on: boolean): CSSProperties => ({
   fontSize: 14, padding: '8px 10px', transition: 'background .1s',
 })
 
-/** Reusable large-tap-target chip group — the workhorse of the logger. */
+/** Reusable large-tap-target chip group, the workhorse of the logger. */
 export function TapGroup({ options, value, onChange, cols }: {
   options: { value: string; label: string }[] | string[]
   value?: string | null
@@ -82,7 +82,7 @@ export function RushLaneSelector({ value, onChange }: { value?: string | null; o
   return <TapGroup options={RUSH_LANES} value={value} onChange={onChange} cols={5} />
 }
 
-/** Touch route tree — routes drawn as tappable endpoints around a receiver origin. */
+/** Touch route tree, routes drawn as tappable endpoints around a receiver origin. */
 export function RouteTree({ value, onChange, customRoutes }: {
   value?: string | null; onChange: (v: string) => void; customRoutes?: string[]
 }) {

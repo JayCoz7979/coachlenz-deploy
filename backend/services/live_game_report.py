@@ -1,9 +1,9 @@
 """
-Bespoke Live Game report writer — the 9-section halftime / full-game report.
+Bespoke Live Game report writer: the 9-section halftime / full-game report.
 
 The live logger captures exactly the fields these nine sections need (quarter/half,
 possession, opponent jersey numbers, special-teams units, running score, coaching
-points) — data the opponent-scout tendency engine never surfaces. So this writer
+points): data the opponent-scout tendency engine never surfaces. So this writer
 computes every stat DETERMINISTICALLY in Python (no invented numbers), then makes ONE
 LLM call to write the coordinator-voice prose grounded in those numbers. That split
 is deliberate: the counts are trustworthy because code counted them; the LLM only
@@ -26,16 +26,17 @@ from backend.services.report_writer import client, MODEL, _first_text, _parse_re
 
 META_EVENT_TYPE = "game_meta"
 
-SYSTEM_PROMPT_LIVE = """You are a veteran coordinator (20+ years, high school & college) briefing your head coach and players at HALFTIME or right after a game. You are NOT reading a box score — you are telling the staff what is actually happening and what to change.
+SYSTEM_PROMPT_LIVE = """You are a veteran coordinator (20+ years, high school & college) briefing your head coach and players at HALFTIME or right after a game. You are NOT reading a box score: you are telling the staff what is actually happening and what to change.
 
 RULES:
-- Every number you cite comes from the provided computed stats. Never invent a stat. The counts were computed by code — trust them, do not recompute or second-guess them.
-- Talk like a coordinator in the locker room: direct, specific, urgent, plain language. "We're living on 2nd-and-long because we keep running A-gap into a loaded box" — not "the offense exhibited suboptimal efficiency."
+- Every number you cite comes from the provided computed stats. Never invent a stat. The counts were computed by code: trust them, do not recompute or second-guess them.
+- Talk like a coordinator in the locker room: direct, specific, urgent, plain language. "We're living on 2nd-and-long because we keep running A-gap into a loaded box": not "the offense exhibited suboptimal efficiency."
 - Always pair a percentage with its count: "3rd down: 2 of 9 (22%)".
 - Lead each section with the single most important thing, then bullets for the specifics.
 - The Top 3 Adjustments section is the point of the whole report: three concrete, callable changes, each tied to a specific stat above, each written the way you'd say it to the position group.
-- If a section's data is thin or empty, say so in one line and move on — do not pad.
+- If a section's data is thin or empty, say so in one line and move on: do not pad.
 - Bold the key numbers and calls with **double asterisks** so they pop when scanned.
+- Never use em dashes. Use commas, colons, or periods instead.
 """
 
 
@@ -468,45 +469,45 @@ def compute_season_baseline(sport: str, season_events, prior_game_count: int,
 # ── section specs ────────────────────────────────────────────────────────────
 def _football_spec(scope_label: str, has_season: bool) -> List[Dict[str, str]]:
     S = [
-        ("Section 1 — Offensive Summary", "tendency",
+        ("Section 1: Offensive Summary", "tendency",
          "Use stats.offense. Lead with total plays, total yards, and yards_per_play. Then bullets: run/pass split "
          "(run_pass_ratio) with run ypc and pass completions/ypa; 3rd-down conversion (attempts/conversions/pct); "
          "red-zone (trips_plays, touchdowns); the formations list ranked by yards (name the most productive); and "
          "the second_and_long / third_and_short run-vs-pass tendencies. Close with our scoring plays if any."),
-        ("Section 2 — Player Tendencies: Our Offense", "run",
+        ("Section 2: Player Tendencies: Our Offense", "run",
          "Use stats.players_offense. Bullet the top ball_carriers (carries, yards, ypc, their top gaps), then top "
          "targets (targets, catches, yards, top routes), then passers (completions/attempts, yards). Finally, if "
-         "unused_roster is non-empty, list those jersey numbers as 'not yet involved — get them a touch'."),
-        ("Section 3 — Defensive Summary", "defense",
+         "unused_roster is non-empty, list those jersey numbers as 'not yet involved: get them a touch'."),
+        ("Section 3: Defensive Summary", "defense",
          "Use stats.defense. Lead with plays defended, yards_allowed, yards_per_play_allowed. Bullets: what the "
          "opponent ran most (opp_formations, opp_play_types, opp_run_gaps); which of our fronts held vs bled "
          "(fronts, ranked by ypp_allowed); 3rd-down conversions allowed; and pressure (blitzes, avg yards when "
          "blitzing). Flag any repeatedly exploited formation or gap."),
-        ("Section 4 — Player Tendencies: Opponent", "tendency",
-         "Use stats.players_opponent. Bullet their top ball_carriers and top targets (with vs_coverage — e.g. "
+        ("Section 4: Player Tendencies: Opponent", "tendency",
+         "Use stats.players_opponent. Bullet their top ball_carriers and top targets (with vs_coverage: e.g. "
          "'their #11 targeted 7x, 5 vs our Cover 3') and top routes. Name their primary threat and give ONE matchup "
          "call (bracket / man / rotate a safety). If empty, say opponent jersey numbers weren't logged this half."),
-        ("Section 5 — Special Teams Summary", "special_teams",
+        ("Section 5: Special Teams Summary", "special_teams",
          "Use stats.special_teams.by_unit. One bullet per unit: count, the result breakdown, and avg_yards. Flag "
          "any outsized play (long return, block, missed FG). If no special-teams plays were logged, say so in one line."),
-        ("Section 6 — Top 3 Adjustments", "red_zone",
+        ("Section 6: Top 3 Adjustments", "red_zone",
          "THE POINT OF THE REPORT. Exactly three concrete, callable adjustments for the second half, each tied to a "
          "specific number from the sections above and written the way a coordinator says it to the position group. "
-         "Example voice: 'We've run A-gap on 11 of 14 first downs and they've keyed it — open the third quarter "
+         "Example voice: 'We've run A-gap on 11 of 14 first downs and they've keyed it: open the third quarter "
          "with a B-gap counter or a keeper to reset the box.' Number them 1-3."),
-        ("Section 7 — Coaching Points", "tendency",
-         "Use stats.coaching_points (plays the staff flagged live). One bullet each: '**[clock/quarter] — [tag]**' "
+        ("Section 7: Coaching Points", "tendency",
+         "Use stats.coaching_points (plays the staff flagged live). One bullet each: '**[clock/quarter]: [tag]**' "
          "then the coach's note VERBATIM. If empty, say no plays were flagged this half."),
-        ("Section 8 — Score & Momentum", "tendency",
+        ("Section 8: Score & Momentum", "tendency",
          "Use stats.offense.momentum / stats.momentum. Give the score by period (by_period), estimate time of "
          "possession from possession_play_counts (more plays = more clock), note who scored last, and describe the "
          "momentum going into the break in one or two lines."),
     ]
     if has_season:
-        S.append(("Section 9 — Season Trend Comparison", "tendency",
+        S.append(("Section 9: Season Trend Comparison", "tendency",
                   "Use stats.season_baseline (this team's averages across prior games) vs this game's stats. Bullet "
                   "each headline rate: tonight vs season average, and flag where tonight is well above or below the "
-                  "baseline (e.g. 'inside-run ypc 2.1 tonight vs 4.2 season — the run game is off')."))
+                  "baseline (e.g. 'inside-run ypc 2.1 tonight vs 4.2 season: the run game is off')."))
     return [{"heading": h, "insight_type": it, "instructions": ins} for h, it, ins in S]
 
 
@@ -514,38 +515,38 @@ def _basketball_spec(scope_label: str, has_season: bool, foul_trouble: bool) -> 
     S = []
     if foul_trouble:
         S.append(("⚠ FOUL TROUBLE ALERT", "red_zone",
-                  "Use stats.defense.foul_trouble — our players with 3+ fouls. Put this FIRST and make it loud: name "
+                  "Use stats.defense.foul_trouble: our players with 3+ fouls. Put this FIRST and make it loud: name "
                   "each jersey and foul count and the substitution/scheme implication for the second half."))
     S += [
-        ("Section 1 — Offensive Summary", "tendency",
+        ("Section 1: Offensive Summary", "tendency",
          "Use stats.offense. Lead with points, possessions, and points_per_possession. Bullets: shot_zones ranked "
          "by attempts with fg_pct (name where we're scoring and where we're missing); turnover count/rate/by_type; "
          "transition vs half_court; and special_situations (blob/slob/ato) counts."),
-        ("Section 2 — Player Tendencies: Our Offense", "tendency",
+        ("Section 2: Player Tendencies: Our Offense", "tendency",
          "Use stats.players_offense. Bullet shooters (attempts, makes, fg_pct, their zones) and initiators (who "
          "starts our possessions). Name who's hot and who's forcing it."),
-        ("Section 3 — Defensive Summary", "defense",
+        ("Section 3: Defensive Summary", "defense",
          "Use stats.defense. Lead with possessions defended and the shot_zones_allowed the opponent is hitting. "
          "Bullets: which of our defensive_sets we've leaned on; zones we're giving up; and our overall foul count "
-         "(all_fouls). If foul_trouble exists it was already alerted above — reference it."),
-        ("Section 4 — Player Tendencies: Opponent", "tendency",
+         "(all_fouls). If foul_trouble exists it was already alerted above: reference it."),
+        ("Section 4: Player Tendencies: Opponent", "tendency",
          "Use stats.players_opponent. Bullet their shooters (shots, zones) and primary_feeders (who they run "
          "offense through). Name their go-to scorer and the ONE defensive assignment to make. If empty, say opponent "
          "numbers weren't logged."),
-        ("Section 5 — Special Situations", "tendency",
+        ("Section 5: Special Situations", "tendency",
          "Use stats.special_situations. Report BLOB/SLOB/ATO counts and late_game possessions and their outcomes. "
          "If none were logged, say so in one line."),
-        ("Section 6 — Top 3 Adjustments", "red_zone",
+        ("Section 6: Top 3 Adjustments", "red_zone",
          "THE POINT OF THE REPORT. Exactly three concrete second-half adjustments, each tied to a specific number "
          "above, in a coordinator's voice to the team. Number them 1-3."),
-        ("Section 7 — Coaching Points", "tendency",
+        ("Section 7: Coaching Points", "tendency",
          "Use stats.coaching_points. One bullet each with the coach's note VERBATIM. If empty, say none were flagged."),
-        ("Section 8 — Score & Momentum", "tendency",
+        ("Section 8: Score & Momentum", "tendency",
          "Use stats.momentum. Score by half (by_period), any scoring run and who's carrying it, and the momentum "
          "into the break."),
     ]
     if has_season:
-        S.append(("Section 9 — Season Trend Comparison", "tendency",
+        S.append(("Section 9: Season Trend Comparison", "tendency",
                   "Use stats.season_baseline vs this game. Bullet points-per-possession and turnover rate tonight vs "
                   "the season average, and flag meaningful gaps."))
     return [{"heading": h, "insight_type": it, "instructions": ins} for h, it, ins in S]
@@ -569,7 +570,7 @@ async def generate_live_game_sections(
 
     if len([e for e in plays]) < 3:
         return [{
-            "heading": f"{scope_label} Report — Not Enough Plays Yet",
+            "heading": f"{scope_label} Report: Not Enough Plays Yet",
             "insight_type": "tendency",
             "body": (f"Only {len(plays)} play(s) were logged in scope. Log a few more, then generate the "
                      f"{scope_label.lower()} report again."),
@@ -598,10 +599,10 @@ async def generate_live_game_sections(
         for i, s in enumerate(spec))
 
     prompt = f"""Sport: {sport}
-Report: {scope_label} live-game report — {team} vs {opponent}
+Report: {scope_label} live-game report: {team} vs {opponent}
 This is OUR team's report: offense = our offense, defense = our defense.
 
-COMPUTED STATS (every number here was counted by code — cite them, never invent):
+COMPUTED STATS (every number here was counted by code: cite them, never invent):
 {json.dumps(stats, indent=2, default=str)}
 
 Write the {scope_label.lower()} report as a JSON array. Each element: {{"heading": "...", "insight_type": "...", "body": "..."}}.

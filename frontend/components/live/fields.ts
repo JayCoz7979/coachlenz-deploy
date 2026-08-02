@@ -1,4 +1,4 @@
-// Live Game Play Logger — sport-specific field vocabularies.
+// Live Game Play Logger, sport-specific field vocabularies.
 // Central source of truth for the tappable option lists the logger renders, plus
 // the run-gap terminology systems (Feature 1). Kept framework-free so both the
 // setup screen and the logger read the same lists.
@@ -35,7 +35,7 @@ export function gapLabel(value: string, sys: TermSystem): string {
   return sys === 'hole_numbers' ? g.holes : sys === 'zones' ? g.zones : g.letters
 }
 
-// Flag football rush lanes (no interior blocking — replaces the OL gap diagram).
+// Flag football rush lanes (no interior blocking, replaces the OL gap diagram).
 export const RUSH_LANES = [
   { value: 'left_outside', label: 'Left Outside' },
   { value: 'left_inside', label: 'Left Inside' },

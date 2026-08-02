@@ -74,7 +74,8 @@ _EXTRA_KEYS = (
     "run_gap", "run_gap_label", "route", "rush_lane", "rush_type", "pass_result",
     "custom_route",
     # football / flag defense (ours) + opponent detail
-    "defensive_front", "opp_formation", "opp_play_type", "opp_ball_carrier",
+    # (defensive_front is a first-class Event column — set below, not here)
+    "opp_formation", "opp_play_type", "opp_ball_carrier",
     "opp_target", "opp_run_gap", "opp_route", "stop_maker_jersey", "pass_rush",
     # special teams
     "st_unit", "kicker_jersey", "returner_jersey", "st_result", "st_yards",
@@ -193,6 +194,7 @@ class PlayEntry(BaseModel):
     yards_gained: Optional[int] = None
     coverage: Optional[str] = None
     blitz: Optional[str] = None
+    defensive_front: Optional[str] = None    # our front on defense (Event column)
     motion: Optional[bool] = False
     primary_player_jersey: Optional[str] = None    # -> Event.player (BC/shooter/target)
 
@@ -260,6 +262,7 @@ def _play_to_event(org_id, game_id, p: PlayEntry) -> Event:
         yards_gained=p.yards_gained,
         coverage=p.coverage,
         blitz=p.blitz,
+        defensive_front=p.defensive_front,
         motion=bool(p.motion),
         player=str(p.primary_player_jersey) if p.primary_player_jersey else None,
         is_highlight=bool(p.is_coaching_point),
