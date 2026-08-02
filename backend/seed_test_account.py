@@ -14,6 +14,10 @@ Runs in the backend environment (needs the app deps + DATABASE_URL). Example:
 Idempotent: re-running RESETS the account back to the sport step (re-verified, no sport,
 onboarding incomplete + password re-set) so you can walk onboarding again. The account
 holds no real data; it exists only to reach the onboarding UI.
+
+To DELETE it (no password needed):
+
+    TEST_ACCOUNT_DELETE=1 python -m backend.seed_test_account
 """
 import asyncio
 import os
@@ -33,7 +37,32 @@ PHONE = os.environ.get("TEST_ACCOUNT_PHONE", "+15555550100")  # placeholder; nev
 SLUG = "live-test-account"
 
 
+async def delete() -> None:
+    """Remove the throwaway test account. Deletes its dedicated test org (which
+    cascades the user + any games/events); if the user somehow belongs to a
+    different org (slug mismatch), deletes only the user, never a shared/real org."""
+    async with AsyncSessionLocal() as db:
+        res = await db.execute(select(User).where(User.email == EMAIL))
+        user = res.scalar_one_or_none()
+        if not user:
+            print(f"No test account {EMAIL} found; nothing to delete.")
+            return
+        org = await db.get(Organization, user.organization_id)
+        if org is not None and org.slug == SLUG and not org.admin_level:
+            await db.delete(org)   # cascade removes the user, games, events
+            print(f"✓ Deleted test account {EMAIL} and its test org ({SLUG}).")
+        else:
+            # Safety net: not the dedicated test org — only remove the user.
+            await db.delete(user)
+            print(f"✓ Deleted test user {EMAIL} (left its org intact — slug was not '{SLUG}').")
+        await db.commit()
+
+
 async def run() -> None:
+    if os.environ.get("TEST_ACCOUNT_DELETE"):
+        await delete()
+        return
+
     pw = os.environ.get("TEST_ACCOUNT_PASSWORD", "")
     if len(pw) < 8:
         raise SystemExit("Set TEST_ACCOUNT_PASSWORD (>= 8 chars) before running.")
