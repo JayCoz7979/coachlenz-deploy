@@ -125,12 +125,37 @@ given a login password), `RLS_ENABLED=true`, driving real HTTP — `rls_app_vali
 - direct `app_rls_val` connection: no context → 0 rows (RLS genuinely enforcing at the
   DB level, independent of the app-layer filter); `app.org_id=A` → exactly A's rows.
 
-**Still to validate (broader coverage, next slices):** the privileged share-link and
-admin paths returning rows end-to-end; a real worker job across orgs; and the full
-integration suite (`test_api_integration.py`, incl. the `cross_org_isolation` sweep
-over reports/events/roster) re-pointed at Postgres-as-`app_rls` instead of SQLite.
-The core request path and the RLS mechanism are proven; these extend coverage to every
-handler before any Stage 4 prod cutover.
+**Slice 2 — broader path coverage VALIDATED (2026-08-01), now 16/16 in
+`rls_app_validate.py`.** Added end-to-end checks for every remaining path TYPE:
+
+- **Share link:** `POST /reports/{id}/share` mints the token on the RESTRICTED engine
+  (finds the caller's report), and the public `GET /reports/{id}/share/{token}` returns
+  it on the PRIVILEGED engine with no org context — both halves work.
+- **Admin (cross-org):** a platform admin's `GET /admin/orgs` sees BOTH orgs via the
+  privileged alias; the same surface 404s for a non-admin org. Proves the admin router
+  is not clamped to its own org, and the gate still holds.
+- **Worker poll:** a query on `AsyncSessionLocal` (the exact engine workers use) with no
+  org context sees BOTH orgs' jobs — the cross-org queue poll is not fail-closed.
+
+**Privileged-engine audit (completeness, 2026-08-01):** grepped every request-path use
+of the privileged engine (`AsyncSessionLocal` / `engine.connect` outside workers, tests,
+bootstrap). The ONLY hits are non-tenant or write-only: `health.py` (`SELECT 1`),
+`teams_of_month.py GET /featured` (the global `featured_teams` table, no
+`organization_id`), and `services/agent_log.py` (UATP logger — writes `agent_logs` on a
+separate privileged session with an explicit `organization_id`, correct for an audit
+log, never reads cross-org). So no request handler silently bypasses RLS to read/leak
+tenant data.
+
+**Deferred to Stage 4 staging (deliberate, not skipped):** re-pointing the SQLite unit
+harness (`test_api_integration.py`) at Postgres-as-`app_rls`. That harness hard-binds
+SQLite at import, swaps UUID/JSONB/ARRAY to SQLite shims, and builds schema via
+`create_all` (not migrations) — re-pointing it is a large fork that "fights the
+module-level engine" (see the tenant-isolation memory), and it would mostly re-exercise
+the same authenticated→restricted category already proven representative here. The
+natural place for a full-suite run under RLS is the Stage-4 Railway DB-branch (real
+Postgres), where SQLite isn't in the way — not a fork of the unit harness. The core
+request path, every privileged path, the worker poll, and the DB-level mechanism are
+all proven on real Postgres with RLS forced.
 
 ## Validation runbook (DB-branch only)
 
