@@ -6,8 +6,8 @@
 import { type CSSProperties } from 'react'
 
 const GOLD = '#C9A84C', MADE = '#2d8c40', MISS = '#b45c5c'
-// Real half-court proportions (NBA), ~10px/ft. Matches the logger's ShotZoneCourt.
-const W = 500, H = 476
+// Real high-school half-court proportions (NFHS), ~10px/ft. Matches the logger court.
+const W = 500, H = 424
 
 export default function LiveShotChart({ summary }: { summary: any }) {
   const pts: any[] = Array.isArray(summary?.live_shot_chart) ? summary.live_shot_chart : []
@@ -29,12 +29,12 @@ export default function LiveShotChart({ summary }: { summary: any }) {
       </div>
 
       <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', maxWidth: 400, height: 'auto', display: 'block', margin: '0 auto' }}>
-        <rect x={3} y={3} width={494} height={470} rx={6} fill="#242018" stroke={faint} />
-        <rect x={171} y={283} width={158} height={190} fill="rgba(201,168,76,0.06)" stroke={faint} />
-        <circle cx={250} cy={283} r={60} fill="none" stroke={faint} />
-        <line x1={220} y1={433} x2={280} y2={433} stroke={GOLD} strokeWidth={2.5} />
-        <circle cx={250} cy={420.5} r={7.5} fill="none" stroke="#e2c06a" strokeWidth={2.5} />
-        <path d="M33 473 L33 333 C33 133 467 133 467 333 L467 473" fill="none" stroke={GOLD} strokeWidth={2} />
+        <rect x={3} y={3} width={494} height={418} rx={6} fill="#242018" stroke={faint} />
+        <rect x={190} y={230} width={120} height={190} fill="rgba(201,168,76,0.06)" stroke={faint} />
+        <circle cx={250} cy={230} r={60} fill="none" stroke={faint} />
+        <line x1={220} y1={380} x2={280} y2={380} stroke={GOLD} strokeWidth={2.5} />
+        <circle cx={250} cy={367.5} r={7.5} fill="none" stroke="#e2c06a" strokeWidth={2.5} />
+        <path d="M59.6 420 A197.5 197.5 0 0 1 250 170 A197.5 197.5 0 0 1 440.4 420" fill="none" stroke={GOLD} strokeWidth={2} />
         {pts.map((p, i) => {
           const cx = (Number(p.x) / 100) * W, cy = (Number(p.y) / 100) * H
           if (!isFinite(cx) || !isFinite(cy)) return null
