@@ -84,6 +84,26 @@ export function RushLaneSelector({ value, onChange }: { value?: string | null; o
   return <TapGroup options={RUSH_LANES} value={value} onChange={onChange} cols={5} />
 }
 
+/** Pass target-area grid (depth × side + behind-LOS). Values match the report's
+ *  field-heat-map classifier ("Deep Left", "Short Middle", "Behind LOS", ...). */
+const TARGET_ROWS = [{ depth: 'Deep', tag: 'Deep 20+' }, { depth: 'Intermediate', tag: 'Intermediate' }, { depth: 'Short', tag: 'Short 0-9' }]
+export function TargetAreaGrid({ value, onChange }: { value?: string | null; onChange: (v: string) => void }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {TARGET_ROWS.map(r => (
+        <div key={r.depth} style={{ display: 'grid', gridTemplateColumns: '68px 1fr 1fr 1fr', gap: 6, alignItems: 'stretch' }}>
+          <div style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 700, display: 'flex', alignItems: 'center', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{r.tag}</div>
+          {['Left', 'Middle', 'Right'].map(c => {
+            const label = `${r.depth} ${c}`
+            return <button key={c} type="button" onClick={() => onChange(label)} style={sel(value === label)}>{c}</button>
+          })}
+        </div>
+      ))}
+      <button type="button" onClick={() => onChange('Behind LOS')} style={sel(value === 'Behind LOS')}>Behind LOS / Screen</button>
+    </div>
+  )
+}
+
 /** Touch route tree, routes drawn as tappable endpoints around a receiver origin. */
 export function RouteTree({ value, onChange, customRoutes }: {
   value?: string | null; onChange: (v: string) => void; customRoutes?: string[]

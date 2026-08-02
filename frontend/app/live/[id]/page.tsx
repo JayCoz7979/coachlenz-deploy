@@ -17,7 +17,7 @@ import {
   BB_POSS_RESULT, BB_DEF_SET, BB_OPP_ACTION, BB_DEF_RESULT, BB_SPECIAL, BB_INTENDED,
   type TermSystem,
 } from '@/components/live/fields'
-import { TapGroup, GapSelector, RushLaneSelector, RouteTree, ShotZoneCourt } from '@/components/live/Selectors'
+import { TapGroup, GapSelector, RushLaneSelector, RouteTree, TargetAreaGrid, ShotZoneCourt } from '@/components/live/Selectors'
 import { Zap, Loader2, Undo2, FileBarChart, ClipboardList, Flag, Trash2, X, ChevronDown } from 'lucide-react'
 
 type Cur = Record<string, any>
@@ -443,6 +443,7 @@ function FootballPanel({ mode, sport, isFlag, term, customRoutes, cur, set, rost
                 <Jersey label="Target #" value={cur.target_jersey} onChange={v => set('target_jersey', v)} />
               </div>
               <Field label="Route"><RouteTree value={cur.route} onChange={v => set('route', v)} customRoutes={customRoutes} /></Field>
+              <Field label="Target area (feeds the field heat map)"><TargetAreaGrid value={cur.target_area} onChange={v => set('target_area', v)} /></Field>
               <Field label="Pass result"><TapGroup options={FB_PASS_RESULTS} value={cur.pass_result} onChange={v => set('pass_result', v)} cols={3} /></Field>
             </>
           )}
