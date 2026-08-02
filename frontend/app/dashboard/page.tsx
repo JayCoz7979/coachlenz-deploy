@@ -194,7 +194,7 @@ export default function DashboardPage() {
       {/* New-coach helper: see what a Live Game report looks like before logging one. */}
       <div style={{ margin: '0 0 16px', fontSize: 12.5, color: 'var(--text3)' }}>
         New to the <Link href="/live" style={{ color: 'var(--green3)' }}>Live Game Logger</Link>?{' '}
-        <a href="/examples/index.html" target="_blank" rel="noreferrer" style={{ color: 'var(--gold)', fontWeight: 600 }}>See example reports →</a>
+        <Link href="/examples" style={{ color: 'var(--gold)', fontWeight: 600 }}>See example reports →</Link>
       </div>
 
       {/* ── EXPANDABLE SECTIONS ── */}
