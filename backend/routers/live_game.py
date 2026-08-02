@@ -75,8 +75,9 @@ _EXTRA_KEYS = (
     "custom_route",
     # football / flag defense (ours) + opponent detail
     # (defensive_front is a first-class Event column — set below, not here)
-    "opp_formation", "opp_play_type", "opp_ball_carrier",
-    "opp_target", "opp_run_gap", "opp_route", "stop_maker_jersey", "pass_rush",
+    "opp_formation", "opp_play_type", "opp_ball_carrier", "opp_run_concept",
+    "opp_target", "opp_passer_jersey", "opp_run_gap", "opp_route",
+    "stop_maker_jersey", "pass_rush",
     # special teams
     "st_unit", "kicker_jersey", "returner_jersey", "st_result", "st_yards",
     # basketball offense

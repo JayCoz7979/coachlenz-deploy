@@ -194,7 +194,7 @@ def compute_football_stats(events, config: Dict[str, Any]) -> Dict[str, Any]:
 
     # ── Section 3: our defense ──
     def_yards = sum(_int(getattr(e, "yards_gained", 0)) for e in deff)
-    opp_forms, opp_types, opp_gaps = {}, {}, {}
+    opp_forms, opp_types, opp_gaps, opp_concepts = {}, {}, {}, {}
     front_perf: Dict[str, list] = {}
     for e in deff:
         x = _extra(e)
@@ -204,6 +204,8 @@ def compute_football_stats(events, config: Dict[str, Any]) -> Dict[str, Any]:
             opp_types[x["opp_play_type"]] = opp_types.get(x["opp_play_type"], 0) + 1
         if x.get("opp_run_gap"):
             opp_gaps[x["opp_run_gap"]] = opp_gaps.get(x["opp_run_gap"], 0) + 1
+        if x.get("opp_run_concept"):
+            opp_concepts[x["opp_run_concept"]] = opp_concepts.get(x["opp_run_concept"], 0) + 1
         if e.defensive_front:
             front_perf.setdefault(e.defensive_front, []).append(_int(getattr(e, "yards_gained", 0)))
     def_third = [e for e in deff if _int(getattr(e, "down", 0)) == 3]
@@ -213,7 +215,8 @@ def compute_football_stats(events, config: Dict[str, Any]) -> Dict[str, Any]:
     defense = {
         "plays": len(deff), "yards_allowed": def_yards,
         "yards_per_play_allowed": round(def_yards / len(deff), 2) if deff else 0,
-        "opp_formations": _rank(opp_forms), "opp_play_types": _rank(opp_types), "opp_run_gaps": _rank(opp_gaps),
+        "opp_formations": _rank(opp_forms), "opp_play_types": _rank(opp_types),
+        "opp_run_gaps": _rank(opp_gaps), "opp_run_concepts": _rank(opp_concepts),
         "fronts": sorted(
             ({"front": f, "plays": len(v), "yards_allowed": sum(v),
               "ypp_allowed": round(sum(v) / len(v), 2) if v else 0} for f, v in front_perf.items()),
@@ -226,7 +229,7 @@ def compute_football_stats(events, config: Dict[str, Any]) -> Dict[str, Any]:
     }
 
     # ── Section 4: opponent players (from the fields we logged on defense) ──
-    opp_carriers, opp_targets, opp_routes = {}, {}, {}
+    opp_carriers, opp_targets, opp_routes, opp_passers = {}, {}, {}, {}
     for e in deff:
         x = _extra(e)
         if x.get("opp_ball_carrier"):
@@ -239,8 +242,11 @@ def compute_football_stats(events, config: Dict[str, Any]) -> Dict[str, Any]:
                 d["vs_coverage"][e.coverage] = d["vs_coverage"].get(e.coverage, 0) + 1
         if x.get("opp_route"):
             opp_routes[x["opp_route"]] = opp_routes.get(x["opp_route"], 0) + 1
+        if x.get("opp_passer_jersey"):
+            opp_passers[str(x["opp_passer_jersey"])] = opp_passers.get(str(x["opp_passer_jersey"]), 0) + 1
     players_opp = {
         "ball_carriers": _rank(opp_carriers),
+        "quarterbacks": _rank(opp_passers),
         "targets": [{"jersey": k, **v} for k, v in sorted(opp_targets.items(), key=lambda kv: -kv[1]["targets"])],
         "routes": _rank(opp_routes),
     }
@@ -480,13 +486,14 @@ def _football_spec(scope_label: str, has_season: bool) -> List[Dict[str, str]]:
          "unused_roster is non-empty, list those jersey numbers as 'not yet involved: get them a touch'."),
         ("Section 3: Defensive Summary", "defense",
          "Use stats.defense. Lead with plays defended, yards_allowed, yards_per_play_allowed. Bullets: what the "
-         "opponent ran most (opp_formations, opp_play_types, opp_run_gaps); which of our fronts held vs bled "
-         "(fronts, ranked by ypp_allowed); 3rd-down conversions allowed; and pressure (blitzes, avg yards when "
-         "blitzing). Flag any repeatedly exploited formation or gap."),
+         "opponent ran most (opp_formations, opp_play_types, opp_run_gaps, opp_run_concepts); which of our fronts "
+         "held vs bled (fronts, ranked by ypp_allowed); 3rd-down conversions allowed; and pressure (blitzes, avg "
+         "yards when blitzing). Flag any repeatedly exploited formation, gap, or run concept."),
         ("Section 4: Player Tendencies: Opponent", "tendency",
-         "Use stats.players_opponent. Bullet their top ball_carriers and top targets (with vs_coverage: e.g. "
-         "'their #11 targeted 7x, 5 vs our Cover 3') and top routes. Name their primary threat and give ONE matchup "
-         "call (bracket / man / rotate a safety). If empty, say opponent jersey numbers weren't logged this half."),
+         "Use stats.players_opponent. Bullet their top ball_carriers, their quarterbacks (opp QB #s), and top "
+         "targets (with vs_coverage: e.g. 'their #11 targeted 7x, 5 vs our Cover 3') and top routes. Name their "
+         "primary threat and give ONE matchup call (bracket / man / rotate a safety). If empty, say opponent "
+         "jersey numbers weren't logged this half."),
         ("Section 5: Special Teams Summary", "special_teams",
          "Use stats.special_teams.by_unit. One bullet per unit: count, the result breakdown, and avg_yards. Flag "
          "any outsized play (long return, block, missed FG). If no special-teams plays were logged, say so in one line."),

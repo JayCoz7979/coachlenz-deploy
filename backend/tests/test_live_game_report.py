@@ -122,6 +122,19 @@ def test_football_defense_and_opponent_players():
     assert opp["targets"][0]["vs_coverage"].get("Cover 3") == 1
 
 
+def test_opponent_run_concept_and_qb_surface():
+    # Their Ball parity: opp run concept + opp QB # must reach the report stats.
+    evs = [
+        ev(side="defense", extra_data={"quarter": 1, "opp_play_type": "Run",
+                                       "opp_ball_carrier": "32", "opp_run_concept": "Counter"}),
+        ev(side="defense", extra_data={"quarter": 1, "opp_play_type": "Pass",
+                                       "opp_passer_jersey": "9", "opp_target": "11"}),
+    ]
+    s = compute_football_stats(evs, {})
+    assert {r["key"] for r in s["defense"]["opp_run_concepts"]} == {"Counter"}
+    assert {r["key"] for r in s["players_opponent"]["quarterbacks"]} == {"9"}
+
+
 def test_football_special_teams():
     s = compute_football_stats(_football_events(), {})
     st = s["special_teams"]

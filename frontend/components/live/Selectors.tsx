@@ -5,8 +5,10 @@
  * tokens (var(--gold), var(--bg3), ...). They do not import or alter any global
  * styles, so the live site is untouched. All tap targets are >= 44px.
  */
-import { type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { GAPS, RUSH_LANES, ROUTES, SHOT_ZONES, gapLabel, type TermSystem } from './fields'
+
+const ZONE_LABEL: Record<string, string> = Object.fromEntries(SHOT_ZONES.map(z => [z.value, z.label]))
 
 const GOLD = 'var(--gold)'
 const sel = (on: boolean): CSSProperties => ({
@@ -98,40 +100,63 @@ export function RouteTree({ value, onChange, customRoutes }: {
   )
 }
 
-/** Half-court shot-zone selector (touch SVG). Tap a zone to log the shot. */
+/** Realistic half-court shot chart. Tap the spot the shot came from: a marker drops
+ *  and it resolves to the correct zone (Corner 3, Wing 3, Top 3, Paint, FT, Mid-range),
+ *  which feeds the same 10-zone stats the report reads. Looks like a court, one tap. */
 export function ShotZoneCourt({ value, onChange }: { value?: string | null; onChange: (v: string) => void }) {
-  const W = 300, H = 280
-  const fill = (v: string) => (value === v ? 'rgba(201,168,76,0.30)' : 'var(--bg3)')
-  const stroke = (v: string) => (value === v ? GOLD : 'var(--border2)')
-  const txt = (v: string) => (value === v ? GOLD : 'var(--text3)')
-  const Z = ({ v, d, cx, cy, label }: { v: string; d: string; cx: number; cy: number; label: string }) => (
-    <g onClick={() => onChange(v)} style={{ cursor: 'pointer' }}>
-      <path d={d} fill={fill(v)} stroke={stroke(v)} strokeWidth={1.5} />
-      <text x={cx} y={cy} textAnchor="middle" fontSize="9" fontWeight="700" fill={txt(v)}>{label}</text>
-    </g>
-  )
+  const W = 300, H = 284, RIMX = 150, RIMY = 246, R3 = 132
+  const [pt, setPt] = useState<{ x: number; y: number } | null>(null)
+  const ref = useRef<SVGSVGElement | null>(null)
+  // Clear the dropped marker when the play resets (parent clears `value`).
+  useEffect(() => { if (!value) setPt(null) }, [value])
+
+  const classify = (x: number, y: number): string => {
+    const dist = Math.hypot(x - RIMX, y - RIMY)
+    if (y >= 183 && (x <= 34 || x >= 266)) return x < RIMX ? 'corner3_left' : 'corner3_right'
+    if (dist > R3) { if (x < 112) return 'wing3_left'; if (x > 188) return 'wing3_right'; return 'top3' }
+    if (x >= 112 && x <= 188 && y >= 150) return 'paint'
+    if (Math.abs(x - RIMX) <= 34 && y >= 120 && y <= 172) return 'ft'
+    if (x < 118) return 'mid_left'
+    if (x > 182) return 'mid_right'
+    return 'mid_center'
+  }
+
+  const tap = (e: any) => {
+    const svg = ref.current; if (!svg) return
+    const r = svg.getBoundingClientRect()
+    const x = Math.max(14, Math.min(286, ((e.clientX - r.left) / r.width) * W))
+    const y = Math.max(14, Math.min(272, ((e.clientY - r.top) / r.height) * H))
+    setPt({ x, y })
+    onChange(classify(x, y))
+  }
+
+  const line = GOLD, faint = 'rgba(201,168,76,0.30)'
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', maxWidth: 340, height: 'auto', touchAction: 'manipulation' }}>
-      {/* baseline at bottom, half-court arc toward top */}
-      {/* corners */}
-      <Z v="corner3_left" d="M4 120 L58 120 L58 276 L4 276 Z" cx={31} cy={210} label="Cnr 3 L" />
-      <Z v="corner3_right" d="M242 120 L296 120 L296 276 L242 276 Z" cx={269} cy={210} label="Cnr 3 R" />
-      {/* wings */}
-      <Z v="wing3_left" d="M4 20 L58 20 L58 120 L4 120 Z" cx={31} cy={70} label="Wing 3 L" />
-      <Z v="wing3_right" d="M242 20 L296 20 L296 120 L242 120 Z" cx={269} cy={70} label="Wing 3 R" />
-      {/* top of key 3 */}
-      <Z v="top3" d="M58 8 L242 8 L242 70 L58 70 Z" cx={150} cy={38} label="Top 3" />
-      {/* mid-range left / right / center */}
-      <Z v="mid_left" d="M58 70 L104 70 L104 200 L58 200 Z" cx={81} cy={140} label="Mid L" />
-      <Z v="mid_right" d="M196 70 L242 70 L242 200 L196 200 Z" cx={219} cy={140} label="Mid R" />
-      <Z v="mid_center" d="M104 70 L196 70 L196 118 L104 118 Z" cx={150} cy={96} label="Mid C" />
-      {/* free throw */}
-      <Z v="ft" d="M104 118 L196 118 L196 158 L104 158 Z" cx={150} cy={140} label="FT" />
-      {/* paint */}
-      <Z v="paint" d="M104 158 L196 158 L196 276 L104 276 Z" cx={150} cy={220} label="Paint" />
-      {/* hoop */}
-      <circle cx={150} cy={262} r={7} fill="none" stroke="var(--gold-light)" strokeWidth={2} />
-    </svg>
+    <div>
+      <svg ref={ref} viewBox={`0 0 ${W} ${H}`} onClick={tap}
+        style={{ width: '100%', maxWidth: 360, height: 'auto', display: 'block', margin: '0 auto', touchAction: 'manipulation', cursor: 'crosshair' }}>
+        <rect x={14} y={14} width={272} height={258} rx={5} fill="var(--bg3)" stroke={faint} />
+        {/* paint / lane */}
+        <rect x={112} y={150} width={76} height={122} fill="rgba(201,168,76,0.07)" stroke={faint} />
+        {/* free-throw circle */}
+        <circle cx={150} cy={150} r={30} fill="none" stroke={faint} />
+        {/* backboard + rim */}
+        <line x1={132} y1={256} x2={168} y2={256} stroke={line} strokeWidth={2} />
+        <circle cx={150} cy={248} r={7} fill="none" stroke="var(--gold-light)" strokeWidth={2} />
+        {/* three-point line: corners straight up, then arc over the top */}
+        <path d="M34 272 L34 183 C34 90 266 90 266 183 L266 272" fill="none" stroke={line} strokeWidth={1.5} />
+        {/* dropped shot marker */}
+        {pt && (
+          <g>
+            <circle cx={pt.x} cy={pt.y} r={9} fill="rgba(201,168,76,0.25)" stroke={line} strokeWidth={2} />
+            <circle cx={pt.x} cy={pt.y} r={3} fill={line} />
+          </g>
+        )}
+      </svg>
+      <div style={{ textAlign: 'center', marginTop: 8, fontSize: 13, fontWeight: 700, color: value ? GOLD : 'var(--text3)' }}>
+        {value ? (ZONE_LABEL[value] || value) : 'Tap the court to mark the shot'}
+      </div>
+    </div>
   )
 }
 

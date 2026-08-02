@@ -449,12 +449,20 @@ function FootballPanel({ mode, sport, isFlag, term, customRoutes, cur, set, rost
                 {isFlag ? <RushLaneSelector value={cur.opp_run_gap} onChange={v => set('opp_run_gap', v)} />
                   : <GapSelector value={cur.opp_run_gap} onChange={v => set('opp_run_gap', v)} system={term} />}
               </Field>
-              <Jersey label="Opp ball carrier #" value={cur.opp_ball_carrier} onChange={v => set('opp_ball_carrier', v)} />
+              <div style={{ marginTop: 12 }}>
+                <Jersey label="Opp ball carrier #" value={cur.opp_ball_carrier} onChange={v => set('opp_ball_carrier', v)} />
+              </div>
+              <Field label={isFlag ? 'Opp rush type' : 'Opp run concept'}>
+                <TapGroup options={isFlag ? FLAG_RUSH_TYPES : FB_RUN_CATEGORIES} value={cur.opp_run_concept} onChange={v => set('opp_run_concept', v)} cols={3} />
+              </Field>
             </>
           )}
           {isPass && (
             <>
-              <Jersey label="Opp target #" value={cur.opp_target} onChange={v => set('opp_target', v)} />
+              <div style={{ display: 'flex', gap: 14, marginBottom: 12 }}>
+                <Jersey label="Opp QB #" value={cur.opp_passer_jersey} onChange={v => set('opp_passer_jersey', v)} />
+                <Jersey label="Opp target #" value={cur.opp_target} onChange={v => set('opp_target', v)} />
+              </div>
               <Field label="Opp route"><RouteTree value={cur.opp_route} onChange={v => set('opp_route', v)} customRoutes={customRoutes} /></Field>
             </>
           )}
