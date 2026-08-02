@@ -247,6 +247,20 @@ def test_chart_summary_basketball_zones_and_points():
     assert pts[0]["made"] is True and pts[1]["made"] is False
 
 
+def test_chart_summary_opponent_shot_points():
+    # opponent shots come from our defensive possessions; made = a FG we "gave up"
+    evs = [
+        ev(side="defense", result="Gave Up 2",
+           extra_data={"half": 1, "opp_shooter": "10", "shot_zone_allowed": "paint", "shot_x": 50.0, "shot_y": 82.0}),
+        ev(side="defense", result="Stop - Missed",
+           extra_data={"half": 1, "opp_shooter": "10", "shot_zone_allowed": "wing3_left", "shot_x": 14.0, "shot_y": 34.0}),
+    ]
+    opp = build_chart_summary("basketball", evs, {})["live_shot_chart_opp"]
+    assert len(opp) == 2
+    assert opp[0]["made"] is True and opp[1]["made"] is False
+    assert opp[0]["jersey"] == "10"
+
+
 def test_generate_short_circuits_without_enough_plays():
     # < 3 plays returns a guidance section and never calls the LLM
     out = asyncio.run(

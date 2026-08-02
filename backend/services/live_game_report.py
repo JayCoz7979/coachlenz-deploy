@@ -511,6 +511,18 @@ def build_chart_summary(sport: str, events, config: Dict[str, Any]) -> Dict[str,
             if isinstance(sx, (int, float)) and isinstance(sy, (int, float)):
                 points.append({"x": round(float(sx), 1), "y": round(float(sy), 1),
                                "made": _made(x.get("shot_result")), "jersey": x.get("shooter_jersey")})
+        # Opponent shots (our defensive possessions): the defense court tap stored
+        # shot_x/shot_y, and the defensive result says whether the shot went in.
+        opp_points: List[Dict[str, Any]] = []
+        for e in (ee for ee in plays if ee.side == "defense"):
+            x = _extra(e)
+            sx, sy = x.get("shot_x"), x.get("shot_y")
+            if isinstance(sx, (int, float)) and isinstance(sy, (int, float)):
+                res = _rp(getattr(e, "result", ""))
+                made = ("gave up" in res) or ("and-1" in res)  # a made FG we allowed
+                opp_points.append({"x": round(float(sx), 1), "y": round(float(sy), 1),
+                                   "made": made, "jersey": x.get("opp_shooter")})
+
         out: Dict[str, Any] = {}
         if zones:
             zmap = {lbl: {"attempts": d["attempts"], "made": d["made"],
@@ -522,6 +534,8 @@ def build_chart_summary(sport: str, events, config: Dict[str, Any]) -> Dict[str,
             out["shot_zone_map"] = {"zones": zmap, "hottest_zone": hottest, "most_frequent_zone": most_freq}
         if points:
             out["live_shot_chart"] = points
+        if opp_points:
+            out["live_shot_chart_opp"] = opp_points
         return out
 
     # football / flag football: run-gap heat tiles + pass-target field grid
