@@ -6,7 +6,8 @@
 import { type CSSProperties } from 'react'
 
 const GOLD = '#C9A84C', MADE = '#2d8c40', MISS = '#b45c5c'
-const W = 300, H = 284
+// Real half-court proportions (NBA), ~10px/ft. Matches the logger's ShotZoneCourt.
+const W = 500, H = 476
 
 export default function LiveShotChart({ summary }: { summary: any }) {
   const pts: any[] = Array.isArray(summary?.live_shot_chart) ? summary.live_shot_chart : []
@@ -27,21 +28,21 @@ export default function LiveShotChart({ summary }: { summary: any }) {
         </span>
       </div>
 
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', maxWidth: 360, height: 'auto', display: 'block', margin: '0 auto' }}>
-        <rect x={14} y={14} width={272} height={258} rx={5} fill="#242018" stroke={faint} />
-        <rect x={112} y={150} width={76} height={122} fill="rgba(201,168,76,0.06)" stroke={faint} />
-        <circle cx={150} cy={150} r={30} fill="none" stroke={faint} />
-        <line x1={132} y1={256} x2={168} y2={256} stroke={GOLD} strokeWidth={2} />
-        <circle cx={150} cy={248} r={7} fill="none" stroke="#e2c06a" strokeWidth={2} />
-        <path d="M34 272 L34 183 C34 90 266 90 266 183 L266 272" fill="none" stroke={GOLD} strokeWidth={1.5} />
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', maxWidth: 400, height: 'auto', display: 'block', margin: '0 auto' }}>
+        <rect x={3} y={3} width={494} height={470} rx={6} fill="#242018" stroke={faint} />
+        <rect x={171} y={283} width={158} height={190} fill="rgba(201,168,76,0.06)" stroke={faint} />
+        <circle cx={250} cy={283} r={60} fill="none" stroke={faint} />
+        <line x1={220} y1={433} x2={280} y2={433} stroke={GOLD} strokeWidth={2.5} />
+        <circle cx={250} cy={420.5} r={7.5} fill="none" stroke="#e2c06a" strokeWidth={2.5} />
+        <path d="M33 473 L33 333 C33 133 467 133 467 333 L467 473" fill="none" stroke={GOLD} strokeWidth={2} />
         {pts.map((p, i) => {
           const cx = (Number(p.x) / 100) * W, cy = (Number(p.y) / 100) * H
           if (!isFinite(cx) || !isFinite(cy)) return null
           return p.made
-            ? <circle key={i} cx={cx} cy={cy} r={5.5} fill="rgba(45,140,64,0.85)" stroke="#eafaee" strokeWidth={1} />
-            : <g key={i} stroke={MISS} strokeWidth={2}>
-                <line x1={cx - 4} y1={cy - 4} x2={cx + 4} y2={cy + 4} />
-                <line x1={cx - 4} y1={cy + 4} x2={cx + 4} y2={cy - 4} />
+            ? <circle key={i} cx={cx} cy={cy} r={8} fill="rgba(45,140,64,0.85)" stroke="#eafaee" strokeWidth={1.5} />
+            : <g key={i} stroke={MISS} strokeWidth={3}>
+                <line x1={cx - 6} y1={cy - 6} x2={cx + 6} y2={cy + 6} />
+                <line x1={cx - 6} y1={cy + 6} x2={cx + 6} y2={cy - 6} />
               </g>
         })}
       </svg>

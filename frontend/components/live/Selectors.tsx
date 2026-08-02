@@ -126,28 +126,30 @@ export function RouteTree({ value, onChange, customRoutes }: {
 export function ShotZoneCourt({ value, onChange, onPoint }: {
   value?: string | null; onChange: (v: string) => void; onPoint?: (p: { x: number; y: number }) => void
 }) {
-  const W = 300, H = 284, RIMX = 150, RIMY = 246, R3 = 132
+  // Real half-court proportions (NBA): 50ft wide x 47ft half, 16ft lane, 19ft to the
+  // FT line, 6ft FT circle, rim 5.25ft off the baseline, 3pt corners + arc. ~10px/ft.
+  const W = 500, H = 476, RIMX = 250, RIMY = 420.5, R3X = 234.7, R3Y = 237.5
   const [pt, setPt] = useState<{ x: number; y: number } | null>(null)
   const ref = useRef<SVGSVGElement | null>(null)
   // Clear the dropped marker when the play resets (parent clears `value`).
   useEffect(() => { if (!value) setPt(null) }, [value])
 
   const classify = (x: number, y: number): string => {
-    const dist = Math.hypot(x - RIMX, y - RIMY)
-    if (y >= 183 && (x <= 34 || x >= 266)) return x < RIMX ? 'corner3_left' : 'corner3_right'
-    if (dist > R3) { if (x < 112) return 'wing3_left'; if (x > 188) return 'wing3_right'; return 'top3' }
-    if (x >= 112 && x <= 188 && y >= 150) return 'paint'
-    if (Math.abs(x - RIMX) <= 34 && y >= 120 && y <= 172) return 'ft'
-    if (x < 118) return 'mid_left'
-    if (x > 182) return 'mid_right'
+    if ((x <= 33 || x >= 467) && y >= 333) return x < RIMX ? 'corner3_left' : 'corner3_right'
+    const rx = (x - RIMX) / R3X, ry = (y - RIMY) / R3Y
+    if (rx * rx + ry * ry > 1) { if (x < 190) return 'wing3_left'; if (x > 310) return 'wing3_right'; return 'top3' }
+    if (x >= 171 && x <= 329 && y >= 283) return 'paint'
+    if (Math.abs(x - RIMX) <= 60 && y >= 248 && y <= 320) return 'ft'
+    if (x < 220) return 'mid_left'
+    if (x > 280) return 'mid_right'
     return 'mid_center'
   }
 
   const tap = (e: any) => {
     const svg = ref.current; if (!svg) return
     const r = svg.getBoundingClientRect()
-    const x = Math.max(14, Math.min(286, ((e.clientX - r.left) / r.width) * W))
-    const y = Math.max(14, Math.min(272, ((e.clientY - r.top) / r.height) * H))
+    const x = Math.max(3, Math.min(497, ((e.clientX - r.left) / r.width) * W))
+    const y = Math.max(3, Math.min(473, ((e.clientY - r.top) / r.height) * H))
     setPt({ x, y })
     onChange(classify(x, y))
     // Normalised 0-100 court coordinates for the report's true shot-location map.
@@ -158,22 +160,22 @@ export function ShotZoneCourt({ value, onChange, onPoint }: {
   return (
     <div>
       <svg ref={ref} viewBox={`0 0 ${W} ${H}`} onClick={tap}
-        style={{ width: '100%', maxWidth: 360, height: 'auto', display: 'block', margin: '0 auto', touchAction: 'manipulation', cursor: 'crosshair' }}>
-        <rect x={14} y={14} width={272} height={258} rx={5} fill="var(--bg3)" stroke={faint} />
-        {/* paint / lane */}
-        <rect x={112} y={150} width={76} height={122} fill="rgba(201,168,76,0.07)" stroke={faint} />
-        {/* free-throw circle */}
-        <circle cx={150} cy={150} r={30} fill="none" stroke={faint} />
+        style={{ width: '100%', maxWidth: 380, height: 'auto', display: 'block', margin: '0 auto', touchAction: 'manipulation', cursor: 'crosshair' }}>
+        <rect x={3} y={3} width={494} height={470} rx={6} fill="var(--bg3)" stroke={faint} />
+        {/* paint / lane (16ft x 19ft) */}
+        <rect x={171} y={283} width={158} height={190} fill="rgba(201,168,76,0.07)" stroke={faint} />
+        {/* free-throw circle (6ft radius) */}
+        <circle cx={250} cy={283} r={60} fill="none" stroke={faint} />
         {/* backboard + rim */}
-        <line x1={132} y1={256} x2={168} y2={256} stroke={line} strokeWidth={2} />
-        <circle cx={150} cy={248} r={7} fill="none" stroke="var(--gold-light)" strokeWidth={2} />
-        {/* three-point line: corners straight up, then arc over the top */}
-        <path d="M34 272 L34 183 C34 90 266 90 266 183 L266 272" fill="none" stroke={line} strokeWidth={1.5} />
+        <line x1={220} y1={433} x2={280} y2={433} stroke={line} strokeWidth={2.5} />
+        <circle cx={250} cy={420.5} r={7.5} fill="none" stroke="var(--gold-light)" strokeWidth={2.5} />
+        {/* three-point line: straight corners up to 14ft, then the arc over the top */}
+        <path d="M33 473 L33 333 C33 133 467 133 467 333 L467 473" fill="none" stroke={line} strokeWidth={2} />
         {/* dropped shot marker */}
         {pt && (
           <g>
-            <circle cx={pt.x} cy={pt.y} r={9} fill="rgba(201,168,76,0.25)" stroke={line} strokeWidth={2} />
-            <circle cx={pt.x} cy={pt.y} r={3} fill={line} />
+            <circle cx={pt.x} cy={pt.y} r={14} fill="rgba(201,168,76,0.25)" stroke={line} strokeWidth={2.5} />
+            <circle cx={pt.x} cy={pt.y} r={5} fill={line} />
           </g>
         )}
       </svg>
