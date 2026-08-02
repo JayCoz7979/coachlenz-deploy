@@ -98,7 +98,7 @@ class Settings(BaseSettings):
     FERNET_KEYS_PREVIOUS: str = ""
 
     # Admin
-    ADMIN_PASSWORD: str = "ChangeMeNow!"
+    ADMIN_PASSWORD: str = ""  # set a strong 12+ char value in prod; seed.py refuses empty/weak
 
     # Default monthly analysis cap for a coach with NO explicit CoachUsageLimit row
     # (the base coach plan). Before this, an absent row meant UNLIMITED deep-Opus
