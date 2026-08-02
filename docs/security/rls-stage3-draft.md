@@ -53,21 +53,43 @@ correctly NOT covered.)
 
 ## Privileged paths (must use `get_db_privileged`, NOT the restricted engine)
 
-These are legitimately cross-org and would fail-closed to 0 rows under RLS:
+WIRED 2026-08-01. Rather than edit every org-scoped router, `models/base.get_db` now
+routes to the **restricted** engine by default (secure-by-default: a handler that
+forgets its `organization_id` filter still can't leak), and only the genuinely
+cross-org paths below are overridden back to `get_db_privileged`. This set was found
+by an AST audit of every router (`get_db` present, no auth dependency that chains to
+`get_current_user`), NOT by guesswork. The full set (larger than the original draft —
+the audit added the admin router and two more public-token readers):
 
-1. **Auth bootstrap** (`routers/auth.py`): login, refresh, register/signup, forgot-
-   password + reset. No org is known yet, so they cannot be org-scoped.
-2. **Public share link** (`routers/reports.py` `GET /reports/{id}/share/{token}`):
-   reads a report across orgs by capability token.
-3. **Workers** (all `backend/workers/*`): the job-queue poll (`SELECT next job`) is
-   cross-org. Each worker must `set_org_context(job.organization_id)` after claiming a
-   job and BEFORE touching tenant data, then `reset_org_context()` after. (This is the
-   Stage-2-deferred worker wiring; it lands here.)
+1. **Auth bootstrap** (`routers/auth.py`): register, login, refresh, forgot-password,
+   reset-password. No org is known yet, so they cannot be org-scoped. (register also
+   writes the org-scoped `legal_acceptances` before any JWT exists — only works on the
+   privileged engine.) `logout` / `change-password` / `verify-*` stay restricted: they
+   run under `get_current_user`, which sets the org context.
+2. **Public capability-token readers** (no login, scoped by an unguessable token, read
+   an org-scoped table cross-org): `reports.py GET /{id}/share/{token}`,
+   `recruiting.py GET /share/{token}`, `packages.py GET /view/{token}`.
+3. **Stripe webhook** (`billing.py POST /webhook`): no logged-in org; looks up the org
+   by Stripe customer/metadata and writes org-scoped rows for whichever org the event
+   names.
+4. **Admin** (all of `routers/admin.py`, via an aliased import): authenticated as the
+   admin's own org but queries **across** orgs (list/patch/delete every org, platform
+   stats, cross-tenant risk flags). Under the restricted engine RLS would silently
+   clamp it to the admin's own org. Still gated by `require_admin`.
 
-Everything else — every authenticated request handler that runs under
-`get_current_user` — uses `get_db_restricted`. `get_current_user` already
-`set_org_context(jwt.org)` before its first query, so the users lookup is itself
-org-scoped and returns the caller's own user (no bootstrap deadlock).
+Everything else — every authenticated request handler under `get_current_user`,
+`get_current_org`, `require_role`/`require_permission`, `require_admin` (which itself
+chains to `get_current_user`), etc. — uses the restricted engine via the default
+`get_db`. `get_current_user` already `set_org_context(jwt.org)` before its first
+query, so the users lookup is itself org-scoped and returns the caller's own user (no
+bootstrap deadlock).
+
+**Workers** (`backend/workers/*`): unchanged — they open sessions via
+`AsyncSessionLocal` (the **privileged** engine) directly, so the cross-org job-queue
+poll bypasses RLS and sees every org's jobs (correct). Per-job
+`set_org_context(job.organization_id)` is defense-in-depth for a *future* move of
+workers onto the restricted engine; it is NOT required for correctness while workers
+run on the privileged engine, and is deliberately deferred to keep this slice tight.
 
 ## Validation status (2026-08-01)
 
@@ -84,10 +106,31 @@ prod app table touched:
   15 non-org tables (incl. `processed_stripe_events`) got none; zero missing, zero
   over-reach. The dynamic script applies cleanly to every real table.
 
-**Still to validate (the app-code half):** the actual application running as `app_rls`
-with RLS on — that login/refresh/signup, share links, workers, and every org-scoped
-handler still return rows. That needs the router/worker wiring (step 5) plus a
-Postgres-backed run of the suite + a live cross-org probe. That is the remaining work.
+**The app-code half is now WIRED and the core path is VALIDATED (2026-08-01).** The
+router wiring above is in place (default-restricted `get_db` + the privileged
+overrides). Proven by booting the REAL FastAPI app against an isolated `rls_stage3_val`
+database (all 36 migrations + `stage3_enable_rls.sql`), privileged engine as
+`postgres`, restricted engine as an ephemeral `app_rls_val` login role
+(`NOSUPERUSER NOBYPASSRLS`, dropped after — the shared prod `app_rls` role is NEVER
+given a login password), `RLS_ENABLED=true`, driving real HTTP — `rls_app_validate.py`,
+**11/11 PASS**:
+
+- dual engine active + restricted engine distinct from privileged;
+- `register` (both orgs) + `login` succeed on the privileged engine (bootstrap writes
+  org + user + `legal_acceptances` with no org context yet, and the user lookup is not
+  fail-closed);
+- `GET /games` **returns the caller's row** on the restricted engine (the key proof it
+  is not fail-closed to 0) and does **not** leak the other org's row;
+- `GET /games/{own}` → 200, `GET /games/{other-org}` → 404 (cross-org isolation);
+- direct `app_rls_val` connection: no context → 0 rows (RLS genuinely enforcing at the
+  DB level, independent of the app-layer filter); `app.org_id=A` → exactly A's rows.
+
+**Still to validate (broader coverage, next slices):** the privileged share-link and
+admin paths returning rows end-to-end; a real worker job across orgs; and the full
+integration suite (`test_api_integration.py`, incl. the `cross_org_isolation` sweep
+over reports/events/roster) re-pointed at Postgres-as-`app_rls` instead of SQLite.
+The core request path and the RLS mechanism are proven; these extend coverage to every
+handler before any Stage 4 prod cutover.
 
 ## Validation runbook (DB-branch only)
 
@@ -119,6 +162,13 @@ Postgres-backed run of the suite + a live cross-org probe. That is the remaining
 
 ## What this draft does NOT do
 
-- It does not wire the routers/workers to the new dependencies (that is step 5, done
-  during validation so the 0-rows bugs surface where they are cheap to fix).
-- It does not enable RLS anywhere. The SQL is manual + branch-only; the code is dormant.
+- It does not enable RLS anywhere in prod. The SQL is manual + isolated-DB-only, and
+  the wiring is DORMANT: with `RLS_ENABLED=false` (prod default) and
+  `DATABASE_URL_RESTRICTED=""`, `RestrictedSessionLocal` and `get_db_privileged` both
+  resolve to the existing privileged `AsyncSessionLocal`, so `get_db`, every privileged
+  override, and the admin alias all use the exact same engine as before — a
+  byte-for-byte no-op in prod and CI. Verified: the app imports and all edited routers
+  load cleanly; prod behavior is unchanged until Stage 4 flips the flag + DSN.
+- The router wiring IS now in place (previously deferred). Worker per-job
+  `set_org_context` is still deferred (workers run on the privileged engine, which is
+  correct as-is — see the privileged-paths section).

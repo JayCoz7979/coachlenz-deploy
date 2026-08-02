@@ -6,6 +6,7 @@ from typing import Optional, List
 from datetime import datetime, timedelta
 import secrets
 from backend.models.base import get_db
+from backend.models.rls_engine import get_db_privileged  # public share link reads a report across orgs by token
 from backend.models.user import User
 from backend.models.organization import Organization
 from backend.models.report import TendencyReport
@@ -288,7 +289,7 @@ async def revoke_report_share(
 
 
 @router.get("/{report_id}/share/{token}")
-async def view_shared_report(report_id: str, token: str, db: AsyncSession = Depends(get_db)):
+async def view_shared_report(report_id: str, token: str, db: AsyncSession = Depends(get_db_privileged)):
     """Public, no-login, read-only view of a shared report. Gated by the capability
     token and its expiry. No player names appear in a report payload (jersey numbers
     and tendencies only), so nothing identifiable is exposed here."""

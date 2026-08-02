@@ -4,6 +4,7 @@ from sqlalchemy import select, update, func
 from pydantic import BaseModel, EmailStr
 from datetime import datetime, timedelta
 from backend.models.base import get_db
+from backend.models.rls_engine import get_db_privileged  # bootstrap paths bypass RLS (no org yet)
 from backend.models.user import User
 from backend.models.organization import Organization
 from backend.services.auth import hash_password, verify_password, create_access_token, create_refresh_token, decode_token, get_current_user
@@ -56,7 +57,7 @@ class RefreshRequest(BaseModel):
 
 @router.post("/register")
 @limiter.limit("5/minute")
-async def register(body: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)):
+async def register(body: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db_privileged)):
     if not body.accepted_terms:
         raise HTTPException(status_code=422, detail="You must accept the Terms of Service and Privacy Policy to create an account.")
 
@@ -121,7 +122,7 @@ async def register(body: RegisterRequest, request: Request, db: AsyncSession = D
 
 @router.post("/login")
 @limiter.limit("10/minute")
-async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends(get_db)):
+async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends(get_db_privileged)):
     result = await db.execute(select(User).where(User.email == body.email, User.is_active == True))
     user = result.scalar_one_or_none()
     if not user or not verify_password(body.password, user.hashed_password):
@@ -137,7 +138,7 @@ async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends
     return {"access_token": access, "refresh_token": refresh, "token_type": "bearer"}
 
 @router.post("/refresh")
-async def refresh_token(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
+async def refresh_token(body: RefreshRequest, db: AsyncSession = Depends(get_db_privileged)):
     payload = decode_token(body.refresh_token)
     if payload.get("type") != "refresh":
         raise HTTPException(status_code=401, detail="Invalid token type")
@@ -183,7 +184,7 @@ class ChangePasswordRequest(BaseModel):
 
 @router.post("/forgot-password")
 @limiter.limit("5/minute")
-async def forgot_password(request: Request, body: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
+async def forgot_password(request: Request, body: ForgotPasswordRequest, db: AsyncSession = Depends(get_db_privileged)):
     """Email a single-use, 1-hour reset link. Always returns 200 with the same
     message whether or not the email exists (no account enumeration)."""
     result = await db.execute(select(User).where(User.email == body.email, User.is_active == True))
@@ -202,7 +203,7 @@ async def forgot_password(request: Request, body: ForgotPasswordRequest, db: Asy
 
 @router.post("/reset-password")
 @limiter.limit("10/minute")
-async def reset_password(request: Request, body: ResetPasswordRequest, db: AsyncSession = Depends(get_db)):
+async def reset_password(request: Request, body: ResetPasswordRequest, db: AsyncSession = Depends(get_db_privileged)):
     """Consume a reset token: verify it matches an unexpired hash, set the new
     password, and clear the token (single use)."""
     _validate_password(body.new_password)

@@ -3,7 +3,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, func
 from pydantic import BaseModel
 from typing import Optional
-from backend.models.base import get_db
+# admin.py is cross-org by design: platform ops (list/patch/delete every org, platform
+# stats, risk flags across tenants) span all orgs. Under RLS the restricted engine would
+# clamp these to the admin's OWN org and silently return partial data, so the whole
+# router uses the privileged (BYPASSRLS) engine. Access is still gated by require_admin.
+from backend.models.rls_engine import get_db_privileged as get_db
 from backend.models.user import User
 from backend.models.organization import Organization
 from backend.models.abuse import RiskFlag, AuditLog

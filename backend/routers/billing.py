@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
 from typing import Optional
 from backend.models.base import get_db
+from backend.models.rls_engine import get_db_privileged  # webhook is cross-org (no logged-in org)
 from backend.models.user import User
 from backend.models.organization import Organization
 from backend.models.job import Job
@@ -81,7 +82,7 @@ async def billing_status(org: Organization = Depends(get_current_org)):
     }
 
 @router.post("/webhook")
-async def stripe_webhook(request: Request, stripe_signature: str = Header(None), db: AsyncSession = Depends(get_db)):
+async def stripe_webhook(request: Request, stripe_signature: str = Header(None), db: AsyncSession = Depends(get_db_privileged)):
     payload = await request.body()
     try:
         event = stripe.Webhook.construct_event(payload, stripe_signature, settings.STRIPE_WEBHOOK_SECRET)
