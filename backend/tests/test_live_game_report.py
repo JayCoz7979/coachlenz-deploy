@@ -83,6 +83,22 @@ def test_football_offense_summary():
     assert off["formations"][0]["formation"] == "Trips"
 
 
+def test_incompletion_not_counted_as_completion():
+    # Regression: "incompletion" contains the substring "completion" — the counter
+    # must NOT treat an incompletion as a completion.
+    evs = [
+        ev(side="offense", play_type="Pass", yards_gained=10, player="80",
+           extra_data={"quarter": 1, "target_jersey": "80", "passer_jersey": "7", "pass_result": "Completion"}),
+        ev(side="offense", play_type="Pass", yards_gained=0, player="80",
+           extra_data={"quarter": 1, "target_jersey": "80", "passer_jersey": "7", "pass_result": "Incompletion"}),
+    ]
+    s = compute_football_stats(evs, {})
+    assert s["offense"]["pass"]["plays"] == 2
+    assert s["offense"]["pass"]["completions"] == 1        # not 2
+    assert s["players_offense"]["targets"][0]["catches"] == 1
+    assert s["players_offense"]["passers"][0]["completions"] == 1
+
+
 def test_football_offense_players_and_unused_roster():
     config = {"our_roster": [{"jersey": "22"}, {"jersey": "80"}, {"jersey": "7"}, {"jersey": "99", "name": "Bench"}]}
     s = compute_football_stats(_football_events(), config)

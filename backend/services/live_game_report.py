@@ -135,7 +135,7 @@ def compute_football_stats(events, config: Dict[str, Any]) -> Dict[str, Any]:
         "yards_per_play": round(off_yards / len(off), 2) if off else 0,
         "run": {"plays": len(runs), "yards": run_yards, "ypc": round(run_yards / len(runs), 2) if runs else 0},
         "pass": {"plays": len(passes), "yards": pass_yards,
-                 "completions": sum(1 for e in passes if "completion" in _rp(_extra(e).get("pass_result"))),
+                 "completions": sum(1 for e in passes if _rp(_extra(e).get("pass_result")) == "completion"),
                  "ypa": round(pass_yards / len(passes), 2) if passes else 0},
         "run_pass_ratio": f"{len(runs)}:{len(passes)}",
         "third_down": {"attempts": len(third), "conversions": len(third_conv), "pct": _pct(len(third_conv), len(third))},
@@ -165,7 +165,7 @@ def compute_football_stats(events, config: Dict[str, Any]) -> Dict[str, Any]:
         if t:
             d = targets.setdefault(str(t), {"targets": 0, "catches": 0, "yards": 0, "routes": {}})
             d["targets"] += 1
-            if "completion" in _rp(_extra(e).get("pass_result")):
+            if _rp(_extra(e).get("pass_result")) == "completion":
                 d["catches"] += 1
                 d["yards"] += _int(getattr(e, "yards_gained", 0))
             r = _extra(e).get("route")
@@ -175,7 +175,7 @@ def compute_football_stats(events, config: Dict[str, Any]) -> Dict[str, Any]:
         if p:
             d = passers.setdefault(str(p), {"attempts": 0, "completions": 0, "yards": 0})
             d["attempts"] += 1
-            if "completion" in _rp(_extra(e).get("pass_result")):
+            if _rp(_extra(e).get("pass_result")) == "completion":
                 d["completions"] += 1
                 d["yards"] += _int(getattr(e, "yards_gained", 0))
 
