@@ -126,22 +126,27 @@ export function RouteTree({ value, onChange, customRoutes }: {
 export function ShotZoneCourt({ value, onChange, onPoint }: {
   value?: string | null; onChange: (v: string) => void; onPoint?: (p: { x: number; y: number }) => void
 }) {
-  // Real half-court proportions (NBA): 50ft wide x 47ft half, 16ft lane, 19ft to the
-  // FT line, 6ft FT circle, rim 5.25ft off the baseline, 3pt corners + arc. ~10px/ft.
-  const W = 500, H = 476, RIMX = 250, RIMY = 420.5, R3X = 234.7, R3Y = 237.5
+  // Real HIGH-SCHOOL half-court proportions (NFHS): 50ft wide x 42ft half, 12ft lane,
+  // 19ft to the FT line, 6ft FT circle, rim 5.25ft off the baseline, 19'9" 3pt arc.
+  // ~10px/ft, viewBox 500x424.
+  const W = 500, H = 424, RIMX = 250, RIMY = 367.5, R3 = 197.5
   const [pt, setPt] = useState<{ x: number; y: number } | null>(null)
   const ref = useRef<SVGSVGElement | null>(null)
   // Clear the dropped marker when the play resets (parent clears `value`).
   useEffect(() => { if (!value) setPt(null) }, [value])
 
   const classify = (x: number, y: number): string => {
-    if ((x <= 33 || x >= 467) && y >= 333) return x < RIMX ? 'corner3_left' : 'corner3_right'
-    const rx = (x - RIMX) / R3X, ry = (y - RIMY) / R3Y
-    if (rx * rx + ry * ry > 1) { if (x < 190) return 'wing3_left'; if (x > 310) return 'wing3_right'; return 'top3' }
-    if (x >= 171 && x <= 329 && y >= 283) return 'paint'
-    if (Math.abs(x - RIMX) <= 60 && y >= 248 && y <= 320) return 'ft'
-    if (x < 220) return 'mid_left'
-    if (x > 280) return 'mid_right'
+    const dist = Math.hypot(x - RIMX, y - RIMY)
+    if (dist > R3) {
+      if (y >= 300 && (x <= 90 || x >= 410)) return x < RIMX ? 'corner3_left' : 'corner3_right'
+      if (x < 175) return 'wing3_left'
+      if (x > 325) return 'wing3_right'
+      return 'top3'
+    }
+    if (x >= 190 && x <= 310 && y >= 230) return 'paint'
+    if (Math.abs(x - RIMX) <= 60 && y >= 200 && y <= 270) return 'ft'
+    if (x < 215) return 'mid_left'
+    if (x > 285) return 'mid_right'
     return 'mid_center'
   }
 
@@ -149,7 +154,7 @@ export function ShotZoneCourt({ value, onChange, onPoint }: {
     const svg = ref.current; if (!svg) return
     const r = svg.getBoundingClientRect()
     const x = Math.max(3, Math.min(497, ((e.clientX - r.left) / r.width) * W))
-    const y = Math.max(3, Math.min(473, ((e.clientY - r.top) / r.height) * H))
+    const y = Math.max(3, Math.min(420, ((e.clientY - r.top) / r.height) * H))
     setPt({ x, y })
     onChange(classify(x, y))
     // Normalised 0-100 court coordinates for the report's true shot-location map.
@@ -161,16 +166,16 @@ export function ShotZoneCourt({ value, onChange, onPoint }: {
     <div>
       <svg ref={ref} viewBox={`0 0 ${W} ${H}`} onClick={tap}
         style={{ width: '100%', maxWidth: 380, height: 'auto', display: 'block', margin: '0 auto', touchAction: 'manipulation', cursor: 'crosshair' }}>
-        <rect x={3} y={3} width={494} height={470} rx={6} fill="var(--bg3)" stroke={faint} />
-        {/* paint / lane (16ft x 19ft) */}
-        <rect x={171} y={283} width={158} height={190} fill="rgba(201,168,76,0.07)" stroke={faint} />
+        <rect x={3} y={3} width={494} height={418} rx={6} fill="var(--bg3)" stroke={faint} />
+        {/* paint / lane (12ft x 19ft, HS) */}
+        <rect x={190} y={230} width={120} height={190} fill="rgba(201,168,76,0.07)" stroke={faint} />
         {/* free-throw circle (6ft radius) */}
-        <circle cx={250} cy={283} r={60} fill="none" stroke={faint} />
+        <circle cx={250} cy={230} r={60} fill="none" stroke={faint} />
         {/* backboard + rim */}
-        <line x1={220} y1={433} x2={280} y2={433} stroke={line} strokeWidth={2.5} />
-        <circle cx={250} cy={420.5} r={7.5} fill="none" stroke="var(--gold-light)" strokeWidth={2.5} />
-        {/* three-point line: straight corners up to 14ft, then the arc over the top */}
-        <path d="M33 473 L33 333 C33 133 467 133 467 333 L467 473" fill="none" stroke={line} strokeWidth={2} />
+        <line x1={220} y1={380} x2={280} y2={380} stroke={line} strokeWidth={2.5} />
+        <circle cx={250} cy={367.5} r={7.5} fill="none" stroke="var(--gold-light)" strokeWidth={2.5} />
+        {/* three-point line: HS 19'9" arc, baseline to baseline */}
+        <path d="M59.6 420 A197.5 197.5 0 0 1 250 170 A197.5 197.5 0 0 1 440.4 420" fill="none" stroke={line} strokeWidth={2} />
         {/* dropped shot marker */}
         {pt && (
           <g>
