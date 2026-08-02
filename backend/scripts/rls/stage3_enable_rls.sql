@@ -1,4 +1,12 @@
--- RLS Backstop — Stage 3 (DRAFT). DB-BRANCH ONLY. Do NOT run on production.
+-- RLS Backstop — Stage 3 policy enable. Applied BY HAND (never auto-applied).
+--
+-- Validation phase: run on an isolated DB / DB-branch only.
+-- Stage 4 (production): this IS a step of docs/security/rls-stage4-cutover.md. It is
+-- SAFE to run on prod BEFORE the cutover and stays INERT there: every service still
+-- connects as the `postgres` superuser, which bypasses RLS even under FORCE, so no row
+-- is hidden until a service's DATABASE_URL_RESTRICTED + RLS_ENABLED flip it onto the
+-- app_rls role. Do NOT run it expecting immediate enforcement — enforcement begins at
+-- the env flip, not here.
 --
 -- Enables + FORCES Row Level Security with an org-isolation policy on every table
 -- that carries an organization_id column. Driven dynamically off information_schema
