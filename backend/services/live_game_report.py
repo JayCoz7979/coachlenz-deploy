@@ -473,6 +473,83 @@ def compute_season_baseline(sport: str, season_events, prior_game_count: int,
 
 
 # ── section specs ────────────────────────────────────────────────────────────
+# Readable labels for the heat-map keys (value -> human).
+_GAP_LABEL = {"left_d": "D-L", "left_c": "C-L", "left_b": "B-L", "left_a": "A-L",
+              "right_a": "A-R", "right_b": "B-R", "right_c": "C-R", "right_d": "D-R"}
+_LANE_LABEL = {"left_outside": "L Outside", "left_inside": "L Inside", "middle": "Middle",
+               "right_inside": "R Inside", "right_outside": "R Outside"}
+_BB_ZONE_LABEL = {"paint": "Paint", "mid_left": "Mid-Range Left", "mid_right": "Mid-Range Right",
+                  "mid_center": "Mid-Range Center", "corner3_left": "Corner 3 Left",
+                  "corner3_right": "Corner 3 Right", "wing3_left": "Wing 3 Left",
+                  "wing3_right": "Wing 3 Right", "top3": "Top of Key 3", "ft": "Free Throw"}
+
+
+def build_chart_summary(sport: str, events, config: Dict[str, Any]) -> Dict[str, Any]:
+    """Shape the logged plays into the exact `summary` fields the report viewer's
+    heat-map components already read (FieldHeatMap.offense.run_gap_analysis.by_gap for
+    football; BasketballShotChart.shot_zone_map.zones for basketball), plus a
+    `live_shot_chart` point list for the true shot-location court map. Merged into the
+    report's summary so the existing viewer renders the heat maps with no changes.
+    Reflects the report scope, since it runs on the already-filtered events."""
+    plays, _ = _split_plays(events)
+    off = [e for e in plays if (e.side or "offense") == "offense"]
+
+    if sport == "basketball":
+        zones: Dict[str, Dict[str, int]] = {}
+        points: List[Dict[str, Any]] = []
+        total = 0
+        for e in off:
+            x = _extra(e)
+            z = x.get("shot_zone")
+            if z:
+                total += 1
+                d = zones.setdefault(_BB_ZONE_LABEL.get(z, z), {"attempts": 0, "made": 0})
+                d["attempts"] += 1
+                if _made(x.get("shot_result")):
+                    d["made"] += 1
+            sx, sy = x.get("shot_x"), x.get("shot_y")
+            if isinstance(sx, (int, float)) and isinstance(sy, (int, float)):
+                points.append({"x": round(float(sx), 1), "y": round(float(sy), 1),
+                               "made": _made(x.get("shot_result")), "jersey": x.get("shooter_jersey")})
+        out: Dict[str, Any] = {}
+        if zones:
+            zmap = {lbl: {"attempts": d["attempts"], "made": d["made"],
+                          "fg_pct": _pct(d["made"], d["attempts"]),
+                          "pct_of_all_shots": _pct(d["attempts"], total)}
+                    for lbl, d in zones.items()}
+            hottest = max(zmap.items(), key=lambda kv: ((kv[1]["fg_pct"] or 0), kv[1]["attempts"]))[0]
+            most_freq = max(zmap.items(), key=lambda kv: kv[1]["attempts"])[0]
+            out["shot_zone_map"] = {"zones": zmap, "hottest_zone": hottest, "most_frequent_zone": most_freq}
+        if points:
+            out["live_shot_chart"] = points
+        return out
+
+    # football / flag football: run-gap heat tiles
+    is_flag = sport == "flag_football"
+    label_map = _LANE_LABEL if is_flag else _GAP_LABEL
+    by_gap: Dict[str, Dict[str, int]] = {}
+    for e in off:
+        if not _is_run(e.play_type):
+            continue
+        x = _extra(e)
+        g = x.get("rush_lane") if is_flag else x.get("run_gap")
+        if not g:
+            continue
+        d = by_gap.setdefault(label_map.get(g, g), {"count": 0, "yards": 0, "succ": 0})
+        yg = _int(getattr(e, "yards_gained", 0))
+        d["count"] += 1
+        d["yards"] += yg
+        if yg >= 4:
+            d["succ"] += 1
+    if not by_gap:
+        return {}
+    return {"offense": {"run_gap_analysis": {"by_gap": {
+        lbl: {"count": d["count"],
+              "avg_yards": round(d["yards"] / d["count"], 1) if d["count"] else 0,
+              "success_rate": round(100 * d["succ"] / d["count"]) if d["count"] else 0}
+        for lbl, d in by_gap.items()}}}}
+
+
 def _football_spec(scope_label: str, has_season: bool) -> List[Dict[str, str]]:
     S = [
         ("Section 1: Offensive Summary", "tendency",

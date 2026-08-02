@@ -157,7 +157,9 @@ class ReportsWorker(BaseWorker):
                 tendency_summary["coach_flagged_plays"] = flagged
             if report_type == "live_game":
                 # Bespoke 9-section halftime / full-game report from the logged plays.
-                from backend.services.live_game_report import generate_live_game_sections
+                from backend.services.live_game_report import (
+                    generate_live_game_sections, build_chart_summary,
+                )
                 prose_sections = await generate_live_game_sections(
                     sport=sport,
                     events=events,
@@ -167,6 +169,15 @@ class ReportsWorker(BaseWorker):
                     season_events=season_events,
                     prior_game_count=prior_game_count,
                 )
+                # Merge heat-map data (run gaps / shot zones / shot points) into the
+                # summary so the report viewer's existing chart components render it.
+                _meta_ev = next((e for e in events if getattr(e, "event_type", None) == "game_meta"), None)
+                _cfg = (getattr(_meta_ev, "extra_data", None) or {}) if _meta_ev else {}
+                for _k, _v in build_chart_summary(sport, events, _cfg).items():
+                    if _k == "offense":
+                        tendency_summary.setdefault("offense", {}).update(_v)
+                    else:
+                        tendency_summary[_k] = _v
             else:
                 prose_sections = await generate_prose_sections(
                     sport=sport,
