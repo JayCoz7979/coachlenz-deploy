@@ -14,7 +14,7 @@ modified (only additive files + two additive migrations).
 | Plays              | shared `events` table (`event_type='play'`, `side`, `extra_data`)  |
 | Reports            | `Job` → `worker_reports` → `live_game_report` → `/reports/[id]`     |
 | Report type        | `live_game` (dispatches to the bespoke 9-section writer)           |
-| Halftime scoping   | `tendency_reports.params.event_filter` (migration 037)             |
+| Report scoping     | `tendency_reports.params.event_filter` (migration 037): whole game / this half / this quarter |
 
 **Side mapping** (we log our own team): possession *us* → `side='offense'`,
 possession *them* → `side='defense'`, special teams → `side='special_teams'`. This
@@ -31,10 +31,15 @@ engine and ONE report pipeline serve the logger — no new play tables.
   - `POST /plays` — append plays; on-the-fly jerseys auto-join the session roster.
   - `PATCH /play/{id}`, `DELETE /play/{id}`, `POST /play/{id}/flag` — edit / delete /
     flag a Coaching Point (`is_highlight`, which the report's coach-notes digest reads).
-  - `POST /report` — queue a `halftime` (first-half scope) or `full` report.
+  - `POST /report` — queue a report at a `scope`: `full` (whole game) / `this_half` /
+    `this_quarter` / `halftime`. `_scope_filter(sport, scope, period)` maps the scope to
+    an `event_filter` (min/max quarter or half) + a label; `this_quarter` is the
+    "adjustment report" that isolates what the opponent changed after the break.
 - `backend/migrations/037_report_params.sql` — nullable `params JSONB` on `tendency_reports`.
 - `backend/migrations/038_game_status_live.sql` — adds `'live'` to `games_status_check`.
-- `worker_reports._apply_event_filter` — additive, NULL-safe halftime scoping.
+- `worker_reports._apply_event_filter` — additive, NULL-safe scope filter (min/max
+  quarter or half); `build_chart_summary` shapes logged plays into the heat-map fields
+  the report viewer already reads, merged into the report summary for `live_game`.
 
 ## Frontend (`/live`)
 
@@ -44,14 +49,44 @@ engine and ONE report pipeline serve the logger — no new play tables.
   edit/delete/flag, filters), Halftime / Full Game report buttons.
 - `components/live/fields.ts` — sport vocabularies + the three run-gap terminology systems.
 - `components/live/Selectors.tsx` — touch SVG selectors: OL gap/hole diagram, flag
-  rush lanes, route tree, basketball half-court shot zones.
+  rush lanes, route tree, pass target-area grid, and a real HIGH-SCHOOL (NFHS)
+  half-court (tap the spot → drops a marker, auto-resolves the 10-zone value + coords).
+- `components/report/LiveShotChart.tsx` — the report's true shot-location court (us +
+  opponent, made/miss, fouled-attempt rings, Us/Opponent/Both toggle). The football
+  field heat maps and basketball zone chart reuse the existing `report/` components
+  (`FieldHeatMap`, `RunPassMatrix`, `RunDirectionArrows`, `BasketballShotChart`).
+
+## Reports, heat maps & examples
+
+The report renders in the existing `/reports/[id]` viewer. It carries:
+- **Nine coordinator-voice sections** (basketball adds a Foul-Trouble Alert banner),
+  scoped to the chosen segment (whole game / this half / this quarter).
+- **Heat maps**, from `build_chart_summary` merged into `report.summary`:
+  - Football / flag: **run-gap** (football) or **rush-lane** (flag) tiles + a
+    **pass-target field grid** (`FieldHeatMap`), toggle Volume / Success% / Avg-Yds.
+    Success = gain-of-4+ for both run and pass, so the scale is apples-to-apples.
+  - Basketball: a **shot-zone chart** (`BasketballShotChart`) + a **true shot-location
+    court** (`LiveShotChart`) showing both teams' shots, made/miss, and fouled attempts.
+- **Season Trend Comparison** (Section 9): activates once the team has 3+ prior `live`
+  games; the worker pools their events via `compute_season_baseline` and the section
+  compares tonight's rates to that baseline. Suppressed on single-quarter scopes.
+
+**Worked examples** (illustrative — real pipeline stats + heat maps, hand-authored
+prose to show the format): [`docs/examples/live-game-flag-report.example.html`](examples/live-game-flag-report.example.html)
+is a full flag-football game report (all 9 sections + rush-lane / pass field heat
+maps). Basketball and football full-game reports (with shot charts, opponent shots,
+fouled-attempt rings, and an active season-trend example) were produced the same way.
 
 ## Delivered vs. deferred
 
 **Delivered & tested:** all three sports; game setup; the logger with touch SVG
-selectors; quick log; play review (edit/delete/flag/filter); halftime + full-game
-report generation; delivery via the existing `/reports/[id]` viewer (on-screen, share
-link, read-only for staff), saved as a unified game record on the dashboard.
+selectors (incl. a real HS half-court + pass target-area grid); quick log; play review
+(edit/delete/flag/filter); scoped reports (whole game / this half / this-quarter
+adjustment view); the 9-section coordinator report; heat maps (run/rush + pass field
+maps, basketball shot chart + true shot-location court with both teams and fouled
+attempts); the Season Trend Comparison at 3+ games; delivery via the existing
+`/reports/[id]` viewer (on-screen, share link, read-only for staff), saved as a
+unified game record on the dashboard.
 
 **The bespoke 9-section report** (`backend/services/live_game_report.py`): a dedicated
 writer that computes every stat DETERMINISTICALLY in Python from the logged plays
