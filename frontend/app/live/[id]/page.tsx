@@ -63,10 +63,13 @@ const mmssToSec = (s?: string): number | null => {
   return m ? Number(m[1]) * 60 + Number(m[2]) : null
 }
 // Let the coach just type digits mid-game: "1042" -> "10:42", "942" -> "9:42".
-// Strip non-digits, keep up to 4 (MMSS), auto-insert the colon before the last two.
+// Strip non-digits, keep up to 4 (MMSS), auto-insert the colon before the last two,
+// and clamp an impossible seconds value to 59 ("1099" -> "10:59").
 const formatClockInput = (raw?: string): string => {
   const d = (raw || '').replace(/\D/g, '').slice(0, 4)
-  return d.length <= 2 ? d : `${d.slice(0, d.length - 2)}:${d.slice(-2)}`
+  if (d.length <= 2) return d
+  const ss = Number(d.slice(-2)) > 59 ? '59' : d.slice(-2)
+  return `${d.slice(0, d.length - 2)}:${ss}`
 }
 
 export default function LoggerPage() {
