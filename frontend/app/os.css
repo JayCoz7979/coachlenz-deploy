@@ -41,6 +41,7 @@
 .clz .plan-chip{background:var(--greenl2);border:1px solid rgba(45,80,22,.25);border-radius:9px;padding:10px 12px}
 .clz .plan-chip .pn{font-family:var(--display);font-size:12px;font-weight:700;color:var(--green3)}
 .clz .plan-chip .pi{font-size:11px;color:var(--text3);margin-top:2px}
+.clz .signed-as{font-size:11px;color:var(--text3);margin-top:10px;text-align:center;word-break:break-all}
 .clz .tour-btn{display:block;width:100%;margin-top:9px;padding:8px;border-radius:8px;background:transparent;border:1px solid var(--border2);color:var(--text2);font-size:12px;cursor:pointer;text-align:center;transition:.12s;font-family:var(--sans)}
 .clz .tour-btn:hover{background:var(--bg3);color:var(--text)}
 .clz .main{flex:1;min-width:0}
@@ -338,8 +339,17 @@
 .clz .cta-dim{display:block;text-align:center;margin-top:12px;font-size:11px;color:var(--text3);cursor:pointer}
 .clz .cta-dim:hover{color:var(--text2)}
 .clz .cta-x{position:absolute;top:13px;right:15px;background:transparent;border:none;color:var(--text3);cursor:pointer;font-size:16px}
+/* Mobile nav: hamburger + slide-in drawer (hidden on desktop) */
+.clz .menu-btn{display:none;flex-direction:column;justify-content:center;gap:4px;width:38px;height:38px;padding:0 9px;border-radius:9px;border:1px solid var(--border2);background:var(--bg2);cursor:pointer;flex-shrink:0}
+.clz .menu-btn span{display:block;height:2px;width:100%;background:var(--text2);border-radius:2px}
+.clz .menu-btn:hover span{background:var(--text)}
+.clz .nav-backdrop{display:none}
 @media(max-width:960px){
-  .clz .sidebar{display:none}
+  .clz .menu-btn{display:flex}
+  .clz .sidebar{position:fixed;top:0;left:0;width:250px;height:100vh;z-index:400;transform:translateX(-102%);transition:transform .22s ease;box-shadow:6px 0 30px rgba(0,0,0,.55)}
+  .clz .sidebar.open{transform:translateX(0)}
+  .clz .nav-backdrop{display:block;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:399;opacity:0;pointer-events:none;transition:opacity .2s}
+  .clz.nav-open .nav-backdrop{opacity:1;pointer-events:auto}
   .clz .main{margin-left:0}
   .clz .kpi-row, .clz .form-grid, .clz .player-grid{grid-template-columns:1fr 1fr}
   .clz .g2, .clz .g3{grid-template-columns:1fr}
@@ -347,6 +357,9 @@
   .clz .test-g, .clz .tend-g, .clz .rec-g, .clz .sit-grid{grid-template-columns:1fr}
   .clz .page{padding:14px}
   .clz .topbar{padding:10px 14px}
+}
+@media(max-width:520px){
+  .clz .kpi-row, .clz .pricing-g, .clz .form-grid, .clz .player-grid{grid-template-columns:1fr}
 }
 
 /* Real-app overrides: no demo banner offset */

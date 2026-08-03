@@ -3,6 +3,9 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import api from '@/lib/api'
+// Static import so the transparent lockup is emitted to /_next/static/media
+// (public/ is not bundled with output:'standalone').
+import logo from '../../public/coachlenz-logo.png'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -30,9 +33,10 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen bg-gray-950 flex items-center justify-center">
       <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-brand-400">CoachLenz</h1>
-          <p className="text-gray-400 mt-2">Sign in to your account</p>
+        <div className="text-center mb-8 px-2">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={logo.src} alt="CoachLenz" className="mx-auto w-full h-auto" style={{ maxWidth: 340 }} />
+          <p className="text-gray-400 mt-5">Sign in to your account</p>
         </div>
         <form onSubmit={handleSubmit} className="card space-y-4">
           {error && <div className="text-red-400 text-sm bg-red-400/10 rounded p-3">{error}</div>}
