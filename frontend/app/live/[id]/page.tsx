@@ -62,6 +62,12 @@ const mmssToSec = (s?: string): number | null => {
   const m = (s || '').match(/^(\d{1,2}):(\d{2})$/)
   return m ? Number(m[1]) * 60 + Number(m[2]) : null
 }
+// Let the coach just type digits mid-game: "1042" -> "10:42", "942" -> "9:42".
+// Strip non-digits, keep up to 4 (MMSS), auto-insert the colon before the last two.
+const formatClockInput = (raw?: string): string => {
+  const d = (raw || '').replace(/\D/g, '').slice(0, 4)
+  return d.length <= 2 ? d : `${d.slice(0, d.length - 2)}:${d.slice(-2)}`
+}
 
 export default function LoggerPage() {
   const { user, isLoading, fetchMe } = useAuth()
@@ -311,7 +317,7 @@ export default function LoggerPage() {
             {!online ? `Offline · ${unsynced} queued` : unsynced ? `Saving ${unsynced}…` : 'All saved'}
           </span>
           <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6 }}>
-            <input style={{ ...input, width: 74, minHeight: 32, textAlign: 'center', padding: 5 }} placeholder="MM:SS" value={clock} onChange={e => setClock(e.target.value)} />
+            <input style={{ ...input, width: 74, minHeight: 32, textAlign: 'center', padding: 5 }} placeholder="MM:SS" inputMode="numeric" value={clock} onChange={e => setClock(formatClockInput(e.target.value))} title="Just type the digits — 1042 becomes 10:42" />
           </span>
         </div>
       </div>
