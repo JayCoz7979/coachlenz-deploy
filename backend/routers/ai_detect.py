@@ -30,6 +30,13 @@ def _norm(v) -> str:
     return ("" if v is None else str(v)).strip().lower()
 
 
+def _is_billable_run(dry_run: bool, test: bool) -> bool:
+    """A run counts against the coach's monthly cap only if it delivers real
+    analysis. dry_run (UATP staging: simulates, saves nothing) and test
+    (opening-minutes penny probe) do not, so they neither lock nor record usage."""
+    return not (dry_run or test)
+
+
 @router.get("/{game_id}/accuracy")
 async def accuracy_benchmark(
     game_id: str,
@@ -335,7 +342,7 @@ async def trigger_auto_detect(
     # of the coach's row makes concurrent runs queue here; each re-counts only after
     # the prior run's AnalysisUsage row has committed. Dry-run/test are free and
     # write no usage, so they skip the lock.
-    if not (dry_run or test):
+    if _is_billable_run(dry_run, test):
         await db.execute(select(User.id).where(User.id == user.id).with_for_update())
 
     # Per-coach monthly cap. An explicit CoachUsageLimit row (AD/district-set) wins,
@@ -368,12 +375,16 @@ async def trigger_auto_detect(
                  "full": bool(full), "test": bool(test), "grade": bool(grade)},
     )
     db.add(job)
-    # Attribute this run to the coach for the AD usage dashboard.
-    db.add(AnalysisUsage(
-        organization_id=user.organization_id, user_id=user.id,
-        sport=(game.sport or "football"),
-        analysis_type=("deep_grade" if grade else ("deep" if mode == "deep" else "fast")),
-    ))
+    # Attribute this run to the coach for the AD usage dashboard and the monthly
+    # cap — but ONLY for billable work. A dry_run (UATP staging: simulates, saves
+    # nothing) and a test run (opening-minutes penny probe) deliver no analysis, so
+    # counting them silently burned a full monthly credit. Skip usage for both.
+    if _is_billable_run(dry_run, test):
+        db.add(AnalysisUsage(
+            organization_id=user.organization_id, user_id=user.id,
+            sport=(game.sport or "football"),
+            analysis_type=("deep_grade" if grade else ("deep" if mode == "deep" else "fast")),
+        ))
     await db.commit()
     await db.refresh(job)
 
