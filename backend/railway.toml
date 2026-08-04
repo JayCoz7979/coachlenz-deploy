@@ -4,7 +4,10 @@ dockerfilePath = "backend/Dockerfile"
 
 [deploy]
 preDeployCommand = "python -m backend.migrate"
-startCommand = "sh -c 'uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 4'"
+# --proxy-headers + --forwarded-allow-ips: derive the real client IP from
+# Railway's edge proxy so the per-IP rate limiter buckets by actual caller instead
+# of collapsing to one shared bucket (see backend/Dockerfile for the full note).
+startCommand = "sh -c 'uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 4 --proxy-headers --forwarded-allow-ips=*'"
 # Readiness (DB ping), not bare liveness: a deploy whose Postgres is unreachable
 # should NOT be promoted to healthy. /health stays as a cheap liveness endpoint.
 healthcheckPath = "/health/ready"

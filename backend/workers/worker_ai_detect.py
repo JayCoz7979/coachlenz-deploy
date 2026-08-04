@@ -70,6 +70,12 @@ JOB_TIMEOUT = 300          # per-window timeout (s); a stuck window fails alone,
 MULTIPASS_ENABLED = True
 DETECT_MODEL = "claude-sonnet-4-6"   # bulk passes (volume)
 VERIFY_MODEL = "claude-opus-4-8"     # hardest reads only (the tie-breaker)
+# Output budget for the bulk DETECT passes. The detection prompt emits ~60 fields
+# per play, so a dense window with several snaps can exceed the old 4096 default —
+# the response then truncates to invalid JSON, is silently parsed as {}, and the
+# whole segment's plays vanish from the paid breakdown. 8192 covers a dense window;
+# truncation is now also logged (see _vision_json) so it is never silent again.
+DETECT_MAX_TOKENS = 8192
 
 # Price table for the honest per-run cost report ($ per MILLION tokens). These are
 # the standard Sonnet / Opus tiers; adjust here if Anthropic pricing changes. The
@@ -1426,19 +1432,21 @@ class AiDetectWorker(BaseWorker):
             action=f"Technique grading pass on {len(candidates)} plays",
             reason="Grading execution (OL/DL win, QB read, tackle, coverage result) on the highest-value plays, tied to jersey where the film allows.",
         )
-        client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-        sem = asyncio.Semaphore(GRADE_PARALLEL)
         stats = {"graded": 0}
-        with tempfile.TemporaryDirectory() as tmp:
-            async def run(i, p):
-                async with sem:
-                    try:
-                        resp, got = await self._grade_one_play(client, video_source, p, tmp, i)
-                        if got and self._apply_grade(p, resp):
-                            stats["graded"] += 1
-                    except Exception as e:
-                        logger.warning(f"[ai_detect] grade failed play {i}: {e}")
-            await asyncio.gather(*[run(i, p) for i, p in enumerate(candidates)], return_exceptions=True)
+        # `async with` closes the client's connection pool when the grading pass
+        # ends, instead of leaking it for the life of the worker.
+        async with anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY) as client:
+            sem = asyncio.Semaphore(GRADE_PARALLEL)
+            with tempfile.TemporaryDirectory() as tmp:
+                async def run(i, p):
+                    async with sem:
+                        try:
+                            resp, got = await self._grade_one_play(client, video_source, p, tmp, i)
+                            if got and self._apply_grade(p, resp):
+                                stats["graded"] += 1
+                        except Exception as e:
+                            logger.warning(f"[ai_detect] grade failed play {i}: {e}")
+                await asyncio.gather(*[run(i, p) for i, p in enumerate(candidates)], return_exceptions=True)
         await log_agent_action(
             game_id=game_id, organization_id=str(org_id), job_id=job_id,
             phase="play_grade", level="success" if stats["graded"] else "warning",
@@ -1504,25 +1512,27 @@ class AiDetectWorker(BaseWorker):
             action=f"EAGLE EYE jersey pass: high-res re-read on {len(candidates)} plays",
             reason="Re-extracting each play at high resolution and zooming on the players to read numbers the wide bulk frame is too small to catch.",
         )
-        client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-        sem = asyncio.Semaphore(JERSEY_PARALLEL)
         stats = {"extracted": 0, "model_saw": 0, "accepted": 0}
-        with tempfile.TemporaryDirectory() as tmp:
-            async def run(i, p):
-                async with sem:
-                    try:
-                        resp, got = await self._read_jerseys_for_play(client, video_source, p, tmp, i)
-                        if got:
-                            stats["extracted"] += 1
-                        seen = [pp.get("jersey") for pp in (resp.get("players") or [])]
-                        seen.append(resp.get("primary_jersey"))
-                        if any(str(n or "").strip() for n in seen):
-                            stats["model_saw"] += 1
-                        if self._apply_jersey_reads(p, resp):
-                            stats["accepted"] += 1
-                    except Exception as e:
-                        logger.warning(f"[ai_detect] jersey read failed play {i}: {e}")
-            await asyncio.gather(*[run(i, p) for i, p in enumerate(candidates)], return_exceptions=True)
+        # `async with` closes the client's connection pool when the pass ends,
+        # instead of leaking it for the life of the worker.
+        async with anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY) as client:
+            sem = asyncio.Semaphore(JERSEY_PARALLEL)
+            with tempfile.TemporaryDirectory() as tmp:
+                async def run(i, p):
+                    async with sem:
+                        try:
+                            resp, got = await self._read_jerseys_for_play(client, video_source, p, tmp, i)
+                            if got:
+                                stats["extracted"] += 1
+                            seen = [pp.get("jersey") for pp in (resp.get("players") or [])]
+                            seen.append(resp.get("primary_jersey"))
+                            if any(str(n or "").strip() for n in seen):
+                                stats["model_saw"] += 1
+                            if self._apply_jersey_reads(p, resp):
+                                stats["accepted"] += 1
+                        except Exception as e:
+                            logger.warning(f"[ai_detect] jersey read failed play {i}: {e}")
+                await asyncio.gather(*[run(i, p) for i, p in enumerate(candidates)], return_exceptions=True)
         n = len(candidates)
         # Honest, IN-APP diagnosis of exactly where the pass succeeds or fails, so we
         # never have to guess from the (unreliable) worker logs again.
@@ -1590,6 +1600,12 @@ class AiDetectWorker(BaseWorker):
             kwargs["system"] = system
         response = await client.messages.create(**kwargs)
         self._track_usage(model, getattr(response, "usage", None))
+        # A max_tokens truncation makes the JSON invalid; _parse_json then returns {}
+        # and the segment silently drops all its plays. Surface it as a warning so a
+        # truncated (usually high-value, dense) window is visible, not lost in silence.
+        if getattr(response, "stop_reason", None) == "max_tokens":
+            logger.warning("[ai_detect] vision response hit max_tokens (%s) — output truncated; "
+                           "some plays in this window may be lost.", max_tokens)
         return self._parse_json(response.content[0].text)
 
     def _track_usage(self, model: str, usage) -> None:
@@ -1641,21 +1657,25 @@ class AiDetectWorker(BaseWorker):
         if not settings.ANTHROPIC_API_KEY:
             raise ValueError("ANTHROPIC_API_KEY not set")
         import anthropic
-        client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+        # `async with` guarantees the client's httpx connection pool is closed when
+        # the batch finishes. This method runs once per batch (up to
+        # MAX_SEGMENTS_PER_RUN per game); the old un-closed client leaked keep-alive
+        # sockets/FDs and memory across every batch in the always-on worker.
+        async with anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY) as client:
+            # Per-run flag set from the job's detection_mode (falls back to the global).
+            deep = getattr(self, "_multipass", MULTIPASS_ENABLED)
+            if deep and sport in ("football", "flag_football"):
+                return await self._analyze_batch_multipass(client, batch, batch_idx)
+            if deep and sport == "basketball":
+                return await self._analyze_batch_basketball_deep(client, batch, batch_idx)
 
-        # Per-run flag set from the job's detection_mode (falls back to the global).
-        deep = getattr(self, "_multipass", MULTIPASS_ENABLED)
-        if deep and sport in ("football", "flag_football"):
-            return await self._analyze_batch_multipass(client, batch, batch_idx)
-        if deep and sport == "basketball":
-            return await self._analyze_batch_basketball_deep(client, batch, batch_idx)
-
-        prompt = DETECTION_PROMPT_BASKETBALL if sport == "basketball" else DETECTION_PROMPT
-        sys_text = getattr(self, "_team_context", "") + prompt
-        content = self._frame_content(batch)
-        parsed = await self._vision_json(client, DETECT_MODEL, content,
-                                         system=self._cached_system(sys_text))
-        return self._assign_times(parsed.get("plays", []), batch)
+            prompt = DETECTION_PROMPT_BASKETBALL if sport == "basketball" else DETECTION_PROMPT
+            sys_text = getattr(self, "_team_context", "") + prompt
+            content = self._frame_content(batch)
+            parsed = await self._vision_json(client, DETECT_MODEL, content,
+                                             max_tokens=DETECT_MAX_TOKENS,
+                                             system=self._cached_system(sys_text))
+            return self._assign_times(parsed.get("plays", []), batch)
 
     # Pre-snap fields handed to the post-snap pass as alignment context.
     _PRESNAP_CTX_KEYS = (
@@ -1680,7 +1700,7 @@ class AiDetectWorker(BaseWorker):
 
         # Pass 1 — detect + pre-snap (static prompt cached in the system slot)
         p1 = await self._vision_json(
-            client, DETECT_MODEL, frames,
+            client, DETECT_MODEL, frames, max_tokens=DETECT_MAX_TOKENS,
             system=self._cached_system(getattr(self, "_team_context", "") + DETECTION_PROMPT_PRESNAP))
         pre = p1.get("plays", [])
         if not pre:
@@ -1696,6 +1716,7 @@ class AiDetectWorker(BaseWorker):
             post_resp = await self._vision_json(
                 client, DETECT_MODEL,
                 frames + [{"type": "text", "text": "PRE-SNAP PLAYS (match your reads to these by play_index):\n" + ctx}],
+                max_tokens=DETECT_MAX_TOKENS,
                 system=self._cached_system(post_sys))
             p2 = {pl.get("play_index"): pl for pl in post_resp.get("plays", []) if pl.get("play_index") is not None}
         except Exception as e:
@@ -1780,7 +1801,7 @@ class AiDetectWorker(BaseWorker):
         the shaky possessions. Reuses the verify loop, frame cache, and confidence math."""
         frames = self._frame_content(batch)
         parsed = await self._vision_json(
-            client, DETECT_MODEL, frames,
+            client, DETECT_MODEL, frames, max_tokens=DETECT_MAX_TOKENS,
             system=self._cached_system(getattr(self, "_team_context", "") + DETECTION_PROMPT_BASKETBALL))
         plays = parsed.get("plays", [])
         if not plays:

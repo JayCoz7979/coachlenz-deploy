@@ -79,8 +79,21 @@ def test_view_valid_share_returns_payload():
                   share_expires_at=datetime.utcnow() + timedelta(days=3))
     out = asyncio.run(view_shared_report("r1", "tok123", db=_FakeDB(rep)))
     assert out["shared"] is True
-    assert out["title"] == "Eagles Scout"
+    # Finding #6: the public view serves a neutral, derived title, never the
+    # coach's raw report.title.
+    assert out["title"] == "Football Opponent Scouting Report"
     assert out["sections"] and "summary" in out
+
+
+def test_public_view_does_not_leak_a_player_name_in_the_title():
+    # A coach titles a player report with a minor's name; the no-login page must
+    # not echo it.
+    rep = _report(title="John Smith - DB breakdown", report_type="self_scout",
+                  sport="basketball", share_token="tok123",
+                  share_expires_at=datetime.utcnow() + timedelta(days=3))
+    out = asyncio.run(view_shared_report("r1", "tok123", db=_FakeDB(rep)))
+    assert "John Smith" not in out["title"]
+    assert out["title"] == "Basketball Self-Scouting Report"
 
 
 def test_view_expired_share_is_410():

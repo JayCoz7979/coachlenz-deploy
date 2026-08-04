@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import select
 from pydantic import BaseModel, HttpUrl
 from typing import Optional
 import uuid
@@ -10,7 +10,7 @@ from backend.models.organization import Organization
 from backend.models.game import Game
 from backend.models.job import Job
 from backend.services.auth import get_current_user, get_current_org
-from backend.services.trial import can_upload_game, is_trial_active
+from backend.services.trial import can_upload_game, is_trial_active, reserve_trial_game_slot
 from backend.services.sports import assert_sport_allowed
 from backend.services.entitlements import assert_ready_to_analyze
 from backend.services.legal import assert_student_consent
@@ -67,6 +67,11 @@ async def ingest_from_url(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    # Authoritative, race-free trial-cap gate (the check above is a friendly
+    # pre-check only). Reserves the slot atomically in this transaction.
+    if not await reserve_trial_game_slot(db, org):
+        raise HTTPException(status_code=403, detail="Trial game limit reached. Upgrade to upload more games.")
+
     source_type = detect_source_type(body.url)
 
     game = Game(
@@ -99,13 +104,6 @@ async def ingest_from_url(
         },
     )
     db.add(job)
-
-    if is_trial_active(org):
-        await db.execute(
-            update(Organization)
-            .where(Organization.id == org.id)
-            .values(trial_games_used=Organization.trial_games_used + 1)
-        )
 
     await db.commit()
 

@@ -310,7 +310,21 @@ async def send_phone_code(request: Request, body: SendPhoneRequest, user: User =
     phone = twilio_verify.normalize_phone(body.phone)
     if len(phone) < 11:
         raise HTTPException(status_code=422, detail="Enter a valid phone number.")
-    await db.execute(update(User).where(User.id == user.id).values(phone=phone, phone_verified=False))
+    # Per-user throttle: this fires a real Twilio SMS to a caller-supplied number,
+    # so an unthrottled loop is an SMS-pump / toll-fraud lever (open to any free
+    # trial account). The per-IP limiter isn't enough — it's shared behind NAT and
+    # cost, not requests, is the risk. Enforce a 60s cooldown + daily cap per user.
+    now = datetime.utcnow()
+    ok, new_count, reason = twilio_verify.phone_send_allowed(
+        to_naive_utc(user.phone_verify_last_sent), user.phone_verify_sent_today, now)
+    if not ok:
+        detail = ("A code was just sent. Wait a minute before requesting another."
+                  if reason == "cooldown" else
+                  "You've hit today's limit for verification texts. Try again tomorrow.")
+        raise HTTPException(status_code=429, detail=detail)
+    await db.execute(update(User).where(User.id == user.id).values(
+        phone=phone, phone_verified=False,
+        phone_verify_last_sent=now, phone_verify_sent_today=new_count))
     await db.commit()
     twilio_verify.send_sms_code(phone)  # raises 503/400 on config/number issues
     return {"ok": True, "message": "We texted you a 6-digit code."}

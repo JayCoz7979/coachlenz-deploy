@@ -12,6 +12,35 @@ from sqlalchemy import select, func, update
 logger = logging.getLogger(__name__)
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
+
+def _referral_idempotency_key(referral_id, invoice_id) -> str:
+    """Deterministic Stripe idempotency key for a referral commission payout.
+
+    Stripe delivers invoice.payment_succeeded at-least-once, and this worker
+    retries (up to MAX_ATTEMPTS) plus the watchdog re-queues jobs whose process
+    died mid-run. Without a key, a crash BETWEEN the balance-transaction call and
+    the DB flip-to-paid would re-run and credit the referrer a second time — real
+    money out. Keying on (referral, invoice) makes the payout exactly-once: any
+    retry within Stripe's idempotency window is a no-op at Stripe, and once the
+    referral is marked `paid` it is no longer selected here at all."""
+    return f"refcredit:{referral_id}:{invoice_id or 'noinvoice'}"
+
+
+async def _credit_referrer(customer_id: str, credit_cents: int, pct: float, *,
+                           referral_id, invoice_id) -> None:
+    """Issue the referral commission as a Stripe customer balance credit, keyed so
+    a retry can never double-pay. No-op for a zero/negative amount."""
+    if credit_cents <= 0:
+        return
+    stripe.Customer.create_balance_transaction(
+        customer_id,
+        amount=-credit_cents,
+        currency="usd",
+        description=f"CoachLenz referral commission {pct}%",
+        idempotency_key=_referral_idempotency_key(referral_id, invoice_id),
+    )
+
+
 class ReferralsWorker(BaseWorker):
     job_type = "referral_credit"
 
@@ -68,13 +97,10 @@ class ReferralsWorker(BaseWorker):
             amount = invoice.amount_paid if invoice else 0
             credit_cents = int(amount * pct / 100)
 
-            if credit_cents > 0:
-                stripe.Customer.create_balance_transaction(
-                    referrer.stripe_customer_id,
-                    amount=-credit_cents,
-                    currency="usd",
-                    description=f"CoachLenz referral commission {pct}%",
-                )
+            await _credit_referrer(
+                referrer.stripe_customer_id, credit_cents, pct,
+                referral_id=referral.id, invoice_id=payload.get("invoice_id"),
+            )
 
             await db.execute(update(Referral).where(Referral.id == referral.id).values(
                 status="paid",

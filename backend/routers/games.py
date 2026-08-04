@@ -10,7 +10,7 @@ from backend.models.organization import Organization
 from backend.models.game import Game
 from backend.models.job import Job
 from backend.services.auth import get_current_user, get_current_org
-from backend.services.trial import can_upload_game, is_trial_active
+from backend.services.trial import can_upload_game, is_trial_active, reserve_trial_game_slot
 from backend.services.entitlements import assert_ready_to_analyze
 from backend.services.legal import assert_student_consent
 from backend.services.r2 import generate_presigned_upload_url, safe_object_name
@@ -47,6 +47,10 @@ async def create_game(body: GameCreate, user: User = Depends(get_current_user), 
     # attestation BEFORE any minors' film is stored or analyzed — not just before a
     # name is typed into the roster. 403s with the attestation prompt if missing.
     await assert_student_consent(db, org.id)
+    # Authoritative, race-free trial-cap gate (the check above is a friendly
+    # pre-check only). Reserves the slot atomically in this transaction.
+    if not await reserve_trial_game_slot(db, org):
+        raise HTTPException(status_code=403, detail="Trial game limit reached. Upgrade to upload more games.")
     key = f"games/{org.id}/{uuid.uuid4()}/{safe_object_name(body.file_name)}"
     presigned = generate_presigned_upload_url(key, "video/mp4")
     game = Game(
@@ -67,8 +71,6 @@ async def create_game(body: GameCreate, user: User = Depends(get_current_user), 
     await db.flush()
     job = Job(organization_id=org.id, job_type="ingest", payload={"game_id": str(game.id)})
     db.add(job)
-    if is_trial_active(org):
-        await db.execute(update(Organization).where(Organization.id == org.id).values(trial_games_used=Organization.trial_games_used + 1))
     await db.commit()
     return {"id": str(game.id), "upload_url": presigned["upload_url"], "key": key}
 
