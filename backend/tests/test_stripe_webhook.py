@@ -133,6 +133,29 @@ def test_redelivered_event_is_skipped_no_double_effect():
     assert db.rolled_back and not db.committed
 
 
+def test_canceled_subscription_does_not_regrant_a_trial():
+    # Finding #16: on customer.subscription.deleted the org must NOT be flipped back
+    # into an active trial (is_trial=True regranted trial features + a free slot to a
+    # churned customer). It should downgrade with is_trial=False.
+    captured = []
+
+    class _CapDB(_StubDB):
+        async def execute(self, *a, **k):
+            if a:
+                captured.append(a[0])
+            return _FakeResult()
+
+    db = _CapDB()
+    body = _event("customer.subscription.deleted", {"id": "sub_1"})
+    out = _call(body, _sign(body, int(time.time())), db)
+    assert out == {"received": True}
+    updates = [s for s in captured if s.__class__.__name__ == "Update"]
+    assert updates, "expected an Organization update on cancellation"
+    params = updates[-1].compile().params
+    assert params.get("is_trial") is False
+    assert params.get("stripe_subscription_status") == "canceled"
+
+
 def test_tampered_payload_is_rejected():
     signed_body = _event("checkout.session.completed", {"metadata": {}})
     header = _sign(signed_body, int(time.time()))
