@@ -162,8 +162,20 @@ async def upload_roster_csv(team_id: str, body: CsvIn, user: User = _require_man
         j = row["jersey_number"]
         if j in current:
             p = current[j]
-            p.first_name, p.last_name = row["first_name"], row["last_name"]
-            p.position, p.grade_year = row["position"], row["grade_year"]
+            # Coalesce, never clobber. parse_roster_csv returns None for any blank
+            # cell, and a valid re-upload only requires jersey + first name. Blindly
+            # assigning those Nones erased last_name / position / grade_year on every
+            # returning player when a coach re-uploaded a trimmed CSV to add a few
+            # names — silent loss of FERPA-protected student data. Only overwrite a
+            # field when the incoming CSV actually provides a value for it.
+            if row.get("first_name") is not None:
+                p.first_name = row["first_name"]
+            if row.get("last_name") is not None:
+                p.last_name = row["last_name"]
+            if row.get("position") is not None:
+                p.position = row["position"]
+            if row.get("grade_year") is not None:
+                p.grade_year = row["grade_year"]
             updated += 1
         else:
             p = RosterPlayer(organization_id=user.organization_id, team_id=team_id, **row)
