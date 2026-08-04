@@ -24,6 +24,22 @@ router = APIRouter(prefix="/reports", tags=["reports"])
 SHARE_DEFAULT_DAYS = 7
 SHARE_MAX_DAYS = 30
 
+# Neutral titles for the public (no-login) shared-report view. The stored
+# report.title is coach free-text and can contain a student's name, so the public
+# endpoint derives a title from sport + report_type instead of echoing it.
+_PUBLIC_TITLE_BY_TYPE = {
+    "opponent": "Opponent Scouting Report",
+    "self_scout": "Self-Scouting Report",
+    "live_game": "Live Game Report",
+}
+
+
+def _public_report_title(report) -> str:
+    """A safe, identifier-free title for the public share page."""
+    base = _PUBLIC_TITLE_BY_TYPE.get(report.report_type or "", "Scouting Report")
+    sport = (report.sport or "").strip()
+    return f"{sport.title()} {base}".strip() if sport else base
+
 
 def clamp_share_days(days) -> int:
     """Share links live 7 days by default, 30 max. Anything unparseable -> default."""
@@ -319,7 +335,11 @@ async def view_shared_report(report_id: str, token: str, db: AsyncSession = Depe
         summary = {k: v for k, v in summary.items() if k != "coach_flagged_plays"}
     return {
         "id": str(report.id),
-        "title": report.title,
+        # report.title is coach free-text and can name a minor (e.g. "John Smith -
+        # DB breakdown"), which would defeat this endpoint's "no player names"
+        # guarantee on a no-login page. Serve a neutral, derived public title
+        # instead of the raw one.
+        "title": _public_report_title(report),
         "sport": report.sport,
         "report_type": report.report_type,
         "watermarked": report.watermarked,
