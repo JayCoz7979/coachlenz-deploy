@@ -328,6 +328,16 @@ async def trigger_auto_detect(
     if existing.scalar_one_or_none():
         return {"status": "already_queued", "game_id": game_id}
 
+    # Serialize concurrent billable runs for THIS coach before the cap is counted.
+    # The cap is a count-then-insert: without a lock, parallel requests all read the
+    # same pre-insert count, each passes the check, and each enqueues a full (deep =
+    # 3-pass Opus) run — blowing past the monthly limit the AD set. A FOR UPDATE read
+    # of the coach's row makes concurrent runs queue here; each re-counts only after
+    # the prior run's AnalysisUsage row has committed. Dry-run/test are free and
+    # write no usage, so they skip the lock.
+    if not (dry_run or test):
+        await db.execute(select(User.id).where(User.id == user.id).with_for_update())
+
     # Per-coach monthly cap. An explicit CoachUsageLimit row (AD/district-set) wins,
     # and an explicit 0 there means unlimited. With NO row (base coach plan) we fall
     # back to a generous default backstop so an absent row is not UNLIMITED deep-Opus
