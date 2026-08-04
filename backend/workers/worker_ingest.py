@@ -69,7 +69,7 @@ class IngestWorker(BaseWorker):
                 raise ValueError("Game has no R2 key — upload may not be complete yet")
 
         download_url = generate_presigned_download_url(game.r2_key, expires_in=3600)
-        duration, width, height = self._probe(download_url)
+        duration, width, height = await asyncio.to_thread(self._probe, download_url)
         self._log_resolution(game_id, "upload", width, height)
 
         async with AsyncSessionLocal() as db:
@@ -272,7 +272,14 @@ class IngestWorker(BaseWorker):
                 # be misread by yt-dlp as a flag (argument injection).
                 cmd = base_cmd + extra + ["--", download_target]
                 try:
-                    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+                    # Run yt-dlp OFF the event loop. This worker process shares one
+                    # asyncio loop with the co-located AiDetectWorker; a synchronous
+                    # subprocess.run (up to 1800s) here would freeze both workers'
+                    # heartbeats and watchdogs and stall any in-flight detection —
+                    # whose lock then goes stale and can be double-run by a replica.
+                    proc = await asyncio.to_thread(
+                        subprocess.run, cmd, capture_output=True, text=True, timeout=1800
+                    )
                 except subprocess.TimeoutExpired:
                     raise ValueError("Download timed out after 30 minutes")
                 if proc.returncode == 0:
@@ -296,7 +303,7 @@ class IngestWorker(BaseWorker):
             ext = os.path.splitext(video_file)[1] or ".mp4"
             r2_key = f"games/{game_id}/film{ext}"
 
-            duration, width, height = self._probe(video_file)
+            duration, width, height = await asyncio.to_thread(self._probe, video_file)
             self._log_resolution(game_id, source_type, width, height)
 
             logger.info(f"[ingest] uploading {file_size} bytes for game {game_id}")
