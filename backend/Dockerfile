@@ -28,4 +28,9 @@ RUN pip install --no-cache-dir --upgrade "yt-dlp[default]"
 # Copy into backend/ subdirectory so "from backend.X import Y" works
 COPY . backend/
 
-CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 4"]
+# --proxy-headers + --forwarded-allow-ips lets uvicorn derive the real client IP
+# from Railway's edge proxy (X-Forwarded-For). Without it request.client.host is
+# the proxy's internal address, so the IP-keyed rate limiter collapses to ONE
+# shared bucket for the entire userbase (one abuser 429s everyone; per-attacker
+# throttling doesn't exist). Railway is the only hop in front of the app.
+CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 4 --proxy-headers --forwarded-allow-ips=*"]
