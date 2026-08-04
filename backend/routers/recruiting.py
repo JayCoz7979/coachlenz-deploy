@@ -27,6 +27,7 @@ from backend.utils.timeutils import to_naive_utc
 from backend.services.email_service import send_recruiting_profile_email
 from backend.services.player_stats import stat_line_for, top_play_types
 from backend.services.playback import clip_playback
+from backend.services.agent_log import log_agent_action
 from backend.routers.roster import team_season_events
 
 router = APIRouter(prefix="/recruiting", tags=["recruiting"])
@@ -182,8 +183,24 @@ async def send_to_scout(player_id: str, body: SendIn, coach: User = _require_man
     name = f"{p.first_name} {p.last_name or ''}".strip()
     try:
         await send_recruiting_profile_email(body.scout_email, name, coach.name, org.name, url)
-    except Exception:
-        pass  # best-effort; the link still exists
+    except Exception as e:
+        # This discloses a minor's PII (name + film + stats) to a third party.
+        # A swallowed failure returned a FALSE "sent" confirmation and left no
+        # record. Log the failed attempt and tell the coach the truth so they can
+        # retry, instead of believing the scout received it.
+        await log_agent_action(
+            action="recruiting_send_failed", organization_id=str(coach.organization_id),
+            level="error", reason=str(e)[:300],
+            detail={"player_id": player_id, "sent_to": body.scout_email, "by": str(coach.id)},
+        )
+        raise HTTPException(status_code=502, detail="We couldn't send the profile email. Please try again.")
+    # FERPA/UATP: every external disclosure of a student's directory information
+    # must be auditable — who disclosed which athlete's profile to whom, and when.
+    await log_agent_action(
+        action="recruiting_profile_disclosed", organization_id=str(coach.organization_id),
+        level="info", reason="Sent recruiting profile to an external scout.",
+        detail={"player_id": player_id, "sent_to": body.scout_email, "by": str(coach.id)},
+    )
     return {"ok": True, "sent_to": body.scout_email}
 
 

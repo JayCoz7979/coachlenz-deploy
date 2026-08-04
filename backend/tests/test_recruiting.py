@@ -57,6 +57,18 @@ def _no_email(monkeypatch):
     monkeypatch.setattr(rec, "send_recruiting_profile_email", _noop)
 
 
+@pytest.fixture
+def audit(monkeypatch):
+    """Capture UATP disclosure-log calls without touching the DB."""
+    calls = []
+
+    async def _cap(**kw):
+        calls.append(kw)
+
+    monkeypatch.setattr(rec, "log_agent_action", _cap)
+    return calls
+
+
 # ── clamp ────────────────────────────────────────────────────────────────────
 def test_recruiting_days_default_and_max():
     assert rec.clamp_recruiting_days(30) == 30
@@ -85,12 +97,34 @@ def test_recruiting_opt_in_required_per_player():
     assert exc.value.status_code == 403
 
 
-def test_send_to_scout_after_enable_ok():
+def test_send_to_scout_after_enable_ok(audit):
     p = _player(recruiting_enabled=True, recruiting_token="tok")
     out = asyncio.run(rec.send_to_scout("p1", rec.SendIn(scout_email="scout@school.edu"),
                                         coach=_coach(), org=SimpleNamespace(name="Test HS"),
                                         db=_FakeDB([_Result(p)])))
     assert out["sent_to"] == "scout@school.edu"
+    # Finding #10: a successful disclosure is audited (who / which player / to whom).
+    disclosed = [c for c in audit if c.get("action") == "recruiting_profile_disclosed"]
+    assert len(disclosed) == 1
+    assert disclosed[0]["detail"]["sent_to"] == "scout@school.edu"
+    assert disclosed[0]["detail"]["player_id"] == "p1"
+
+
+def test_send_to_scout_failure_raises_502_and_audits(audit, monkeypatch):
+    # Finding #10: a failed send must NOT return a false "sent" confirmation; it
+    # raises 502 and records the failed attempt.
+    async def _boom(*_a, **_k):
+        raise RuntimeError("smtp down")
+    monkeypatch.setattr(rec, "send_recruiting_profile_email", _boom)
+
+    p = _player(recruiting_enabled=True, recruiting_token="tok")
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(rec.send_to_scout("p1", rec.SendIn(scout_email="scout@school.edu"),
+                                      coach=_coach(), org=SimpleNamespace(name="Test HS"),
+                                      db=_FakeDB([_Result(p)])))
+    assert exc.value.status_code == 502
+    failed = [c for c in audit if c.get("action") == "recruiting_send_failed"]
+    assert len(failed) == 1 and failed[0]["level"] == "error"
 
 
 # ── highlights ───────────────────────────────────────────────────────────────
