@@ -12,6 +12,24 @@ from backend.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Per-user throttle for the SMS-send endpoint (toll-fraud / SMS-pump brake).
+PHONE_COOLDOWN_SECONDS = 60
+PHONE_DAILY_LIMIT = 5
+
+
+def phone_send_allowed(last_sent, sent_today, now):
+    """Throttle decision for a phone-verification SMS. Returns (ok, new_count,
+    reason). `last_sent` is naive-UTC or None. Blocks looping the send endpoint to
+    pump Twilio: a 60s cooldown plus PHONE_DAILY_LIMIT sends per user per calendar
+    day (the daily counter resets when the date rolls over)."""
+    if last_sent is not None:
+        if (now - last_sent).total_seconds() < PHONE_COOLDOWN_SECONDS:
+            return (False, None, "cooldown")
+        if last_sent.date() == now.date() and (sent_today or 0) >= PHONE_DAILY_LIMIT:
+            return (False, None, "daily")
+    same_day = last_sent is not None and last_sent.date() == now.date()
+    return (True, (sent_today or 0) + 1 if same_day else 1, None)
+
 
 def phone_verification_configured() -> bool:
     """True only when Twilio Verify is fully wired up. When False, phone

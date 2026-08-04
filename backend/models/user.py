@@ -46,6 +46,10 @@ class User(Base):
     # verification is handled by Twilio Verify (no code stored locally).
     email_verify_code_hash = Column(String)
     email_verify_expires = Column(DateTime(timezone=True))
+    # Phone-verification throttle (migration 039): a 60s cooldown + daily cap so the
+    # SMS send endpoint can't be looped to pump Twilio (toll fraud).
+    phone_verify_last_sent = Column(DateTime(timezone=True))
+    phone_verify_sent_today = Column(Integer, nullable=False, default=0, server_default="0")
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
