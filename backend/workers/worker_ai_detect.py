@@ -76,6 +76,12 @@ VERIFY_MODEL = "claude-opus-4-8"     # hardest reads only (the tie-breaker)
 # whole segment's plays vanish from the paid breakdown. 8192 covers a dense window;
 # truncation is now also logged (see _vision_json) so it is never silent again.
 DETECT_MAX_TOKENS = 8192
+# Per-request ceiling on vision calls. Without an explicit timeout a black-holed
+# network call parks a batch coroutine indefinitely while the job heartbeat keeps
+# renewing the lock — so the watchdog never reclaims it and the job hangs with no
+# ceiling of its own. A bounded timeout + a couple of retries fails deterministically.
+DETECT_TIMEOUT_S = 180.0
+DETECT_MAX_RETRIES = 2
 
 # Price table for the honest per-run cost report ($ per MILLION tokens). These are
 # the standard Sonnet / Opus tiers; adjust here if Anthropic pricing changes. The
@@ -1435,7 +1441,8 @@ class AiDetectWorker(BaseWorker):
         stats = {"graded": 0}
         # `async with` closes the client's connection pool when the grading pass
         # ends, instead of leaking it for the life of the worker.
-        async with anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY) as client:
+        async with anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY,
+                                            timeout=DETECT_TIMEOUT_S, max_retries=DETECT_MAX_RETRIES) as client:
             sem = asyncio.Semaphore(GRADE_PARALLEL)
             with tempfile.TemporaryDirectory() as tmp:
                 async def run(i, p):
@@ -1515,7 +1522,8 @@ class AiDetectWorker(BaseWorker):
         stats = {"extracted": 0, "model_saw": 0, "accepted": 0}
         # `async with` closes the client's connection pool when the pass ends,
         # instead of leaking it for the life of the worker.
-        async with anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY) as client:
+        async with anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY,
+                                            timeout=DETECT_TIMEOUT_S, max_retries=DETECT_MAX_RETRIES) as client:
             sem = asyncio.Semaphore(JERSEY_PARALLEL)
             with tempfile.TemporaryDirectory() as tmp:
                 async def run(i, p):
@@ -1606,7 +1614,19 @@ class AiDetectWorker(BaseWorker):
         if getattr(response, "stop_reason", None) == "max_tokens":
             logger.warning("[ai_detect] vision response hit max_tokens (%s) — output truncated; "
                            "some plays in this window may be lost.", max_tokens)
-        return self._parse_json(response.content[0].text)
+        return self._parse_json(self._first_text(response))
+
+    @staticmethod
+    def _first_text(message) -> str:
+        """Safely pull the first text block out of a response. An empty content list
+        (a max_tokens truncation that produced no block, or a refusal/non-text
+        block) makes `response.content[0].text` raise IndexError/AttributeError,
+        which propagated up and discarded the whole segment. Degrade to '' instead
+        so the window becomes 'no plays', not a thrown-away batch."""
+        for block in (getattr(message, "content", None) or []):
+            if getattr(block, "type", None) == "text" or hasattr(block, "text"):
+                return getattr(block, "text", "") or ""
+        return ""
 
     def _track_usage(self, model: str, usage) -> None:
         """Accumulate this call's token usage so the run can report a real cost."""
@@ -1661,7 +1681,8 @@ class AiDetectWorker(BaseWorker):
         # the batch finishes. This method runs once per batch (up to
         # MAX_SEGMENTS_PER_RUN per game); the old un-closed client leaked keep-alive
         # sockets/FDs and memory across every batch in the always-on worker.
-        async with anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY) as client:
+        async with anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY,
+                                            timeout=DETECT_TIMEOUT_S, max_retries=DETECT_MAX_RETRIES) as client:
             # Per-run flag set from the job's detection_mode (falls back to the global).
             deep = getattr(self, "_multipass", MULTIPASS_ENABLED)
             if deep and sport in ("football", "flag_football"):
