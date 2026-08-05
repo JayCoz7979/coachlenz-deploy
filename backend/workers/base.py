@@ -61,6 +61,7 @@ class BaseWorker:
                 job.error_message = f"Gave up after {MAX_ATTEMPTS} failed attempts (job kept failing)."
                 job.locked_at = None
                 dead_payload = dict(job.payload or {})
+                dead_payload["_job_id"] = str(job.id)  # let on_dead_letter reverse job-linked side effects (e.g. usage refund)
                 dead_reason = job.error_message
                 await db.commit()
                 logger.error(f"[{self.job_type}] job {job.id} dead-lettered after {MAX_ATTEMPTS} attempts")

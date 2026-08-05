@@ -14,13 +14,14 @@ import subprocess
 import tempfile
 from typing import Optional
 
-from sqlalchemy import select, update
+from sqlalchemy import select, update, delete
 
 from backend.config import settings
 from backend.models.base import AsyncSessionLocal
 from backend.models.event import Event
 from backend.models.game import Game
 from backend.models.job import Job
+from backend.models.usage import AnalysisUsage
 from backend.services.r2 import generate_presigned_download_url, _use_local, LOCAL_STORAGE_DIR
 from backend.services.agent_log import (
     log_agent_action, confidence_band,
@@ -561,6 +562,33 @@ class AiDetectWorker(BaseWorker):
         self._grade = bool(payload.get("grade")) or PLAY_GRADE_ENABLED
         return await self._detect_plays(game_id, dry_run=dry_run, job_id=job_id)
 
+    async def on_dead_letter(self, payload: dict, reason: str) -> None:
+        """A repeatedly-crashing detection run (e.g. OOM) is given up on here. Reverse
+        the coach's usage charge for it — they must not pay for analysis that never
+        delivered. Also restore the game from 'analyzing' so the UI stops spinning."""
+        await self._refund_usage(payload.get("_job_id"))
+        game_id = payload.get("game_id")
+        if game_id:
+            try:
+                async with AsyncSessionLocal() as db:
+                    await db.execute(update(Game).where(Game.id == game_id).values(status="ready"))
+                    await db.commit()
+            except Exception:
+                pass
+
+    async def _refund_usage(self, job_id) -> None:
+        """Delete the AnalysisUsage row billed for this job, so a failed run does not
+        count against the coach's monthly cap. Best-effort and idempotent: no row
+        (dry_run/test, or already refunded) is a no-op; never raises into the caller."""
+        if not job_id:
+            return
+        try:
+            async with AsyncSessionLocal() as db:
+                await db.execute(delete(AnalysisUsage).where(AnalysisUsage.job_id == job_id))
+                await db.commit()
+        except Exception as e:
+            logger.warning(f"[ai_detect] usage refund failed for job {job_id}: {e}")
+
     async def _detect_plays(self, game_id: str, dry_run: bool = False, job_id=None) -> dict:
         self._usage = {}  # per-run token accounting for the cost report
         # ── Load game ──────────────────────────────────────────────────────
@@ -1029,6 +1057,9 @@ class AiDetectWorker(BaseWorker):
                 action="Film breakdown stopped before finishing",
                 reason=f"I hit an error and stopped rather than guess: {str(e)[:300]}",
             )
+            # Reverse the coach's charge — a run that errored out delivered nothing,
+            # so it must not count against their monthly cap.
+            await self._refund_usage(job_id)
             raise
         finally:
             # Always restore game to ready

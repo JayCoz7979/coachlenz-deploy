@@ -14,6 +14,9 @@ class AnalysisUsage(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
     sport = Column(String)
     analysis_type = Column(String)   # fast | deep | deep_grade
+    # The detection job this charge is for. Lets the worker reverse the row if the
+    # run fails/dead-letters, so a coach isn't billed for undelivered analysis.
+    job_id = Column(UUID(as_uuid=True), index=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
 
 

@@ -427,15 +427,18 @@ async def trigger_auto_detect(
                  "full": bool(full), "test": bool(test), "grade": bool(grade)},
     )
     db.add(job)
+    await db.flush()  # assign job.id so the usage row can be linked to it for refunds
     # Attribute this run to the coach for the AD usage dashboard and the monthly
     # cap — but ONLY for billable work. A dry_run (UATP staging: simulates, saves
     # nothing) and a test run (opening-minutes penny probe) deliver no analysis, so
     # counting them silently burned a full monthly credit. Skip usage for both.
+    # job_id links the charge to the run so the worker can reverse it on failure.
     if _is_billable_run(dry_run, test):
         db.add(AnalysisUsage(
             organization_id=user.organization_id, user_id=user.id,
             sport=(game.sport or "football"),
             analysis_type=("deep_grade" if grade else ("deep" if mode == "deep" else "fast")),
+            job_id=job.id,
         ))
     await db.commit()
     await db.refresh(job)
