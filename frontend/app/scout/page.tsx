@@ -91,6 +91,8 @@ export default function ScoutPage() {
   // into a football program. Resolve the org's sport from its teams; football
   // routes to the football scout, basketball renders here, mixed/none picks.
   const [sportMode, setSportMode] = useState<'loading' | 'basketball' | 'choose'>('loading')
+  // The sport(s) the org locked at onboarding — the source of truth for what to show.
+  const [lockedSports, setLockedSports] = useState<string[]>([])
 
   useEffect(() => { fetchMe() }, [])
   useEffect(() => { if (!isLoading && !user) router.push('/login') }, [isLoading, user])
@@ -98,14 +100,24 @@ export default function ScoutPage() {
   useEffect(() => {
     if (!user) return
     let cancelled = false
-    api.get('/teams').then(res => {
+    // Resolve the scouting sport from the org's LOCKED sport first. A brand-new
+    // account has no teams yet, so keying off teams alone wrongly shows the sport
+    // picker (and both sports) even for a single-sport plan. Fall back to team
+    // sports, then to the picker.
+    Promise.all([
+      api.get('/onboarding/status').catch(() => ({ data: {} } as any)),
+      api.get('/teams').catch(() => ({ data: [] } as any)),
+    ]).then(([statusRes, teamsRes]) => {
       if (cancelled) return
-      const sports: string[] = (res.data || []).map((t: any) => t.sport)
+      const chosen: string[] = statusRes.data?.chosen_sports || []
+      const teamSports: string[] = (teamsRes.data || []).map((t: any) => t.sport)
+      setLockedSports(chosen)
+      const sports = chosen.length ? chosen : teamSports
       const hasFootball = sports.some(s => s === 'football' || s === 'flag_football')
       const hasBasketball = sports.includes('basketball')
       if (hasFootball && !hasBasketball) router.replace('/scout/football')
       else if (hasBasketball && !hasFootball) setSportMode('basketball')
-      else setSportMode('choose')  // both sports, or no teams yet
+      else setSportMode('choose')  // genuinely multi-sport, or no sport info yet
     }).catch(() => setSportMode('choose'))
     return () => { cancelled = true }
   }, [user, router])
@@ -232,14 +244,18 @@ export default function ScoutPage() {
               Pick the sport you are scouting. Everything (fields, tendencies, report) stays tied to that sport.
             </p>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-              <button onClick={() => router.push('/scout/football')} className="card" style={{ textAlign: 'left', cursor: 'pointer', border: '1px solid var(--border2)' }}>
-                <div style={{ fontWeight: 800, fontSize: 16, color: 'var(--gold)' }}>🏈 Football</div>
-                <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 6 }}>Play-by-play, gates, game plan, live logger, position &amp; player exports.</div>
-              </button>
-              <button onClick={() => setSportMode('basketball')} className="card" style={{ textAlign: 'left', cursor: 'pointer', border: '1px solid var(--border2)' }}>
-                <div style={{ fontWeight: 800, fontSize: 16, color: 'var(--green3)' }}>🏀 Basketball</div>
-                <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 6 }}>Six-category scout: possession, turnovers, deflections, shot ratio, pace, zones.</div>
-              </button>
+              {(!lockedSports.length || lockedSports.some(s => s === 'football' || s === 'flag_football')) && (
+                <button onClick={() => router.push('/scout/football')} className="card" style={{ textAlign: 'left', cursor: 'pointer', border: '1px solid var(--border2)' }}>
+                  <div style={{ fontWeight: 800, fontSize: 16, color: 'var(--gold)' }}>🏈 Football</div>
+                  <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 6 }}>Play-by-play, gates, game plan, live logger, position &amp; player exports.</div>
+                </button>
+              )}
+              {(!lockedSports.length || lockedSports.includes('basketball')) && (
+                <button onClick={() => setSportMode('basketball')} className="card" style={{ textAlign: 'left', cursor: 'pointer', border: '1px solid var(--border2)' }}>
+                  <div style={{ fontWeight: 800, fontSize: 16, color: 'var(--green3)' }}>🏀 Basketball</div>
+                  <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 6 }}>Six-category scout: possession, turnovers, deflections, shot ratio, pace, zones.</div>
+                </button>
+              )}
             </div>
             <p style={{ fontSize: 12, color: 'var(--text3)', marginTop: 16 }}>
               Scouting is available for football and basketball. Set a team&apos;s sport under <span style={{ color: 'var(--green3)' }}>Teams</span> and it will route you automatically next time.
