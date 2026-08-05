@@ -123,6 +123,21 @@ class Settings(BaseSettings):
     # `app_rls` role. Flip to true only per the staged rollout, never casually.
     RLS_ENABLED: bool = False
 
+    # Duplicate-run financial control (#4). When true, a SECOND billable analysis on
+    # film that was already analyzed returns a needs_confirmation signal instead of
+    # silently charging again; the frontend confirms, then the confirmed re-run also
+    # notifies all team coaches (CLAUDE.md financial control). DEFAULT FALSE so the
+    # backend and frontend can deploy first; flip on once both are live. The
+    # failure-refund half of #4 is always active and needs no flag.
+    RERUN_CONFIRMATION_ENABLED: bool = False
+
+    # Recruiting directory disclosure consent (#17). When true, minting a public
+    # recruiting link requires the coach to accept the directory-disclosure
+    # attestation for that player first (collected in the enable dialog). DEFAULT
+    # FALSE so it ships dormant until the frontend checkbox is live; existing links
+    # keep working (the gate is at mint time, never at serve time).
+    RECRUITING_CONSENT_ENABLED: bool = False
+
     class Config:
         env_file = ".env"
         case_sensitive = False
