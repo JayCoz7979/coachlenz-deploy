@@ -54,6 +54,9 @@ export default function LiveSetupPage() {
   const router = useRouter()
 
   const [sport, setSport] = useState<Sport>('football')
+  // Sport(s) the org locked at onboarding — defaults the picker and limits the chips
+  // so a basketball coach isn't shown (or defaulted to) football.
+  const [lockedSports, setLockedSports] = useState<string[]>([])
   const [teamName, setTeamName] = useState('')
   const [opponent, setOpponent] = useState('')
   const [gameDate, setGameDate] = useState('')
@@ -80,6 +83,11 @@ export default function LiveSetupPage() {
   useEffect(() => {
     if (!user) return
     api.get('/live/sessions').then(r => setSessions(r.data.sessions || [])).catch(() => {})
+    // Default the logger to the org's locked sport and limit the chips to it.
+    api.get('/onboarding/status').then(r => {
+      const chosen: string[] = r.data?.chosen_sports || []
+      if (chosen.length) { setLockedSports(chosen); setSport(chosen[0] as Sport) }
+    }).catch(() => {})
   }, [user])
 
   const isFootball = sport === 'football' || sport === 'flag_football'
@@ -180,7 +188,7 @@ export default function LiveSetupPage() {
 
         <div style={card}>
           <div style={section}>Sport</div>
-          <Chips options={LIVE_SPORTS.map(s => ({ value: s, label: `${SPORT_META[s].emoji} ${SPORT_META[s].label}` }))} value={sport} onChange={v => setSport(v as Sport)} />
+          <Chips options={(lockedSports.length ? LIVE_SPORTS.filter(s => lockedSports.includes(s)) : LIVE_SPORTS).map(s => ({ value: s, label: `${SPORT_META[s].emoji} ${SPORT_META[s].label}` }))} value={sport} onChange={v => setSport(v as Sport)} />
         </div>
 
         <div style={card}>
