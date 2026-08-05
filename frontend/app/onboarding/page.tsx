@@ -6,7 +6,7 @@ import Link from 'next/link'
 import api from '@/lib/api'
 
 type Sport = { value: string; label: string }
-type Phase = 'register' | 'email' | 'phone' | 'sport'
+type Phase = 'register' | 'email' | 'sport'
 
 function OnboardingForm() {
   const router = useRouter()
@@ -18,12 +18,9 @@ function OnboardingForm() {
   const [loading, setLoading] = useState(false)
   const [acceptedTerms, setAcceptedTerms] = useState(false)
 
-  // verification state
+  // verification state (email only — phone/SMS verification was removed)
   const [emailCode, setEmailCode] = useState('')
   const [emailCodeSent, setEmailCodeSent] = useState(false)
-  const [phone, setPhone] = useState('')
-  const [phoneSent, setPhoneSent] = useState(false)
-  const [phoneCode, setPhoneCode] = useState('')
 
   // sport-selection state
   const [choosable, setChoosable] = useState<Sport[]>([])
@@ -55,7 +52,6 @@ function OnboardingForm() {
       const step = s.data.next_step
       if (step === 'done') router.push('/dashboard')
       else if (step === 'verify_email') goEmail()
-      else if (step === 'verify_phone') setPhase('phone')
       else if (step === 'choose_sport') setPhase('sport')
     }).catch(() => {})
   }, [])
@@ -71,7 +67,7 @@ function OnboardingForm() {
       const r = await api.post('/auth/send-email-code')
       setEmailCodeSent(true)
       setNote(r.data.already_verified ? 'Email already verified.' : r.data.message || 'Code sent.')
-      if (r.data.already_verified) setPhase('phone')
+      if (r.data.already_verified) setPhase('sport')
     } catch (err: any) { setError(err.response?.data?.detail || 'Could not send the code.') }
   }
 
@@ -94,24 +90,6 @@ function OnboardingForm() {
     setLoading(true); setError('')
     try {
       await api.post('/auth/verify-email', { code: emailCode.trim() })
-      setNote(''); setPhase('phone')
-    } catch (err: any) { setError(err.response?.data?.detail || 'Invalid code.') }
-    finally { setLoading(false) }
-  }
-
-  async function sendPhoneCode() {
-    setLoading(true); setError(''); setNote('')
-    try {
-      const r = await api.post('/auth/send-phone-code', { phone })
-      setPhoneSent(true); setNote(r.data.message || 'Code sent.')
-    } catch (err: any) { setError(err.response?.data?.detail || 'Could not send the text.') }
-    finally { setLoading(false) }
-  }
-
-  async function verifyPhone() {
-    setLoading(true); setError('')
-    try {
-      await api.post('/auth/verify-phone', { code: phoneCode.trim() })
       setNote(''); setPhase('sport')
     } catch (err: any) { setError(err.response?.data?.detail || 'Invalid code.') }
     finally { setLoading(false) }
@@ -142,13 +120,12 @@ function OnboardingForm() {
 
   const heading = phase === 'register' ? 'Start your 14-day free trial'
     : phase === 'email' ? 'Verify your email'
-    : phase === 'phone' ? 'Verify your phone'
     : 'Choose your sport'
 
   const Steps = () => (
     <div className="flex items-center justify-center gap-2 mb-6">
-      {(['register', 'email', 'phone', 'sport'] as Phase[]).map((p, i) => {
-        const order = ['register', 'email', 'phone', 'sport']
+      {(['register', 'email', 'sport'] as Phase[]).map((p, i) => {
+        const order = ['register', 'email', 'sport']
         const done = order.indexOf(phase) > i
         const active = phase === p
         return <div key={p} style={{ width: 34, height: 4, borderRadius: 2, background: done || active ? '#2d8c40' : 'rgba(255,255,255,0.12)' }} />
@@ -160,7 +137,7 @@ function OnboardingForm() {
     <div className="min-h-screen bg-gray-950 flex items-center justify-center py-12">
       <div className="w-full max-w-md">
         <div className="text-center mb-6">
-          <h1 className="text-3xl font-bold text-brand-400">CoachLenz</h1>
+          <img src="/coachlenz-logo.png" alt="CoachLenz" className="mx-auto h-auto" style={{ maxWidth: 280 }} />
           <p className="text-gray-400 mt-2">{heading}</p>
         </div>
         <Steps />
@@ -190,25 +167,6 @@ function OnboardingForm() {
             <input className="input text-center tracking-[0.4em] text-lg" value={emailCode} onChange={e => setEmailCode(e.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="000000" inputMode="numeric" />
             <button onClick={verifyEmail} disabled={loading || emailCode.length !== 6} className="btn-primary w-full">{loading ? 'Verifying...' : 'Verify Email'}</button>
             <button onClick={sendEmailCode} className="text-center text-sm text-brand-400 hover:underline w-full">Resend code</button>
-          </div>
-        )}
-
-        {phase === 'phone' && (
-          <div className="card space-y-4">
-            {!phoneSent ? (
-              <>
-                <p className="text-gray-400 text-sm">Add your mobile number for verification. We&apos;ll text you a code.</p>
-                <input className="input" value={phone} onChange={e => setPhone(e.target.value)} placeholder="(555) 123-4567" inputMode="tel" />
-                <button onClick={sendPhoneCode} disabled={loading || phone.replace(/\D/g, '').length < 10} className="btn-primary w-full">{loading ? 'Sending...' : 'Send Code'}</button>
-              </>
-            ) : (
-              <>
-                <p className="text-gray-400 text-sm">Enter the 6-digit code we texted to <span className="text-gray-200">{phone}</span>.</p>
-                <input className="input text-center tracking-[0.4em] text-lg" value={phoneCode} onChange={e => setPhoneCode(e.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="000000" inputMode="numeric" />
-                <button onClick={verifyPhone} disabled={loading || phoneCode.length !== 6} className="btn-primary w-full">{loading ? 'Verifying...' : 'Verify Phone'}</button>
-                <button onClick={() => { setPhoneSent(false); setPhoneCode('') }} className="text-center text-sm text-brand-400 hover:underline w-full">Change number</button>
-              </>
-            )}
           </div>
         )}
 

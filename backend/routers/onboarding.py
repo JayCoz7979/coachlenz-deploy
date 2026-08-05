@@ -37,15 +37,15 @@ async def onboarding_status(
     """Everything the onboarding UI needs to render the next step."""
     max_sports = max_sports_for_tier(org.subscription_tier)
     locked = chosen_sports(org)
-    # Phone is a gate ONLY when Twilio Verify is actually configured. If it isn't
-    # (or a client can't receive SMS), requiring it would trap the user forever
-    # with no way to reach "choose_sport". Email stays the always-on hard gate.
-    phone_required = phone_verification_configured()
+    # SMS/phone verification was removed from onboarding (unreliable carrier delivery
+    # + Twilio A2P friction was hard-blocking every new coach). Email is the only
+    # identity gate now. `phone_required` stays in the payload as False for any older
+    # client that still reads it.
     return {
         "email_verified": bool(user.email_verified),
         "phone_verified": bool(user.phone_verified),
         "phone_on_file": bool(user.phone),
-        "phone_required": phone_required,
+        "phone_required": False,
         "tier": org.subscription_tier,
         "max_sports": max_sports,
         "chosen_sports": locked,
@@ -55,7 +55,6 @@ async def onboarding_status(
         # What still stands between the client and a finished onboarding.
         "next_step": (
             "verify_email" if not user.email_verified else
-            "verify_phone" if (phone_required and not user.phone_verified) else
             "choose_sport" if not locked else
             "done"
         ),
@@ -85,13 +84,11 @@ async def choose_sports(
     if user.role != "owner":
         raise HTTPException(status_code=403, detail="Only the account owner can choose the plan's sport(s).")
 
-    # Identity must be verified first (chargeback protection): email then phone.
-    # Phone is enforced only when Twilio Verify is configured; otherwise it would
-    # be an unpassable gate. Email is always required.
+    # Identity must be verified first (chargeback protection). SMS/phone verification
+    # was removed (carrier/A2P delivery was hard-blocking onboarding); email is the
+    # identity gate, backed by the signup IP captured at registration.
     if not user.email_verified:
         raise HTTPException(status_code=403, detail="Verify your email before choosing your sport.")
-    if phone_verification_configured() and not user.phone_verified:
-        raise HTTPException(status_code=403, detail="Verify your phone number before choosing your sport.")
 
     if org.onboarding_completed and chosen_sports(org):
         raise HTTPException(
