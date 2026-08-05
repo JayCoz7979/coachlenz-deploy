@@ -41,7 +41,7 @@ export default function AcceptInvitePage() {
     <div className="min-h-screen bg-gray-950 flex items-center justify-center">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-brand-400">CoachLenz</h1>
+          <img src="/coachlenz-logo.png" alt="CoachLenz" className="mx-auto h-auto" style={{ maxWidth: 280 }} />
           <p className="text-gray-400 mt-2">Set your password to join your staff</p>
         </div>
         {done ? (
