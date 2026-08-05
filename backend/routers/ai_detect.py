@@ -212,6 +212,57 @@ async def game_tendencies(
             "opponent": game.opponent, "title": game.title, **data}
 
 
+def _assess_film_quality(fill_rates: dict, avg_conf: float, confident_pct: float) -> dict:
+    """Turn the detection fill-rates into an honest, coach-facing film-quality verdict.
+
+    The dominant failure mode on real film is NO visible scoreboard/score bug: the
+    detector reads play type, formation, and result fine, but down & distance come
+    back nearly empty because they're literally not on screen. Rather than let a
+    coach wonder why the down-and-distance tendencies are thin, we say so up front.
+    """
+    down = fill_rates.get("down", 0) or 0
+    dist = fill_rates.get("distance", 0) or 0
+    dd = min(down, dist)
+
+    if dd < 40:
+        return {
+            "level": "limited",
+            "scoreboard_readable": False,
+            "down_distance_available": False,
+            "headline": "No scoreboard detected on this film",
+            "detail": (
+                f"Down was read on {down}% of plays and distance on {dist}%. This film "
+                "has no visible score bug, so down-and-distance tendencies (3rd-and-long, "
+                "red zone, two-minute) will be limited. Everything else — play type, "
+                "formation, result, field position — was still read normally."
+            ),
+            "recommendation": (
+                "Use film with a visible scoreboard, tag down & distance on the plays that "
+                "matter, or click “Auto-fill down & distance” to chain them across each drive."
+            ),
+        }
+    if confident_pct < 40:
+        return {
+            "level": "caution",
+            "scoreboard_readable": True,
+            "down_distance_available": True,
+            "headline": "Lower-confidence film",
+            "detail": (
+                f"Only {confident_pct}% of plays came back high-confidence (avg {avg_conf}). "
+                "Wide or shaky single-camera angles reduce the detail the AI can read."
+            ),
+            "recommendation": "Review the flagged plays in the Play Log before game-planning. Tighter or multi-angle film sharpens the read.",
+        }
+    return {
+        "level": "ok",
+        "scoreboard_readable": True,
+        "down_distance_available": True,
+        "headline": "Film quality looks good",
+        "detail": "",
+        "recommendation": "",
+    }
+
+
 @router.get("/{game_id}/coverage")
 async def coverage_scorecard(
     game_id: str,
@@ -261,6 +312,7 @@ async def coverage_scorecard(
         "confident_pct": round(confident / n * 100, 1),
         "side_split": sides,
         "weakest_fields": [k for k, _ in weakest],
+        "film_quality": _assess_film_quality(fill_rates, avg_conf, round(confident / n * 100, 1)),
     }
 
 

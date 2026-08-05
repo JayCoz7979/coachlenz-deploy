@@ -1888,6 +1888,21 @@ export default function GamePage() {
                     {scorecard.plays} plays · {scorecard.confident_pct}% confident
                   </span>
                 </div>
+                {scorecard.film_quality && scorecard.film_quality.level !== 'ok' && (() => {
+                  const fq = scorecard.film_quality
+                  const limited = fq.level === 'limited'
+                  const accent = limited ? '#e07070' : '#e0a050'
+                  return (
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', background: limited ? 'rgba(224,112,112,0.09)' : 'rgba(224,160,80,0.09)', border: `1px solid ${accent}`, borderRadius: 6, padding: '10px 12px', marginBottom: 12 }}>
+                      <AlertCircle size={16} style={{ color: accent, flexShrink: 0, marginTop: 1 }} />
+                      <div>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: '#f8f6f0', marginBottom: 3 }}>{fq.headline}</div>
+                        {fq.detail && <div style={{ fontSize: 11, color: '#c8c8ba', lineHeight: 1.5 }}>{fq.detail}</div>}
+                        {fq.recommendation && <div style={{ fontSize: 11, color: '#a8a89a', marginTop: 4 }}>{fq.recommendation}</div>}
+                      </div>
+                    </div>
+                  )
+                })()}
                 <div style={{ display: 'flex', gap: 16, marginBottom: 12, flexWrap: 'wrap' }}>
                   <div><div style={{ fontSize: 20, fontWeight: 700, color: '#2d8c40' }}>{scorecard.confident}</div><div style={{ fontSize: 10, color: '#7a7a6e' }}>confident</div></div>
                   <div><div style={{ fontSize: 20, fontWeight: 700, color: '#e0a050' }}>{scorecard.flagged_for_review}</div><div style={{ fontSize: 10, color: '#7a7a6e' }}>need your eyes</div></div>
