@@ -49,6 +49,10 @@ function UploadPageInner() {
   const searchParams = useSearchParams()
   const [tab, setTab] = useState<Tab>(searchParams.get('tab') === 'url' ? 'url' : 'upload')
   const [teams, setTeams] = useState<any[]>([])
+  // The sport(s) this org locked at onboarding. Defaults the Sport field and limits
+  // the options — otherwise the field defaults to football and a basketball/flag
+  // coach's first import 403s on the sport-lock check.
+  const [lockedSports, setLockedSports] = useState<string[]>([])
   const [form, setForm] = useState({ title: '', sport: 'football', team_id: '', opponent: '', game_date: '', is_home: '', scout_jersey: '', opponent_jersey: '' })
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setForm(f => ({ ...f, [k]: e.target.value }))
 
@@ -102,6 +106,14 @@ function UploadPageInner() {
   useEffect(() => { fetchMe() }, [])
   useEffect(() => { if (!isLoading && !user) router.push('/login') }, [isLoading, user])
   useEffect(() => { if (user) api.get('/teams').then(r => setTeams(r.data)) }, [user])
+  // Default + limit the Sport field to the org's locked sport(s).
+  useEffect(() => {
+    if (!user) return
+    api.get('/onboarding/status').then(r => {
+      const chosen: string[] = r.data?.chosen_sports || []
+      if (chosen.length) { setLockedSports(chosen); setForm(f => ({ ...f, sport: chosen[0] })) }
+    }).catch(() => {})
+  }, [user])
 
   useEffect(() => {
     if (!importJobId) return
@@ -291,7 +303,7 @@ function UploadPageInner() {
               <div>
                 <label className="label">Sport</label>
                 <select className="input" value={form.sport} onChange={set('sport')}>
-                  {SPORTS.map(s => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
+                  {(lockedSports.length ? lockedSports : SPORTS).map(s => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
                 </select>
               </div>
               <div>
