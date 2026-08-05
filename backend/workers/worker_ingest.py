@@ -14,6 +14,34 @@ from sqlalchemy import select, update
 logger = logging.getLogger(__name__)
 
 
+def _friendly_download_error(raw: str) -> str:
+    """Map a raw yt-dlp/ffmpeg download failure to a plain-English message a coach
+    can act on. The technical detail is still logged; this is only what we SHOW.
+    The most common real-world cause is an expired/private link (Hudl download links
+    time out fast), so we lead the coach toward a fresh link or a direct upload."""
+    r = (raw or "").lower()
+    if any(s in r for s in ("403", "forbidden", "expired", "access denied", "signature", "token has expired")):
+        return ("This film link looks expired or private. Links from Hudl and similar sites "
+                "time out quickly, so reopen the film, copy a fresh link, and import again. "
+                "Or use the Upload File tab, which never expires.")
+    if any(s in r for s in ("sign in", "log in", "login required", "private video", "members-only",
+                            "authentication", "cookies", "not authorized", "401")):
+        return ("This film needs a sign-in we don't have. For Hudl, connect your Hudl account "
+                "under Connected Accounts, or download the film and use the Upload File tab.")
+    if any(s in r for s in ("404", "not found", "410", "no longer available", "removed")):
+        return ("We couldn't find a film at that link. It may have been moved or deleted. "
+                "Double-check the URL, or upload the file directly.")
+    if any(s in r for s in ("500", "502", "503", "504", "server error", "bad gateway", "temporarily")):
+        return ("The site hosting this film returned a temporary error. Wait a few minutes and "
+                "try again, or upload the file directly.")
+    if any(s in r for s in ("drm", "geo", "not available in your country", "region")):
+        return ("This film is protected or region-locked and can't be imported by link. "
+                "Download it and use the Upload File tab instead.")
+    return ("We couldn't download the film from that link. The usual causes: the link expired "
+            "(Hudl links do this fast), it's private, or the host is down. Grab a fresh link, "
+            "or use the Upload File tab.")
+
+
 class IngestWorker(BaseWorker):
     job_type = "ingest"
 
@@ -288,7 +316,9 @@ class IngestWorker(BaseWorker):
                 logger.warning(f"[ingest] yt-dlp attempt failed ({extra}): {last_error[:200]}")
 
             if proc is None or proc.returncode != 0:
-                raise ValueError(f"Download failed: {last_error[:400]}")
+                # Raw yt-dlp detail was already logged above; show the coach a friendly,
+                # actionable message (expired/private link, host down, etc.).
+                raise ValueError(_friendly_download_error(last_error))
 
             video_file = None
             for fname in os.listdir(tmpdir):
