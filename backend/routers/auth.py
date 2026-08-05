@@ -100,7 +100,9 @@ async def register(body: RegisterRequest, request: Request, db: AsyncSession = D
     await db.flush()
 
     # Log the Terms + Privacy acceptance the user made at signup (with the IP).
+    # uvicorn --proxy-headers makes request.client.host the real end-user IP.
     ip = request.client.host if request.client else None
+    user.signup_ip = ip  # persisted on commit below — chargeback/dispute evidence
     await record_acceptance(db, org.id, user.id, "terms", ip=ip)
     await record_acceptance(db, org.id, user.id, "privacy", ip=ip)
 
