@@ -6,6 +6,7 @@ from typing import Optional, List
 from backend.models.base import get_db
 from backend.models.user import User
 from backend.models.comms import Playlist, PlaylistClip
+from backend.models.clip import Clip
 from backend.services.auth import get_current_user
 
 router = APIRouter(prefix="/playlists", tags=["playlists"])
@@ -39,6 +40,12 @@ async def add_clip(playlist_id: str, body: PlaylistClipAdd, user: User = Depends
     result = await db.execute(select(Playlist).where(Playlist.id == playlist_id, Playlist.organization_id == user.organization_id))
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Playlist not found")
+    # Verify the clip belongs to the caller's org before attaching it, so a user
+    # can't add a clip they don't own to their playlist.
+    clip = await db.execute(select(Clip.id).where(
+        Clip.id == body.clip_id, Clip.organization_id == user.organization_id))
+    if not clip.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Clip not found")
     pc = PlaylistClip(playlist_id=playlist_id, **body.dict())
     db.add(pc)
     await db.commit()

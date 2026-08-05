@@ -84,6 +84,18 @@ async def create_event(body: EventCreate, user: User = Depends(get_current_user)
 
 @router.post("/bulk")
 async def bulk_create_events(events: list[EventCreate], user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    if not events:
+        return {"created": 0}
+    # Verify every referenced game belongs to the caller's org before writing, the
+    # same ownership check create_event does. Rows are stamped with the caller's org
+    # regardless, so this isn't a cross-tenant leak, but without it a user could
+    # attach events to game_ids they don't own (integrity noise).
+    gids = {str(e.game_id) for e in events}
+    owned = {str(g) for g in (await db.execute(
+        select(Game.id).where(Game.id.in_(gids), Game.organization_id == user.organization_id)
+    )).scalars().all()}
+    if gids - owned:
+        raise HTTPException(status_code=404, detail="Game not found")
     objs = [Event(organization_id=user.organization_id, **e.dict()) for e in events]
     db.add_all(objs)
     await db.commit()
