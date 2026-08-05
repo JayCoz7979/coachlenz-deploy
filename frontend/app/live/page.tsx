@@ -54,6 +54,8 @@ export default function LiveSetupPage() {
   const router = useRouter()
 
   const [sport, setSport] = useState<Sport>('football')
+  // The logger is restricted to the sport the account chose at sign-up.
+  const [lockedSports, setLockedSports] = useState<string[]>([])
   const [teamName, setTeamName] = useState('')
   const [opponent, setOpponent] = useState('')
   const [gameDate, setGameDate] = useState('')
@@ -80,12 +82,11 @@ export default function LiveSetupPage() {
   useEffect(() => {
     if (!user) return
     api.get('/live/sessions').then(r => setSessions(r.data.sessions || [])).catch(() => {})
-    // The Live Game Logger is a manual sideline tool available for EVERY sport we
-    // cover (not gated by the film-analysis sport lock). We still default the picker
-    // to the coach's own sport as a convenience, but all sports stay selectable.
+    // Restrict the logger to the sport the account chose at sign-up: default the
+    // picker to it and limit the chips to it.
     api.get('/onboarding/status').then(r => {
       const chosen: string[] = r.data?.chosen_sports || []
-      if (chosen.length) setSport(chosen[0] as Sport)
+      if (chosen.length) { setLockedSports(chosen); setSport(chosen[0] as Sport) }
     }).catch(() => {})
   }, [user])
 
@@ -187,7 +188,7 @@ export default function LiveSetupPage() {
 
         <div style={card}>
           <div style={section}>Sport</div>
-          <Chips options={LIVE_SPORTS.map(s => ({ value: s, label: `${SPORT_META[s].emoji} ${SPORT_META[s].label}` }))} value={sport} onChange={v => setSport(v as Sport)} />
+          <Chips options={(lockedSports.length ? LIVE_SPORTS.filter(s => lockedSports.includes(s)) : LIVE_SPORTS).map(s => ({ value: s, label: `${SPORT_META[s].emoji} ${SPORT_META[s].label}` }))} value={sport} onChange={v => setSport(v as Sport)} />
         </div>
 
         <div style={card}>
