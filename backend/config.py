@@ -85,6 +85,13 @@ class Settings(BaseSettings):
     # App
     APP_URL: str = "https://coachlenz.com"
     ENVIRONMENT: str = "production"
+    # Shared rate-limit storage. The API runs with multiple uvicorn workers, and
+    # slowapi's default in-memory storage is PER-PROCESS, so each worker keeps its
+    # own counter and the effective limit is ~Nx (N = worker count). Point this at
+    # the Railway Redis (redis://...) so all workers share ONE counter and limits
+    # are enforced correctly. Empty = in-memory (single-worker / local dev). A
+    # Redis outage degrades to in-memory, never blocks requests (see ratelimit.py).
+    REDIS_URL: str = ""
     MAX_UPLOAD_BYTES: int = 21474836480  # 20GB
     TRIAL_DAYS: int = 14
     TRIAL_GAME_LIMIT: int = 1
