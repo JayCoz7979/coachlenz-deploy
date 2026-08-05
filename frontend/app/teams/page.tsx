@@ -13,11 +13,20 @@ export default function TeamsPage() {
   const router = useRouter()
   const [teams, setTeams] = useState<any[]>([])
   const [showForm, setShowForm] = useState(false)
+  // Sport(s) the org locked at onboarding — defaults + limits the team's Sport field.
+  const [lockedSports, setLockedSports] = useState<string[]>([])
   const [form, setForm] = useState({ name: '', sport: 'football', level: '', season: '' })
 
   useEffect(() => { fetchMe() }, [])
   useEffect(() => { if (!isLoading && !user) router.push('/login') }, [isLoading, user])
-  useEffect(() => { if (user) api.get('/teams').then(r => setTeams(r.data)) }, [user])
+  useEffect(() => {
+    if (!user) return
+    api.get('/teams').then(r => setTeams(r.data))
+    api.get('/onboarding/status').then(r => {
+      const chosen: string[] = r.data?.chosen_sports || []
+      if (chosen.length) { setLockedSports(chosen); setForm(f => ({ ...f, sport: chosen[0] })) }
+    }).catch(() => {})
+  }, [user])
 
   async function createTeam(e: React.FormEvent) {
     e.preventDefault()
@@ -25,7 +34,7 @@ export default function TeamsPage() {
     const r = await api.get('/teams')
     setTeams(r.data)
     setShowForm(false)
-    setForm({ name: '', sport: 'football', level: '', season: '' })
+    setForm({ name: '', sport: lockedSports[0] || 'football', level: '', season: '' })
   }
 
   async function deleteTeam(id: string) {
@@ -49,7 +58,7 @@ export default function TeamsPage() {
                 <div><label className="label">Team Name</label><input className="input" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} required /></div>
                 <div><label className="label">Sport</label>
                   <select className="input" value={form.sport} onChange={e => setForm(f => ({ ...f, sport: e.target.value }))}>
-                    {SPORTS.map(s => <option key={s} value={s}>{s.replace(/_/g,' ')}</option>)}
+                    {(lockedSports.length ? SPORTS.filter(s => lockedSports.includes(s)) : SPORTS).map(s => <option key={s} value={s}>{s.replace(/_/g,' ')}</option>)}
                   </select>
                 </div>
                 <div><label className="label">Level</label><input className="input" placeholder="Varsity, JV..." value={form.level} onChange={e => setForm(f => ({ ...f, level: e.target.value }))} /></div>
