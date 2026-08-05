@@ -33,6 +33,7 @@ class User(Base):
     phone = Column(String)
     phone_verified = Column(Boolean, nullable=False, default=False)
     email_verified = Column(Boolean, nullable=False, default=False)
+    signup_ip = Column(String)  # client IP at registration — chargeback/dispute evidence
     avatar_url = Column(String)
     is_active = Column(Boolean, nullable=False, default=True)
     # Bumped on logout / password change / password reset to revoke all previously

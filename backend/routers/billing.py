@@ -10,6 +10,7 @@ from backend.models.user import User
 from backend.models.organization import Organization
 from backend.models.job import Job
 from backend.models.billing_event import ProcessedStripeEvent
+from backend.models.purchase_ip import PurchaseIPLog
 from backend.services.auth import get_current_user, get_current_org
 from backend.config import settings
 
@@ -34,7 +35,7 @@ class CheckoutRequest(BaseModel):
     cancel_url: str
 
 @router.post("/checkout")
-async def create_checkout(body: CheckoutRequest, user: User = Depends(get_current_user), org: Organization = Depends(get_current_org), db: AsyncSession = Depends(get_db)):
+async def create_checkout(body: CheckoutRequest, request: Request, user: User = Depends(get_current_user), org: Organization = Depends(get_current_org), db: AsyncSession = Depends(get_db)):
     if body.tier in CONTACT_SALES_TIERS:
         raise HTTPException(
             status_code=400,
@@ -61,14 +62,25 @@ async def create_checkout(body: CheckoutRequest, user: User = Depends(get_curren
         customer_id = customer.id
         await db.execute(update(Organization).where(Organization.id == org.id).values(stripe_customer_id=customer_id))
         await db.commit()
+    # Chargeback evidence: the IP + user agent of whoever initiated this purchase.
+    # Pushed into Stripe metadata (session + subscription, so it shows in Stripe's
+    # dispute view) AND logged in our DB (queryable per org during a dispute).
+    ip = request.client.host if request.client else None
+    ua = request.headers.get("user-agent")
     session = stripe.checkout.Session.create(
         customer=customer_id,
         line_items=[{"price": price_id, "quantity": 1}],
         mode="subscription",
         success_url=body.success_url,
         cancel_url=body.cancel_url,
-        metadata={"org_id": str(org.id), "tier": body.tier},
+        metadata={"org_id": str(org.id), "tier": body.tier, "client_ip": ip or ""},
+        subscription_data={"metadata": {"org_id": str(org.id), "client_ip": ip or ""}},
     )
+    db.add(PurchaseIPLog(
+        organization_id=org.id, user_id=user.id, ip=ip, user_agent=(ua or "")[:400],
+        tier=body.tier, stripe_session_id=session.id,
+    ))
+    await db.commit()
     return {"checkout_url": session.url}
 
 @router.post("/portal")

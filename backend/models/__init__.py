@@ -21,3 +21,4 @@ from .usage import AnalysisUsage, CoachUsageLimit
 from .grade_annotation import GradeAnnotation
 from .learning import CoachLabelCorrection, AccountLearningAdjustment, LabelQualityScore
 from .billing_event import ProcessedStripeEvent
+from .purchase_ip import PurchaseIPLog
