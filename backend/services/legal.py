@@ -12,6 +12,7 @@ This module is the enforcement scaffolding; the actual legal TEXT is the lawyer'
 """
 from fastapi import HTTPException
 from sqlalchemy import select, func
+from sqlalchemy.exc import IntegrityError
 
 from backend.models.legal import LegalAcceptance
 
@@ -37,13 +38,23 @@ STUDENT_DATA_ATTESTATION = (
 
 
 async def record_acceptance(db, organization_id, user_id, document: str, ip: str | None = None) -> None:
-    """Log an acceptance of `document` at its current version. Caller commits."""
+    """Log an acceptance of `document` at its current version. Caller commits.
+
+    Idempotent: the insert is wrapped in a savepoint so a duplicate (the accept
+    flow's read-check races, or a double-click) collides with the
+    uq_legal_acceptance constraint and is quietly ignored instead of accreting a
+    duplicate audit row (or, once the constraint exists, failing the caller's
+    commit). One authoritative row per (org, user, document, version)."""
     if document not in DOCUMENT_VERSIONS:
         raise ValueError(f"unknown legal document: {document}")
-    db.add(LegalAcceptance(
-        organization_id=organization_id, user_id=user_id,
-        document=document, version=DOCUMENT_VERSIONS[document], ip_address=ip,
-    ))
+    try:
+        async with db.begin_nested():
+            db.add(LegalAcceptance(
+                organization_id=organization_id, user_id=user_id,
+                document=document, version=DOCUMENT_VERSIONS[document], ip_address=ip,
+            ))
+    except IntegrityError:
+        pass  # already recorded at this version — idempotent
 
 
 async def has_current_acceptance(db, organization_id, document: str) -> bool:

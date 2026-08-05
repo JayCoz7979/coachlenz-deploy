@@ -5,14 +5,24 @@ Files are stored in /tmp and reset on redeploy.
 import mimetypes
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import Response
+from backend.config import settings
 from backend.services.r2 import _use_local, save_local_file, read_local_file
 
 router = APIRouter(prefix="/files", tags=["files"])
 
 
+def _files_disabled() -> bool:
+    """Local file serving is a NON-PROD fallback for when R2 is unconfigured. It
+    must never serve in production: these endpoints are unauthenticated and
+    cross-org, so if R2 creds ever regressed in prod they would silently become an
+    open object store (any key readable/writable by anyone). Fail closed in prod
+    regardless of R2 state; media playback there always comes from R2."""
+    return not _use_local() or settings.ENVIRONMENT == "production"
+
+
 @router.put("/upload/{key:path}")
 async def local_upload(key: str, request: Request):
-    if not _use_local():
+    if _files_disabled():
         raise HTTPException(status_code=404)
     data = await request.body()
     try:
@@ -24,7 +34,7 @@ async def local_upload(key: str, request: Request):
 
 @router.get("/{key:path}")
 async def local_serve(key: str):
-    if not _use_local():
+    if _files_disabled():
         raise HTTPException(status_code=404)
     try:
         data = read_local_file(key)

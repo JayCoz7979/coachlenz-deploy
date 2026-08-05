@@ -24,16 +24,35 @@ class _Res:
         return self.v
 
 
+class _Savepoint:
+    """Async-context-manager stand-in for AsyncSession.begin_nested(). If
+    `raise_on_exit` is set, simulates the unique-constraint collision."""
+    def __init__(self, exc=None):
+        self._exc = exc
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_exc):
+        if self._exc is not None:
+            raise self._exc
+        return False
+
+
 class _DB:
-    def __init__(self, count):
+    def __init__(self, count, savepoint_exc=None):
         self.count = count
         self.added = []
+        self._savepoint_exc = savepoint_exc
 
     async def execute(self, *_a, **_k):
         return _Res(self.count)
 
     def add(self, obj):
         self.added.append(obj)
+
+    def begin_nested(self):
+        return _Savepoint(self._savepoint_exc)
 
 
 @pytest.mark.unit
@@ -90,3 +109,13 @@ def test_record_acceptance_adds_row_and_rejects_unknown_doc():
     assert row.ip_address == "1.2.3.4"
     with pytest.raises(ValueError):
         asyncio.run(record_acceptance(db, "o1", "u1", "bogus"))
+
+
+@pytest.mark.unit
+def test_record_acceptance_is_idempotent_on_duplicate():
+    # Finding #24: a duplicate acceptance (constraint collision) is swallowed, not
+    # raised, so the accept flow doesn't 500 and the ledger keeps one row.
+    from sqlalchemy.exc import IntegrityError
+    db = _DB(0, savepoint_exc=IntegrityError("dup", {}, Exception("uq_legal_acceptance")))
+    # Must not raise.
+    asyncio.run(record_acceptance(db, "o1", "u1", "terms", ip="1.2.3.4"))

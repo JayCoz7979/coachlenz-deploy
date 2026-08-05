@@ -7,6 +7,7 @@ from datetime import datetime
 from backend.models.base import get_db
 from backend.models.user import User
 from backend.models.comms import ClipAssignment
+from backend.models.clip import Clip
 from backend.services.auth import get_current_user
 
 router = APIRouter(prefix="/assignments", tags=["assignments"])
@@ -25,6 +26,16 @@ async def list_assignments(user: User = Depends(get_current_user), db: AsyncSess
 
 @router.post("")
 async def create_assignment(body: AssignmentCreate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    # Verify the clip and the assignee both belong to the caller's org, so a user
+    # can't assign a clip they don't own or hand work to someone outside their org.
+    clip = await db.execute(select(Clip.id).where(
+        Clip.id == body.clip_id, Clip.organization_id == user.organization_id))
+    if not clip.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Clip not found")
+    assignee = await db.execute(select(User.id).where(
+        User.id == body.assigned_to, User.organization_id == user.organization_id))
+    if not assignee.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="That person isn't in your organization.")
     assignment = ClipAssignment(organization_id=user.organization_id, assigned_by=user.id, **body.dict())
     db.add(assignment)
     await db.commit()

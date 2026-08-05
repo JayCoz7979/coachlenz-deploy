@@ -8,6 +8,7 @@ endpoint, which returns jerseys/tendencies only).
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
 from typing import Optional
 
@@ -131,7 +132,9 @@ async def add_player(team_id: str, body: PlayerIn, user: User = _require_manage,
     if not jersey:
         raise HTTPException(status_code=422, detail="Jersey number is required.")
     existing = await db.execute(select(RosterPlayer).where(
-        RosterPlayer.team_id == team_id, RosterPlayer.jersey_number == jersey))
+        RosterPlayer.team_id == team_id,
+        RosterPlayer.organization_id == user.organization_id,
+        RosterPlayer.jersey_number == jersey))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail=f"Jersey #{jersey} is already on this roster.")
     p = RosterPlayer(organization_id=user.organization_id, team_id=team_id, jersey_number=jersey,
@@ -139,7 +142,14 @@ async def add_player(team_id: str, body: PlayerIn, user: User = _require_manage,
                      position=body.position, grade_year=body.grade_year,
                      height=body.height, weight=body.weight)
     db.add(p)
-    await db.commit()
+    # The pre-check narrows the common case, but two concurrent adds both pass it;
+    # the uq_roster_team_jersey constraint then makes the loser's commit raise. Turn
+    # that race into the intended clean 409 instead of an unhandled 500 + Sentry noise.
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=f"Jersey #{jersey} is already on this roster.")
     await db.refresh(p)
     return _player_out(p)
 
@@ -230,7 +240,8 @@ async def clone_roster(team_id: str, target_team_id: str, user: User = _require_
             continue
         db.add(RosterPlayer(organization_id=user.organization_id, team_id=target_team_id,
                             jersey_number=p.jersey_number, first_name=p.first_name,
-                            last_name=p.last_name, position=p.position, grade_year=p.grade_year))
+                            last_name=p.last_name, position=p.position, grade_year=p.grade_year,
+                            height=p.height, weight=p.weight))
         cloned += 1
     await db.commit()
     return {"ok": True, "cloned": cloned, "skipped_existing": len(source) - cloned}

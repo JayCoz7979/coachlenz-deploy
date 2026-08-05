@@ -109,6 +109,17 @@ async def enable_recruiting(player_id: str, body: EnableIn, coach: User = _requi
         p.recruiting_token = secrets.token_urlsafe(24)
     p.recruiting_expires_at = datetime.utcnow() + timedelta(days=days)
     await db.commit()
+    # FERPA/UATP: minting a public directory link exposes a minor's name + film +
+    # stats to anyone with the link. Record who made that disclosure decision, for
+    # which player, and for how long — an auditable trail of the exposure.
+    # NOTE: this is the audit half. A distinct disclosure-CONSENT gate before the
+    # link can be minted still needs a frontend flow to collect it (deferred).
+    await log_agent_action(
+        action="recruiting_directory_enabled", organization_id=str(coach.organization_id),
+        level="info",
+        reason="Opted a player into the public recruiting directory (name + film visible via share link).",
+        detail={"player_id": player_id, "by": str(coach.id), "expires_in_days": days},
+    )
     return {"ok": True, "player_id": player_id, "recruiting_token": p.recruiting_token,
             "expires_at": p.recruiting_expires_at.isoformat(), "expires_in_days": days,
             "share_path": f"/recruiting/share/{p.recruiting_token}"}

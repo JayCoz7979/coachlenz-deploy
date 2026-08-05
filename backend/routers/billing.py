@@ -45,6 +45,16 @@ async def create_checkout(body: CheckoutRequest, user: User = Depends(get_curren
     price_id = PRICE_MAP[body.tier]
     if not price_id:
         raise HTTPException(status_code=400, detail="Tier not configured")
+    # Don't mint a SECOND subscription for an org that already has a live one. A
+    # duplicate checkout orphans the first subscription (it keeps billing monthly,
+    # but its customer.subscription.* webhooks no longer match this org because we
+    # overwrite stripe_subscription_id with the newest), i.e. silent double-billing
+    # the customer can't cancel cleanly. Route them to the portal to change/cancel.
+    if org.stripe_subscription_status in ("active", "trialing", "past_due"):
+        raise HTTPException(
+            status_code=409,
+            detail="You already have an active plan. Manage or change it from Billing.",
+        )
     customer_id = org.stripe_customer_id
     if not customer_id:
         customer = stripe.Customer.create(email=user.email, name=org.name, metadata={"org_id": str(org.id)})
@@ -123,10 +133,15 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None),
 
     elif et == "customer.subscription.deleted":
         sub_id = data["id"]
+        # A cancellation is NOT a trial. Setting is_trial=True regranted an
+        # active, non-expiring trial to a churned customer (is_trial_active() is
+        # True whenever is_trial is set and trial_ends_at is falsy), handing back
+        # trial features and a fresh free-analysis slot. Downgrade to the free tier
+        # with is_trial=False so they land in a plainly expired state.
         await db.execute(update(Organization).where(Organization.stripe_subscription_id == sub_id).values(
             stripe_subscription_status="canceled",
             subscription_tier="trial",
-            is_trial=True,
+            is_trial=False,
         ))
 
     elif et == "invoice.payment_succeeded":

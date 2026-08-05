@@ -78,13 +78,16 @@ def test_recruiting_days_default_and_max():
 
 
 # ── opt-in / share ───────────────────────────────────────────────────────────
-def test_scout_link_expires_at_30_days_by_default():
+def test_scout_link_expires_at_30_days_by_default(audit):
     p = _player()
     out = asyncio.run(rec.enable_recruiting("p1", rec.EnableIn(), coach=_coach(), db=_FakeDB([_Result(p)])))
     assert out["expires_in_days"] == 30
     assert p.recruiting_enabled is True and p.recruiting_token
     # ~30 days out.
     assert p.recruiting_expires_at > datetime.utcnow() + timedelta(days=29)
+    # Finding #17 (audit half): enabling the public directory link is recorded.
+    enabled = [c for c in audit if c.get("action") == "recruiting_directory_enabled"]
+    assert len(enabled) == 1 and enabled[0]["detail"]["player_id"] == "p1"
 
 
 def test_recruiting_opt_in_required_per_player():

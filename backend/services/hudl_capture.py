@@ -245,6 +245,9 @@ async def capture_hudl_stream(
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(**launch_kwargs)
+        # Tracks detached response-body reads so teardown can drain them before
+        # closing the browser (defined before the try so `finally` can always see it).
+        _pending_bodies: set = set()
         try:
             context = await browser.new_context(
                 user_agent=USER_AGENT,
@@ -311,13 +314,26 @@ async def capture_hudl_stream(
                     # Scan likely API/JSON bodies for embedded manifest URLs.
                     if ("json" in ct or "javascript" in ct or "graphql" in u
                             or "playback" in u or "/api/" in u):
+                        # Don't pull a huge response fully into memory just to regex
+                        # it for a manifest URL (bounded, best-effort by content-length).
+                        clen = int((resp.headers or {}).get("content-length") or 0)
+                        if clen and clen > 5_000_000:
+                            return
                         body = await resp.text()
                         for m in MANIFEST_RE.findall(body):
                             found.add(m.replace("\\u0026", "&").replace("\\/", "/"))
                 except Exception:
                     pass
 
-            page.on("response", lambda resp: asyncio.create_task(on_response(resp)))
+            def _spawn_on_response(resp):
+                # Track the detached task so teardown can await it — otherwise
+                # browser.close() may tear down the context mid body-read (raising
+                # post-close, and possibly missing a late-arriving manifest).
+                t = asyncio.create_task(on_response(resp))
+                _pending_bodies.add(t)
+                t.add_done_callback(_pending_bodies.discard)
+
+            page.on("response", _spawn_on_response)
 
             try:
                 await page.goto(page_url, wait_until="domcontentloaded", timeout=timeout_s * 1000)
@@ -433,4 +449,8 @@ async def capture_hudl_stream(
                 "headers": {"User-Agent": USER_AGENT, "Referer": page_url, "Origin": origin},
             }
         finally:
+            # Drain in-flight response-body reads before closing, so a late manifest
+            # isn't lost and no task reads against a torn-down context.
+            if _pending_bodies:
+                await asyncio.gather(*_pending_bodies, return_exceptions=True)
             await browser.close()
