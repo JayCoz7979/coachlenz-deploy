@@ -5,6 +5,7 @@ import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
 import { useRouter } from 'next/navigation'
 import { ShieldCheck, Users, AlertTriangle, Trash2, ToggleLeft, ToggleRight } from 'lucide-react'
+import ConfirmModal from '@/components/ConfirmModal'
 
 export default function AdminPage() {
   const { user, isLoading, fetchMe } = useAuth()
@@ -14,6 +15,9 @@ export default function AdminPage() {
   const [flags, setFlags] = useState<any[]>([])
   const [features, setFeatures] = useState<any[]>([])
   const [tab, setTab] = useState<'orgs'|'features'|'flags'|'stats'>('orgs')
+  const [orgToDelete, setOrgToDelete] = useState<{id: string, name: string} | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [err, setErr] = useState('')
 
   useEffect(() => { fetchMe() }, [])
   useEffect(() => {
@@ -42,13 +46,18 @@ export default function AdminPage() {
     setOrgs(o => o.map(x => x.id === orgId ? { ...x, has_coach_tenure_access: !current } : x))
   }
 
-  async function deleteOrg(orgId: string, name: string) {
-    if (!confirm(`Permanently delete "${name}" and ALL of its data (users, film, reports, roster)? This cannot be undone.`)) return
+  async function deleteOrg() {
+    if (!orgToDelete) return
+    setErr(''); setDeleting(true)
     try {
-      await api.delete(`/admin/orgs/${orgId}`)
-      setOrgs(o => o.filter(x => x.id !== orgId))
+      await api.delete(`/admin/orgs/${orgToDelete.id}`)
+      setOrgs(o => o.filter(x => x.id !== orgToDelete.id))
+      setOrgToDelete(null)
     } catch (e: any) {
-      alert(e.response?.data?.detail || 'Could not delete organization.')
+      setErr(e.response?.data?.detail || `Could not delete "${orgToDelete.name}".`)
+      setOrgToDelete(null)
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -58,6 +67,7 @@ export default function AdminPage() {
       <main className="flex-1 overflow-y-auto p-8">
         <div className="max-w-6xl mx-auto">
           <h2 className="text-2xl font-bold mb-6 flex items-center gap-3"><ShieldCheck className="text-brand-400" /> Admin Panel</h2>
+          {err && <div className="mb-4 text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-2">{err}</div>}
           <div className="flex gap-2 mb-6">
             {(['orgs','features','flags','stats'] as const).map(t => (
               <button key={t} onClick={() => setTab(t)} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === t ? 'bg-brand-500 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-100'}`}>{t === 'orgs' ? 'Organizations' : t === 'features' ? 'Feature Toggles' : t === 'flags' ? 'Risk Flags' : 'Stats'}</button>
@@ -84,7 +94,7 @@ export default function AdminPage() {
                       <td className="py-3 text-center">
                         <button onClick={() => toggleTenure(o.id, o.has_coach_tenure_access)} className="text-xs btn-secondary py-1">{o.has_coach_tenure_access ? 'Disable Tenure' : 'Enable Tenure'}</button>
                         {o.id !== user?.organization?.id && (
-                          <button onClick={() => deleteOrg(o.id, o.name)} title="Delete organization and all its data" className="text-xs text-red-400 hover:text-red-300 ml-3 inline-flex items-center gap-1"><Trash2 size={13} /> Delete</button>
+                          <button onClick={() => { setErr(''); setOrgToDelete({ id: o.id, name: o.name }) }} title="Delete organization and all its data" className="text-xs text-red-400 hover:text-red-300 ml-3 inline-flex items-center gap-1"><Trash2 size={13} /> Delete</button>
                         )}
                       </td>
                     </tr>
@@ -137,6 +147,15 @@ export default function AdminPage() {
             </div>
           )}
         </div>
+        <ConfirmModal
+          open={!!orgToDelete}
+          title="Delete organization?"
+          message={orgToDelete ? `Permanently delete "${orgToDelete.name}" and ALL of its data (users, film, reports, roster). This cannot be undone.` : ''}
+          confirmLabel="Delete organization"
+          busy={deleting}
+          onConfirm={deleteOrg}
+          onCancel={() => setOrgToDelete(null)}
+        />
       </main>
     </div>
   )
