@@ -14,6 +14,7 @@ from backend.services.auth import get_current_user, get_current_org
 from backend.services.sports import assert_sport_allowed
 from backend.services.entitlements import assert_ready_to_analyze, assert_feature_allowed
 from backend.models.usage import AnalysisUsage, CoachUsageLimit
+from backend.models.comms import Notification
 from backend.services.usage import month_start, over_limit
 from backend.utils.timeutils import to_naive_utc
 
@@ -324,6 +325,7 @@ async def trigger_auto_detect(
     full: bool = False,  # bypass the per-run segment cost guard (analyze every segment)
     test: bool = False,  # quick test: analyze only the opening minutes (pennies)
     grade: bool = False, # opt-in technique-grading pass (OL/DL/QB/tackle/coverage), Opus per-play
+    confirm_rerun: bool = False,  # #4b: the coach has confirmed a 2nd billable run on already-analyzed film
     user: User = Depends(get_current_user),
     org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db),
@@ -387,6 +389,29 @@ async def trigger_auto_detect(
     if existing.scalar_one_or_none():
         return {"status": "already_queued", "game_id": game_id}
 
+    # Duplicate-run financial control (#4b): a SECOND billable analysis on film that
+    # was already analyzed must be confirmed by the coach, not silently charged
+    # again. Gated by RERUN_CONFIRMATION_ENABLED so it stays dormant until the
+    # frontend confirm dialog is live. "Already analyzed" = a prior completed
+    # ai_detect job for this game.
+    is_rerun = False
+    if settings.RERUN_CONFIRMATION_ENABLED and _is_billable_run(dry_run, test):
+        prior = await db.execute(
+            select(Job.id).where(
+                Job.job_type == "ai_detect",
+                Job.payload["game_id"].as_string() == game_id,
+                Job.status == "done",
+            ).limit(1)
+        )
+        is_rerun = prior.scalar_one_or_none() is not None
+        if is_rerun and not confirm_rerun:
+            return {
+                "status": "needs_confirmation",
+                "game_id": game_id,
+                "message": ("This film was already analyzed. Running it again will use "
+                            "another analysis and will notify your coaching staff."),
+            }
+
     # Serialize concurrent billable runs for THIS coach before the cap is counted.
     # The cap is a count-then-insert: without a lock, parallel requests all read the
     # same pre-insert count, each passes the check, and each enqueues a full (deep =
@@ -427,20 +452,54 @@ async def trigger_auto_detect(
                  "full": bool(full), "test": bool(test), "grade": bool(grade)},
     )
     db.add(job)
+    await db.flush()  # assign job.id so the usage row can be linked to it for refunds
     # Attribute this run to the coach for the AD usage dashboard and the monthly
     # cap — but ONLY for billable work. A dry_run (UATP staging: simulates, saves
     # nothing) and a test run (opening-minutes penny probe) deliver no analysis, so
     # counting them silently burned a full monthly credit. Skip usage for both.
+    # job_id links the charge to the run so the worker can reverse it on failure.
     if _is_billable_run(dry_run, test):
         db.add(AnalysisUsage(
             organization_id=user.organization_id, user_id=user.id,
             sport=(game.sport or "football"),
             analysis_type=("deep_grade" if grade else ("deep" if mode == "deep" else "fast")),
+            job_id=job.id,
         ))
     await db.commit()
     await db.refresh(job)
 
+    # On a CONFIRMED re-run, notify the coaching staff — CLAUDE.md financial control:
+    # all coaches are told before a second analysis runs on the same film.
+    if is_rerun and confirm_rerun:
+        await _notify_team_of_rerun(db, user, game)
+
     return {"status": "queued", "job_id": str(job.id), "game_id": game_id, "dry_run": dry_run}
+
+
+async def _notify_team_of_rerun(db: AsyncSession, user: User, game: Game) -> None:
+    """In-app notify every other active coach in the org that a second analysis was
+    run on shared film (the film-credit spend is a shared financial event)."""
+    res = await db.execute(
+        select(User).where(
+            User.organization_id == user.organization_id,
+            User.id != user.id,
+            User.is_active.is_(True),
+        )
+    )
+    coaches = res.scalars().all()
+    if not coaches:
+        return
+    body = f'{user.name} ran a new analysis on "{game.title}".'
+    for c in coaches:
+        db.add(Notification(
+            user_id=c.id,
+            organization_id=user.organization_id,
+            type="rerun",
+            title="Another analysis was run on shared film",
+            body=body,
+            data={"game_id": str(game.id), "by": str(user.id), "by_name": user.name},
+        ))
+    await db.commit()
 
 
 @router.get("/{game_id}/auto-detect/status")

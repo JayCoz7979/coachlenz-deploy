@@ -56,8 +56,10 @@ class _DB:
 
 
 @pytest.mark.unit
-def test_document_versions_cover_three_docs():
-    assert set(DOCUMENT_VERSIONS) == {"terms", "privacy", "student_data"}
+def test_document_versions_cover_expected_docs():
+    # student_data authorizes COLLECTION; recruiting_directory authorizes public
+    # third-party DISCLOSURE (#17) — they are deliberately separate consents.
+    assert set(DOCUMENT_VERSIONS) == {"terms", "privacy", "student_data", "recruiting_directory"}
     assert STUDENT_DATA_ATTESTATION and "under 13" in STUDENT_DATA_ATTESTATION.lower()
 
 

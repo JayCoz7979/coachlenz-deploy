@@ -37,6 +37,10 @@ export default function RecruitingPage() {
   const [copied, setCopied] = useState(false)
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
+  // #17: when the backend requires directory-disclosure consent, hold the
+  // attestation to show a checkbox before the link can be minted.
+  const [consentReq, setConsentReq] = useState<{ attestation: string; message: string } | null>(null)
+  const [consentChecked, setConsentChecked] = useState(false)
 
   useEffect(() => { fetchMe() }, [])
   useEffect(() => { if (!isLoading && !user) router.push('/login') }, [isLoading, user])
@@ -60,10 +64,20 @@ export default function RecruitingPage() {
   }
   const shareUrl = profile?.share_path ? `${typeof window !== 'undefined' ? window.location.origin : ''}${profile.share_path}` : ''
 
-  async function enable() {
+  async function enable(withConsent = false) {
     setErr('')
-    try { await api.post(`/recruiting/players/${playerId}/enable`, { expires_in_days: 30 }); await loadProfile(playerId) }
-    catch (e: any) { flash(setErr, e.response?.data?.detail || 'Could not enable recruiting.') }
+    try {
+      await api.post(`/recruiting/players/${playerId}/enable`, { expires_in_days: 30, disclosure_consent: withConsent })
+      setConsentReq(null); setConsentChecked(false)
+      await loadProfile(playerId)
+    } catch (e: any) {
+      const d = e.response?.data?.detail
+      // #17: backend asks for directory-disclosure consent -> show the checkbox panel.
+      if (d && typeof d === 'object' && d.code === 'recruiting_consent_required') {
+        setConsentReq({ attestation: d.attestation, message: d.message }); return
+      }
+      flash(setErr, (typeof d === 'string' ? d : '') || 'Could not enable recruiting.')
+    }
   }
   async function disable() {
     if (!confirm('Turn off this player’s public recruiting profile? The link will stop working.')) return
@@ -134,7 +148,18 @@ export default function RecruitingPage() {
                     {!canManage ? (
                       <p className="text-sm text-gray-500">You don&apos;t have permission to manage recruiting.</p>
                     ) : !profile.recruiting_enabled ? (
-                      <button onClick={enable} className="btn-primary flex items-center gap-2"><Star size={15} /> Enable recruiting profile</button>
+                      consentReq ? (
+                        <div className="space-y-2 border border-brand-500/30 rounded p-3 bg-brand-500/5">
+                          <p className="text-sm text-gray-300">{consentReq.message}</p>
+                          <label className="flex items-start gap-2 text-xs text-gray-400">
+                            <input type="checkbox" className="mt-0.5" checked={consentChecked} onChange={e => setConsentChecked(e.target.checked)} />
+                            <span>{consentReq.attestation}</span>
+                          </label>
+                          <button onClick={() => enable(true)} disabled={!consentChecked} className="btn-primary flex items-center gap-2 disabled:opacity-40"><Star size={15} /> Enable &amp; publish</button>
+                        </div>
+                      ) : (
+                        <button onClick={() => enable()} className="btn-primary flex items-center gap-2"><Star size={15} /> Enable recruiting profile</button>
+                      )
                     ) : (
                       <div className="space-y-3">
                         <div>

@@ -100,6 +100,41 @@ def test_recruiting_opt_in_required_per_player():
     assert exc.value.status_code == 403
 
 
+def _consentable_player(**kw):
+    return _player(recruiting_enabled=False, recruiting_token=None,
+                   recruiting_consent_at=None, recruiting_consent_by=None,
+                   recruiting_consent_version=None, **kw)
+
+
+def test_enable_requires_disclosure_consent_when_flag_on(monkeypatch, audit):
+    # #17: with the gate on, minting a link without consent is refused.
+    monkeypatch.setattr(rec.settings, "RECRUITING_CONSENT_ENABLED", True)
+    p = _consentable_player()
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(rec.enable_recruiting("p1", rec.EnableIn(), coach=_coach(), db=_FakeDB([_Result(p)])))
+    assert exc.value.status_code == 403
+    assert exc.value.detail["code"] == "recruiting_consent_required"
+    assert p.recruiting_enabled is False   # not minted
+
+
+def test_enable_with_consent_records_and_proceeds(monkeypatch, audit):
+    monkeypatch.setattr(rec.settings, "RECRUITING_CONSENT_ENABLED", True)
+    p = _consentable_player()
+    out = asyncio.run(rec.enable_recruiting(
+        "p1", rec.EnableIn(disclosure_consent=True), coach=_coach(), db=_FakeDB([_Result(p)])))
+    assert out["ok"] is True and p.recruiting_enabled is True
+    assert p.recruiting_consent_at is not None
+    assert p.recruiting_consent_version == rec.RECRUITING_DIRECTORY_VERSION
+    assert p.recruiting_consent_by == "c1"
+
+
+def test_enable_gate_off_by_default_no_consent_needed(audit):
+    # Flag defaults off -> existing behavior, enabling works without consent.
+    p = _consentable_player()
+    out = asyncio.run(rec.enable_recruiting("p1", rec.EnableIn(), coach=_coach(), db=_FakeDB([_Result(p)])))
+    assert out["ok"] is True and p.recruiting_enabled is True
+
+
 def test_send_to_scout_after_enable_ok(audit):
     p = _player(recruiting_enabled=True, recruiting_token="tok")
     out = asyncio.run(rec.send_to_scout("p1", rec.SendIn(scout_email="scout@school.edu"),

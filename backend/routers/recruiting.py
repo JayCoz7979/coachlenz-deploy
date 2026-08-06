@@ -28,6 +28,8 @@ from backend.services.email_service import send_recruiting_profile_email
 from backend.services.player_stats import stat_line_for, top_play_types
 from backend.services.playback import clip_playback
 from backend.services.agent_log import log_agent_action
+from backend.services.legal import RECRUITING_DIRECTORY_VERSION, RECRUITING_DIRECTORY_ATTESTATION
+from backend.config import settings
 from backend.routers.roster import team_season_events
 
 router = APIRouter(prefix="/recruiting", tags=["recruiting"])
@@ -52,6 +54,7 @@ def clamp_recruiting_days(days) -> int:
 
 class EnableIn(BaseModel):
     expires_in_days: int = RECRUIT_DEFAULT_DAYS
+    disclosure_consent: bool = False  # #17: coach affirms authority to publish this athlete's profile
 
 
 class MarkIn(BaseModel):
@@ -103,6 +106,25 @@ async def enable_recruiting(player_id: str, body: EnableIn, coach: User = _requi
                             db: AsyncSession = Depends(get_db)):
     """Opt this player into the Recruiting Board and (re)issue a share link."""
     p = await _player(player_id, coach.organization_id, db)
+    # #17 disclosure-consent gate (flag-gated). Minting a public link publishes a
+    # minor's identity to third parties, a distinct authorization from the
+    # student_data COLLECTION attestation. Require the coach to accept the directory
+    # disclosure for THIS player before a link is minted. Consent already on record
+    # at the current version satisfies it (re-enabling later won't re-prompt).
+    if settings.RECRUITING_CONSENT_ENABLED:
+        has_consent = (p.recruiting_consent_at is not None
+                       and p.recruiting_consent_version == RECRUITING_DIRECTORY_VERSION)
+        if not has_consent and not body.disclosure_consent:
+            raise HTTPException(status_code=403, detail={
+                "code": "recruiting_consent_required",
+                "message": "Confirm you're authorized to publish this athlete's recruiting profile before enabling the link.",
+                "attestation": RECRUITING_DIRECTORY_ATTESTATION,
+                "version": RECRUITING_DIRECTORY_VERSION,
+            })
+        if not has_consent:
+            p.recruiting_consent_at = datetime.utcnow()
+            p.recruiting_consent_by = coach.id
+            p.recruiting_consent_version = RECRUITING_DIRECTORY_VERSION
     days = clamp_recruiting_days(body.expires_in_days)
     p.recruiting_enabled = True
     if not p.recruiting_token:

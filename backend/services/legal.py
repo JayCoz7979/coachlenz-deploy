@@ -19,12 +19,26 @@ from backend.models.legal import LegalAcceptance
 TERMS_VERSION = "2026-07-31-draft"
 PRIVACY_VERSION = "2026-07-31-draft"
 STUDENT_DATA_VERSION = "2026-07-31-draft"
+RECRUITING_DIRECTORY_VERSION = "2026-08-05-draft"
 
 DOCUMENT_VERSIONS = {
     "terms": TERMS_VERSION,
     "privacy": PRIVACY_VERSION,
     "student_data": STUDENT_DATA_VERSION,
+    "recruiting_directory": RECRUITING_DIRECTORY_VERSION,
 }
+
+# The disclosure a coach makes before publishing a player's recruiting profile
+# (name + film + stats) to third parties. Distinct from STUDENT_DATA_ATTESTATION,
+# which authorizes COLLECTION, not public/third-party disclosure. Placeholder copy
+# for the attorney to finalize; bump RECRUITING_DIRECTORY_VERSION when it changes.
+RECRUITING_DIRECTORY_ATTESTATION = (
+    "I am authorized to publish this student-athlete's recruiting information "
+    "(name, film, and statistics) to college recruiters and other third parties, "
+    "and the disclosure of this directory information is permitted under FERPA "
+    "(with any required parental notice/opt-out honored) or by verifiable parental "
+    "consent for athletes under 13."
+)
 
 # The representation the org makes before entering student-athlete data. Placeholder
 # copy for the attorney to finalize; bump STUDENT_DATA_VERSION when it changes.

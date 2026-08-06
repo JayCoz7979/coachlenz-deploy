@@ -30,6 +30,12 @@ class RosterPlayer(Base):
     recruiting_enabled = Column(Boolean, nullable=False, default=False)
     recruiting_token = Column(String, unique=True)
     recruiting_expires_at = Column(DateTime(timezone=True))
+    # #17: directory-disclosure consent captured when a public recruiting link is
+    # minted (publishing a minor's identity to third parties — distinct from the
+    # student_data collection attestation).
+    recruiting_consent_at = Column(DateTime(timezone=True))
+    recruiting_consent_by = Column(UUID(as_uuid=True))
+    recruiting_consent_version = Column(String)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
