@@ -56,6 +56,7 @@ def test_enterprise_checkout_returns_sales_assisted_message():
     with pytest.raises(HTTPException) as exc:
         asyncio.run(create_checkout(
             body=body,
+            request=SimpleNamespace(),  # contact-sales raise happens before request is read
             user=SimpleNamespace(email="c@x.com"),
             org=SimpleNamespace(id="o1", name="Org", stripe_customer_id="cus_1"),
             db=None,
