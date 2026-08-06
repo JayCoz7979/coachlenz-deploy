@@ -7,6 +7,12 @@ from types import SimpleNamespace
 import backend.routers.ai_detect as ai
 
 
+def _aret(v):
+    async def _f(*_a, **_k):
+        return v
+    return _f
+
+
 class _Result:
     def __init__(self, v):
         self.v = v
@@ -41,7 +47,7 @@ class _FakeDB:
 
 
 def test_rerun_returns_needs_confirmation_when_flag_on(monkeypatch):
-    monkeypatch.setattr(ai.settings, "RERUN_CONFIRMATION_ENABLED", True)
+    monkeypatch.setattr(ai.feature_flags, "is_enabled", _aret(True))
     monkeypatch.setattr(ai, "assert_sport_allowed", lambda *a, **k: None)
     monkeypatch.setattr(ai, "assert_ready_to_analyze", lambda *a, **k: None)
     game = SimpleNamespace(id="g1", organization_id="o1", status="ready", sport="football", title="W3")
@@ -78,4 +84,4 @@ def test_notify_team_noop_when_solo_coach():
 def test_guardrail_is_flag_gated():
     import inspect
     src = inspect.getsource(ai.trigger_auto_detect)
-    assert "RERUN_CONFIRMATION_ENABLED" in src and "needs_confirmation" in src
+    assert 'is_enabled(db, "rerun_confirmation")' in src and "needs_confirmation" in src

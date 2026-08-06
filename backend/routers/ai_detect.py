@@ -15,6 +15,7 @@ from backend.services.sports import assert_sport_allowed
 from backend.services.entitlements import assert_ready_to_analyze, assert_feature_allowed
 from backend.models.usage import AnalysisUsage, CoachUsageLimit
 from backend.models.comms import Notification
+from backend.services import feature_flags
 from backend.services.usage import month_start, over_limit
 from backend.utils.timeutils import to_naive_utc
 
@@ -395,7 +396,7 @@ async def trigger_auto_detect(
     # frontend confirm dialog is live. "Already analyzed" = a prior completed
     # ai_detect job for this game.
     is_rerun = False
-    if settings.RERUN_CONFIRMATION_ENABLED and _is_billable_run(dry_run, test):
+    if _is_billable_run(dry_run, test) and await feature_flags.is_enabled(db, "rerun_confirmation"):
         prior = await db.execute(
             select(Job.id).where(
                 Job.job_type == "ai_detect",

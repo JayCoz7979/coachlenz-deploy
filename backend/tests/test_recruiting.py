@@ -106,9 +106,15 @@ def _consentable_player(**kw):
                    recruiting_consent_version=None, **kw)
 
 
+def _aret(v):
+    async def _f(*_a, **_k):
+        return v
+    return _f
+
+
 def test_enable_requires_disclosure_consent_when_flag_on(monkeypatch, audit):
     # #17: with the gate on, minting a link without consent is refused.
-    monkeypatch.setattr(rec.settings, "RECRUITING_CONSENT_ENABLED", True)
+    monkeypatch.setattr(rec.feature_flags, "is_enabled", _aret(True))
     p = _consentable_player()
     with pytest.raises(HTTPException) as exc:
         asyncio.run(rec.enable_recruiting("p1", rec.EnableIn(), coach=_coach(), db=_FakeDB([_Result(p)])))
@@ -118,7 +124,7 @@ def test_enable_requires_disclosure_consent_when_flag_on(monkeypatch, audit):
 
 
 def test_enable_with_consent_records_and_proceeds(monkeypatch, audit):
-    monkeypatch.setattr(rec.settings, "RECRUITING_CONSENT_ENABLED", True)
+    monkeypatch.setattr(rec.feature_flags, "is_enabled", _aret(True))
     p = _consentable_player()
     out = asyncio.run(rec.enable_recruiting(
         "p1", rec.EnableIn(disclosure_consent=True), coach=_coach(), db=_FakeDB([_Result(p)])))
@@ -128,8 +134,9 @@ def test_enable_with_consent_records_and_proceeds(monkeypatch, audit):
     assert p.recruiting_consent_by == "c1"
 
 
-def test_enable_gate_off_by_default_no_consent_needed(audit):
-    # Flag defaults off -> existing behavior, enabling works without consent.
+def test_enable_gate_off_by_default_no_consent_needed(monkeypatch, audit):
+    # Flag off -> existing behavior, enabling works without consent.
+    monkeypatch.setattr(rec.feature_flags, "is_enabled", _aret(False))
     p = _consentable_player()
     out = asyncio.run(rec.enable_recruiting("p1", rec.EnableIn(), coach=_coach(), db=_FakeDB([_Result(p)])))
     assert out["ok"] is True and p.recruiting_enabled is True
