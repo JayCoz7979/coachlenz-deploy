@@ -29,7 +29,7 @@ from backend.services.player_stats import stat_line_for, top_play_types
 from backend.services.playback import clip_playback
 from backend.services.agent_log import log_agent_action
 from backend.services.legal import RECRUITING_DIRECTORY_VERSION, RECRUITING_DIRECTORY_ATTESTATION
-from backend.config import settings
+from backend.services import feature_flags
 from backend.routers.roster import team_season_events
 
 router = APIRouter(prefix="/recruiting", tags=["recruiting"])
@@ -111,7 +111,7 @@ async def enable_recruiting(player_id: str, body: EnableIn, coach: User = _requi
     # student_data COLLECTION attestation. Require the coach to accept the directory
     # disclosure for THIS player before a link is minted. Consent already on record
     # at the current version satisfies it (re-enabling later won't re-prompt).
-    if settings.RECRUITING_CONSENT_ENABLED:
+    if await feature_flags.is_enabled(db, "recruiting_consent"):
         has_consent = (p.recruiting_consent_at is not None
                        and p.recruiting_consent_version == RECRUITING_DIRECTORY_VERSION)
         if not has_consent and not body.disclosure_consent:

@@ -9,9 +9,31 @@ from backend.models.organization import Organization
 from backend.models.abuse import RiskFlag, AuditLog
 from backend.models.teams_of_month import TeamSubmission, FeaturedTeam
 from backend.services.auth import require_admin
+from backend.services import feature_flags
 from datetime import datetime
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+@router.get("/feature-flags")
+async def get_feature_flags(user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Every togglable feature with its current effective state (override or default)."""
+    return {"flags": await feature_flags.list_flags(db)}
+
+
+class FlagUpdate(BaseModel):
+    enabled: bool
+
+
+@router.put("/feature-flags/{key}")
+async def set_feature_flag(key: str, body: FlagUpdate, user: User = Depends(require_admin),
+                           db: AsyncSession = Depends(get_db)):
+    """Toggle a feature at runtime (no redeploy). Writes a DB override of the env default."""
+    try:
+        await feature_flags.set_flag(db, key, body.enabled, user.id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Unknown feature flag")
+    return {"ok": True, "key": key, "enabled": body.enabled}
 
 @router.get("/orgs")
 async def list_orgs(user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
