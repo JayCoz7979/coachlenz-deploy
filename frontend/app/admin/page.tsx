@@ -4,7 +4,7 @@ import Sidebar from '@/components/layout/Sidebar'
 import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
 import { useRouter } from 'next/navigation'
-import { ShieldCheck, Users, AlertTriangle, Trash2 } from 'lucide-react'
+import { ShieldCheck, Users, AlertTriangle, Trash2, ToggleLeft, ToggleRight } from 'lucide-react'
 
 export default function AdminPage() {
   const { user, isLoading, fetchMe } = useAuth()
@@ -12,7 +12,8 @@ export default function AdminPage() {
   const [orgs, setOrgs] = useState<any[]>([])
   const [stats, setStats] = useState<any>(null)
   const [flags, setFlags] = useState<any[]>([])
-  const [tab, setTab] = useState<'orgs'|'flags'|'stats'>('orgs')
+  const [features, setFeatures] = useState<any[]>([])
+  const [tab, setTab] = useState<'orgs'|'features'|'flags'|'stats'>('orgs')
 
   useEffect(() => { fetchMe() }, [])
   useEffect(() => {
@@ -24,7 +25,17 @@ export default function AdminPage() {
     api.get('/admin/orgs').then(r => setOrgs(r.data))
     api.get('/admin/stats').then(r => setStats(r.data))
     api.get('/admin/risk-flags').then(r => setFlags(r.data))
+    api.get('/admin/feature-flags').then(r => setFeatures(r.data.flags || [])).catch(() => {})
   }, [user])
+
+  async function toggleFeature(key: string, enabled: boolean) {
+    try {
+      await api.put(`/admin/feature-flags/${key}`, { enabled: !enabled })
+      setFeatures(fs => fs.map(f => f.key === key ? { ...f, enabled: !enabled, source: 'override' } : f))
+    } catch (e: any) {
+      alert(e.response?.data?.detail || 'Could not toggle feature.')
+    }
+  }
 
   async function toggleTenure(orgId: string, current: boolean) {
     await api.patch(`/admin/orgs/${orgId}`, { has_coach_tenure_access: !current })
@@ -48,8 +59,8 @@ export default function AdminPage() {
         <div className="max-w-6xl mx-auto">
           <h2 className="text-2xl font-bold mb-6 flex items-center gap-3"><ShieldCheck className="text-brand-400" /> Admin Panel</h2>
           <div className="flex gap-2 mb-6">
-            {(['orgs','flags','stats'] as const).map(t => (
-              <button key={t} onClick={() => setTab(t)} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === t ? 'bg-brand-500 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-100'}`}>{t === 'orgs' ? 'Organizations' : t === 'flags' ? 'Risk Flags' : 'Stats'}</button>
+            {(['orgs','features','flags','stats'] as const).map(t => (
+              <button key={t} onClick={() => setTab(t)} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === t ? 'bg-brand-500 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-100'}`}>{t === 'orgs' ? 'Organizations' : t === 'features' ? 'Feature Toggles' : t === 'flags' ? 'Risk Flags' : 'Stats'}</button>
             ))}
           </div>
           {tab === 'stats' && stats && (
@@ -80,6 +91,34 @@ export default function AdminPage() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+          {tab === 'features' && (
+            <div className="space-y-6">
+              <p className="text-sm text-gray-400">Toggle features on or off live. Changes take effect within ~20 seconds, no redeploy. A toggle overrides the shipped default; features you never touch stay on their default.</p>
+              {Array.from(new Set(features.map(f => f.category))).map(cat => (
+                <div key={cat}>
+                  <h3 className="text-xs uppercase tracking-wide text-gray-500 mb-2">{cat}</h3>
+                  <div className="space-y-2">
+                    {features.filter(f => f.category === cat).map(f => (
+                      <div key={f.key} className="card flex items-start gap-4">
+                        <button onClick={() => toggleFeature(f.key, f.enabled)} title={f.enabled ? 'Turn off' : 'Turn on'} className="mt-0.5 shrink-0">
+                          {f.enabled ? <ToggleRight size={34} className="text-brand-400" /> : <ToggleLeft size={34} className="text-gray-600" />}
+                        </button>
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium">{f.label}</span>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded ${f.enabled ? 'bg-brand-500/15 text-brand-400' : 'bg-gray-700 text-gray-400'}`}>{f.enabled ? 'ON' : 'OFF'}</span>
+                            {f.source === 'override' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-700 text-gray-400" title="Manually overriding the shipped default">override</span>}
+                          </div>
+                          <div className="text-sm text-gray-400 mt-0.5">{f.description}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              {features.length === 0 && <div className="text-center text-gray-500 py-12">No feature toggles available.</div>}
             </div>
           )}
           {tab === 'flags' && (
