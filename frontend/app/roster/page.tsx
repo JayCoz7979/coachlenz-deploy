@@ -6,6 +6,7 @@ import Sidebar from '@/components/layout/Sidebar'
 import { useAuth, usePermission } from '@/lib/auth'
 import api from '@/lib/api'
 import { Plus, Trash2, Upload, Copy, Users, BarChart3 } from 'lucide-react'
+import ConfirmModal from '@/components/ConfirmModal'
 
 interface Team { id: string; name: string; sport: string; season: string | null }
 interface Player {
@@ -38,6 +39,8 @@ export default function RosterPage() {
   // Set when the backend requires the one-time student-data (COPPA) attestation
   // before roster data can be entered. `retry` re-runs the blocked action.
   const [consent, setConsent] = useState<{ attestation: string; retry: () => Promise<void> } | null>(null)
+  const [playerToRemove, setPlayerToRemove] = useState<{ id: string; name: string } | null>(null)
+  const [removing, setRemoving] = useState(false)
 
   useEffect(() => { fetchMe() }, [])
   useEffect(() => { if (!isLoading && !user) router.push('/login') }, [isLoading, user])
@@ -107,9 +110,17 @@ export default function RosterPage() {
     try { await doUploadCsv() } catch (e: any) { onActionError(e, 'CSV import failed.', doUploadCsv) }
   }
 
-  async function removePlayer(pid: string) {
-    if (!confirm('Remove this player from the roster?')) return
-    try { await api.delete(`/rosters/${teamId}/players/${pid}`); await loadRoster(teamId) } catch {}
+  async function removePlayer() {
+    if (!playerToRemove) return
+    setRemoving(true)
+    try {
+      await api.delete(`/rosters/${teamId}/players/${playerToRemove.id}`)
+      await loadRoster(teamId)
+    } catch {}
+    finally {
+      setRemoving(false)
+      setPlayerToRemove(null)
+    }
   }
 
   async function doClone() {
@@ -210,7 +221,7 @@ export default function RosterPage() {
                         <td className="py-2 text-gray-400">{p.position || '—'}</td>
                         <td className="py-2 text-gray-400">{p.grade_year || '—'}</td>
                         <td className="py-2 text-gray-400">{[p.height, p.weight ? `${p.weight} lb` : null].filter(Boolean).join(' / ') || '—'}</td>
-                        <td className="py-2 text-right">{canManage && <button onClick={() => removePlayer(p.id)} className="text-gray-500 hover:text-red-400"><Trash2 size={15} /></button>}</td>
+                        <td className="py-2 text-right">{canManage && <button onClick={() => setPlayerToRemove({ id: p.id, name: `#${p.jersey_number} ${p.first_name} ${p.last_name || ''}`.trim() })} className="text-gray-500 hover:text-red-400"><Trash2 size={15} /></button>}</td>
                       </tr>
                     ))}
                     {players.length === 0 && <tr><td colSpan={5} className="py-6 text-center text-gray-500">No players yet{canManage ? '. Add one or import a CSV.' : '.'}</td></tr>}
@@ -265,6 +276,15 @@ export default function RosterPage() {
             </>
           )}
         </div>
+        <ConfirmModal
+          open={!!playerToRemove}
+          title="Remove player?"
+          message={playerToRemove ? `Remove ${playerToRemove.name} from the roster? This deletes the player record.` : ''}
+          confirmLabel="Remove player"
+          busy={removing}
+          onConfirm={removePlayer}
+          onCancel={() => setPlayerToRemove(null)}
+        />
       </main>
     </div>
   )
