@@ -1564,14 +1564,23 @@ export default function GamePage() {
 
   useEffect(() => () => { if (detectPollRef.current) clearInterval(detectPollRef.current) }, [])
 
-  const handleAutoDetect = async (dryRun = false, mode: 'fast' | 'deep' = 'fast', test = false) => {
+  const handleAutoDetect = async (dryRun = false, mode: 'fast' | 'deep' = 'fast', test = false, confirmRerun = false) => {
     try {
       setAgentLog([])
       const qs = new URLSearchParams()
       if (dryRun) qs.set('dry_run', 'true')
       qs.set('mode', mode)
       if (test) qs.set('test', 'true')
-      await api.post(`/games/${id}/auto-detect?${qs.toString()}`)
+      if (confirmRerun) qs.set('confirm_rerun', 'true')
+      const res = await api.post(`/games/${id}/auto-detect?${qs.toString()}`)
+      // Duplicate-run financial control (#4b): the backend asks the coach to confirm
+      // a 2nd analysis on already-analyzed film before charging + notifying the team.
+      if (res?.data?.status === 'needs_confirmation') {
+        if (window.confirm(res.data.message || 'This film was already analyzed. Run it again and use another analysis?')) {
+          return handleAutoDetect(dryRun, mode, test, true)
+        }
+        return
+      }
       const r = await api.get(`/games/${id}/auto-detect/status`)
       setDetectStatus(r.data)
       startDetectPoll()
