@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
 import { ChevronLeft, Tag, Play, Pause, Trash2, Clock, FileText, Loader2, CheckCircle, AlertCircle, Zap, Pencil, Check, X, Activity, TrendingUp, Users, Film, SkipForward, SkipBack, Star, StickyNote } from 'lucide-react'
 import Link from 'next/link'
+import ConfirmModal from '@/components/ConfirmModal'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface AgentLogEntry {
@@ -1564,6 +1565,7 @@ export default function GamePage() {
 
   useEffect(() => () => { if (detectPollRef.current) clearInterval(detectPollRef.current) }, [])
 
+  const [confirmReq, setConfirmReq] = useState<{ title: string; message: string; confirmLabel?: string; danger?: boolean; onConfirm: () => void } | null>(null)
   const handleAutoDetect = async (dryRun = false, mode: 'fast' | 'deep' = 'fast', test = false, confirmRerun = false) => {
     try {
       setAgentLog([])
@@ -1576,9 +1578,13 @@ export default function GamePage() {
       // Duplicate-run financial control (#4b): the backend asks the coach to confirm
       // a 2nd analysis on already-analyzed film before charging + notifying the team.
       if (res?.data?.status === 'needs_confirmation') {
-        if (window.confirm(res.data.message || 'This film was already analyzed. Run it again and use another analysis?')) {
-          return handleAutoDetect(dryRun, mode, test, true)
-        }
+        setConfirmReq({
+          title: 'Run another analysis?',
+          message: res.data.message || 'This film was already analyzed. Run it again and use another analysis?',
+          confirmLabel: 'Run analysis',
+          danger: false,
+          onConfirm: () => { setConfirmReq(null); handleAutoDetect(dryRun, mode, test, true) },
+        })
         return
       }
       const r = await api.get(`/games/${id}/auto-detect/status`)
@@ -1626,20 +1632,25 @@ export default function GamePage() {
   }
 
   const [deletingFilm, setDeletingFilm] = useState(false)
-  const handleDeleteFilm = async () => {
+  const handleDeleteFilm = () => {
     if (!game) return
-    const ok = window.confirm(
-      `Delete "${game.title}"?\n\nThis permanently removes the film, every tagged and AI-detected play, and any report built from it. This cannot be undone.`
-    )
-    if (!ok) return
-    setDeletingFilm(true)
-    try {
-      await api.delete(`/games/${id}`)
-      router.push('/games')
-    } catch {
-      showToast('Could not delete this film — please try again.')
-      setDeletingFilm(false)
-    }
+    setConfirmReq({
+      title: 'Delete film?',
+      message: `Delete "${game.title}"?\n\nThis permanently removes the film, every tagged and AI-detected play, and any report built from it. This cannot be undone.`,
+      confirmLabel: 'Delete film',
+      danger: true,
+      onConfirm: async () => {
+        setDeletingFilm(true)
+        try {
+          await api.delete(`/games/${id}`)
+          router.push('/games')
+        } catch {
+          showToast('Could not delete this film — please try again.')
+          setDeletingFilm(false)
+          setConfirmReq(null)
+        }
+      },
+    })
   }
 
   const handleUpdate = async (eventId: string, data: Partial<TaggedEvent>) => {
@@ -2085,6 +2096,16 @@ export default function GamePage() {
             </div>
           </div>
         </div>
+        <ConfirmModal
+          open={!!confirmReq}
+          title={confirmReq?.title || ''}
+          message={confirmReq?.message || ''}
+          confirmLabel={confirmReq?.confirmLabel}
+          danger={confirmReq?.danger ?? true}
+          busy={deletingFilm}
+          onConfirm={() => confirmReq?.onConfirm()}
+          onCancel={() => setConfirmReq(null)}
+        />
       </main>
     </div>
   )

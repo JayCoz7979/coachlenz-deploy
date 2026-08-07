@@ -6,6 +6,7 @@ import Sidebar from '@/components/layout/Sidebar'
 import { useAuth, usePermission } from '@/lib/auth'
 import api from '@/lib/api'
 import { Star, Trash2, Copy, Send, Plus } from 'lucide-react'
+import ConfirmModal from '@/components/ConfirmModal'
 
 interface Team { id: string; name: string; sport: string; season: string | null }
 interface Player { id: string; jersey_number: string; first_name: string; last_name: string | null; position: string | null }
@@ -40,6 +41,7 @@ export default function RecruitingPage() {
   // #17: when the backend requires directory-disclosure consent, hold the
   // attestation to show a checkbox before the link can be minted.
   const [consentReq, setConsentReq] = useState<{ attestation: string; message: string } | null>(null)
+  const [confirmReq, setConfirmReq] = useState<{ title: string; message: string; confirmLabel?: string; danger?: boolean; onConfirm: () => void } | null>(null)
   const [consentChecked, setConsentChecked] = useState(false)
 
   useEffect(() => { fetchMe() }, [])
@@ -79,9 +81,16 @@ export default function RecruitingPage() {
       flash(setErr, (typeof d === 'string' ? d : '') || 'Could not enable recruiting.')
     }
   }
-  async function disable() {
-    if (!confirm('Turn off this player’s public recruiting profile? The link will stop working.')) return
-    try { await api.delete(`/recruiting/players/${playerId}`); await loadProfile(playerId) } catch {}
+  function disable() {
+    setConfirmReq({
+      title: 'Turn off public profile?',
+      message: 'Turn off this player’s public recruiting profile? The share link will stop working.',
+      confirmLabel: 'Turn off',
+      onConfirm: async () => {
+        try { await api.delete(`/recruiting/players/${playerId}`); await loadProfile(playerId) } catch {}
+        setConfirmReq(null)
+      },
+    })
   }
   async function sendScout() {
     if (!scoutEmail) return
@@ -229,6 +238,15 @@ export default function RecruitingPage() {
             </>
           )}
         </div>
+        <ConfirmModal
+          open={!!confirmReq}
+          title={confirmReq?.title || ''}
+          message={confirmReq?.message || ''}
+          confirmLabel={confirmReq?.confirmLabel}
+          danger={confirmReq?.danger ?? true}
+          onConfirm={() => confirmReq?.onConfirm()}
+          onCancel={() => setConfirmReq(null)}
+        />
       </main>
     </div>
   )

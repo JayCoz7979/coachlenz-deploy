@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
 import Link from 'next/link'
 import { ChevronLeft, Loader2, FileText, AlertTriangle, TrendingUp, Shield, Zap, Target, Printer, Download, ChevronDown, Share2, Star, Trash2 } from 'lucide-react'
+import ConfirmModal from '@/components/ConfirmModal'
 import FieldHeatMap from '@/components/report/FieldHeatMap'
 import BasketballShotChart from '@/components/report/BasketballShotChart'
 import LiveShotChart from '@/components/report/LiveShotChart'
@@ -165,6 +166,7 @@ export default function ReportPage() {
   const [report, setReport] = useState<Report | null>(null)
   const [polling, setPolling] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [confirmReq, setConfirmReq] = useState<{ title: string; message: string; confirmLabel?: string; onConfirm: () => void } | null>(null)
   const [retrying, setRetrying] = useState(false)
   const [deleting, setDeleting] = useState(false)
   // Still generating = explicit 'generating' status, or (older payloads) no result yet
@@ -542,12 +544,30 @@ export default function ReportPage() {
     finally { setRetrying(false) }
   }
 
-  const handleDeleteReport = async () => {
-    if (!window.confirm('Delete this report permanently? This cannot be undone.')) return
-    setDeleting(true)
-    try { await api.delete(`/reports/${id}`); router.push('/reports') }
-    catch { setDeleting(false) }
+  const handleDeleteReport = () => {
+    setConfirmReq({
+      title: 'Delete report?',
+      message: 'Delete this report permanently? This cannot be undone.',
+      confirmLabel: 'Delete report',
+      onConfirm: async () => {
+        setDeleting(true)
+        try { await api.delete(`/reports/${id}`); router.push('/reports') }
+        catch { setDeleting(false); setConfirmReq(null) }
+      },
+    })
   }
+
+  const confirmModal = (
+    <ConfirmModal
+      open={!!confirmReq}
+      title={confirmReq?.title || ''}
+      message={confirmReq?.message || ''}
+      confirmLabel={confirmReq?.confirmLabel}
+      busy={deleting}
+      onConfirm={() => confirmReq?.onConfirm()}
+      onCancel={() => setConfirmReq(null)}
+    />
+  )
 
   if (report?.status === 'failed') {
     return (
@@ -569,6 +589,7 @@ export default function ReportPage() {
               Delete report
             </button>
           </div>
+          {confirmModal}
         </main>
       </div>
     )
@@ -916,6 +937,7 @@ export default function ReportPage() {
           {/* Ask the Film Assistant — report-scoped chat, only on a finished report */}
           {report.generated_at && <ReportChat reportId={report.id} />}
         </div>
+        {confirmModal}
       </main>
     </div>
   )
