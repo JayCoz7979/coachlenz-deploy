@@ -5,6 +5,7 @@ import Sidebar from '@/components/layout/Sidebar'
 import { useAuth, usePermission } from '@/lib/auth'
 import api from '@/lib/api'
 import { UserPlus, UserX, UserCheck } from 'lucide-react'
+import ConfirmModal from '@/components/ConfirmModal'
 
 interface Staff { id: string; name: string; email: string; role: string; is_active: boolean }
 
@@ -26,6 +27,7 @@ export default function StaffPage() {
   const canInvite = usePermission('can_invite_staff')
 
   const [staff, setStaff] = useState<Staff[]>([])
+  const [confirmReq, setConfirmReq] = useState<{ title: string; message: string; confirmLabel?: string; danger?: boolean; onConfirm: () => void } | null>(null)
   const [form, setForm] = useState({ email: '', name: '', role: 'analyst' })
   const [showForm, setShowForm] = useState(false)
   const [msg, setMsg] = useState('')
@@ -53,9 +55,16 @@ export default function StaffPage() {
     try { await api.post(`/staff/${id}/role`, { role }); await load() }
     catch (e: any) { flash(setErr, e.response?.data?.detail || 'Could not change role.') }
   }
-  async function revoke(id: string) {
-    if (!confirm('Revoke this staff member’s access? Their sessions end immediately.')) return
-    try { await api.post(`/staff/${id}/revoke`); await load() } catch (e: any) { flash(setErr, e.response?.data?.detail || 'Could not revoke.') }
+  function revoke(id: string) {
+    setConfirmReq({
+      title: 'Revoke access?',
+      message: 'Revoke this staff member’s access? Their sessions end immediately.',
+      confirmLabel: 'Revoke access',
+      onConfirm: async () => {
+        setConfirmReq(null)
+        try { await api.post(`/staff/${id}/revoke`); await load() } catch (e: any) { flash(setErr, e.response?.data?.detail || 'Could not revoke.') }
+      },
+    })
   }
   async function reactivate(id: string) {
     try { await api.post(`/staff/${id}/reactivate`); await load() } catch {}
@@ -127,6 +136,15 @@ export default function StaffPage() {
             </table>
           </div>
         </div>
+        <ConfirmModal
+          open={!!confirmReq}
+          title={confirmReq?.title || ''}
+          message={confirmReq?.message || ''}
+          confirmLabel={confirmReq?.confirmLabel}
+          danger={confirmReq?.danger ?? true}
+          onConfirm={() => confirmReq?.onConfirm()}
+          onCancel={() => setConfirmReq(null)}
+        />
       </main>
     </div>
   )
