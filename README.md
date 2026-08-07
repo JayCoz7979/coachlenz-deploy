@@ -2,6 +2,8 @@
 
 Sports coaching admin platform built by Cosby AI Solutions, LLC.
 
+Recent changes are tracked in [CHANGELOG.md](CHANGELOG.md).
+
 ## Stack
 - **Frontend:** Next.js 14, TypeScript, Tailwind CSS
 - **Backend:** FastAPI (Python 3.11)
