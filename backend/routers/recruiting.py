@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 import secrets
 
 from backend.models.base import get_db
+from backend.models.rls_engine import get_db_privileged  # public recruit profile reads across orgs by token
 from backend.models.user import User
 from backend.models.organization import Organization
 from backend.models.roster import RosterPlayer
@@ -238,7 +239,7 @@ async def send_to_scout(player_id: str, body: SendIn, coach: User = _require_man
 
 
 @router.get("/share/{token}")
-async def public_profile(token: str, db: AsyncSession = Depends(get_db)):
+async def public_profile(token: str, db: AsyncSession = Depends(get_db_privileged)):
     """PUBLIC, no-login recruiting profile. Token- and expiry-gated. Shows the
     player's name/position/grade + highlights — opt-in per player by a coach."""
     res = await db.execute(select(RosterPlayer).where(RosterPlayer.recruiting_token == token))

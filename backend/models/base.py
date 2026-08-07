@@ -19,7 +19,16 @@ class Base(DeclarativeBase):
     pass
 
 async def get_db():
-    async with AsyncSessionLocal() as session:
+    # RLS backstop (Stage 3): ordinary org-scoped request handlers run on the
+    # restricted app_rls engine so Postgres RLS enforces org isolation even if a query
+    # forgets its organization_id filter (secure-by-default). DORMANT today —
+    # RestrictedSessionLocal IS the privileged engine unless BOTH settings.RLS_ENABLED
+    # and settings.DATABASE_URL_RESTRICTED are set, so this is a byte-for-byte no-op in
+    # prod and CI. The lazy import breaks the base<->rls_engine import cycle.
+    # Cross-org / bootstrap paths (auth bootstrap, public share links, the Stripe
+    # webhook, admin, workers) deliberately use get_db_privileged instead.
+    from backend.models.rls_engine import RestrictedSessionLocal
+    async with RestrictedSessionLocal() as session:
         yield session
 
 # Register the RLS org-context listener (dormant unless settings.RLS_ENABLED and
