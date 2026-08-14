@@ -209,6 +209,32 @@ export default function IntelPage() {
     )
   }
 
+  // The Film Intelligence engine (situational query on down/distance/hash/formation,
+  // formation lab, pre-snap tells) is a football construct. For other sports, show a
+  // clean pointer to where their analysis actually lives instead of football labels.
+  const intelSport = (report.sport || 'football').toLowerCase()
+  if (intelSport !== 'football' && intelSport !== 'flag_football') {
+    return (
+      <OSShell title="Film Intelligence">
+        <div style={{ textAlign: 'center', padding: '80px 16px', maxWidth: 480, margin: '0 auto' }}>
+          <div style={{ fontSize: 34, marginBottom: 12 }}>🔬</div>
+          <div style={{ fontFamily: 'var(--display)', fontSize: 16, fontWeight: 700, color: 'var(--text)', marginBottom: 8 }}>
+            Film Intelligence is built for football right now
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.7, marginBottom: 18 }}>
+            The situational query engine (down, distance, hash, formation) is football-specific.
+            Your {intelSport} breakdown lives in your full scout report and the tendency view.
+          </div>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+            <Link href="/reports" className="tag tg" style={{ padding: '7px 14px', fontSize: 12, textDecoration: 'none' }}>Open scout reports →</Link>
+            <Link href="/scout" className="tag tq" style={{ padding: '7px 14px', fontSize: 12, textDecoration: 'none' }}>Scout an opponent →</Link>
+          </div>
+        </div>
+        <div className="powered">Powered by <a href="https://cosbyaisolutions.com" target="_blank" rel="noreferrer">Cosby AI Solutions</a></div>
+      </OSShell>
+    )
+  }
+
   // -------- main -----------------------------------------------------------
   return (
     <OSShell title="Film Intelligence">

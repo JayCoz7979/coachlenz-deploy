@@ -134,6 +134,7 @@ export default function RosterPage() {
   }
 
   const currentTeam = teams.find(t => t.id === teamId)
+  const isBball = currentTeam?.sport === 'basketball'  // "Yards" is a football stat
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -203,7 +204,7 @@ export default function RosterPage() {
               {showCsv && canManage && (
                 <div className="card mb-6 space-y-3">
                   <label className="label">Paste CSV (columns: jersey_number, first_name, last_name, position, grade_year)</label>
-                  <textarea className="input font-mono text-xs" rows={5} value={csv} onChange={e => setCsv(e.target.value)} placeholder={'jersey_number,first_name,last_name,position,grade_year\n7,Cam,Newton,QB,2026'} />
+                  <textarea className="input font-mono text-xs" rows={5} value={csv} onChange={e => setCsv(e.target.value)} placeholder={'jersey_number,first_name,last_name,position,grade_year\n23,Jordan,Smith,G,2026'} />
                   <div className="flex gap-2"><button onClick={uploadCsv} className="btn-primary" disabled={!csv.trim()}>Import</button><button onClick={() => setShowCsv(false)} className="btn-secondary">Cancel</button></div>
                 </div>
               )}
@@ -251,7 +252,7 @@ export default function RosterPage() {
                       <thead><tr className="text-left text-gray-400 border-b border-gray-800">
                         <th className="py-2 w-12">#</th><th className="py-2">Name</th><th className="py-2">Pos</th>
                         <th className="py-2 text-right">Plays</th><th className="py-2 text-right">Primary</th>
-                        <th className="py-2 text-right">Yards</th><th className="py-2 text-right">Games</th>
+                        {!isBball && <th className="py-2 text-right">Yards</th>}<th className="py-2 text-right">Games</th>
                         <th className="py-2">Top plays</th>
                       </tr></thead>
                       <tbody>
@@ -262,7 +263,7 @@ export default function RosterPage() {
                             <td className="py-2 text-gray-400">{p.position || '—'}</td>
                             <td className="py-2 text-right tabular-nums">{p.stats.plays}</td>
                             <td className="py-2 text-right tabular-nums">{p.stats.primary_plays}</td>
-                            <td className="py-2 text-right tabular-nums">{p.stats.total_yards}</td>
+                            {!isBball && <td className="py-2 text-right tabular-nums">{p.stats.total_yards}</td>}
                             <td className="py-2 text-right tabular-nums">{p.stats.games}</td>
                             <td className="py-2 text-gray-400 text-xs">{p.top_play_types.map(t => `${t.play_type} ${t.count}`).join(', ') || '—'}</td>
                           </tr>

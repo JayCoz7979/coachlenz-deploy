@@ -1178,7 +1178,7 @@ function PlayersPanel({ gameId }: { gameId: string }) {
   )
 }
 
-function TendenciesPanel({ gameId }: { gameId: string }) {
+function TendenciesPanel({ gameId, sport }: { gameId: string; sport?: string }) {
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   useEffect(() => {
@@ -1189,6 +1189,23 @@ function TendenciesPanel({ gameId }: { gameId: string }) {
   if (loading) return <div style={{ textAlign: 'center', padding: 24 }}><Loader2 size={20} style={{ color: '#C9A84C', animation: 'spin 1s linear infinite' }} /></div>
   if (!data || !data.ready) {
     return <div style={{ fontSize: 12, color: '#7a7a6e', padding: 8 }}>{data?.reason || 'No tendencies yet. Break down the film first.'}</div>
+  }
+
+  // This inline panel is a football breakdown (run/pass, formations, down & distance).
+  // Basketball's breakdown (possession, turnovers, shot selection, pace, scoring zones)
+  // is a different shape and lives in the full scout report — point there instead of
+  // rendering football labels over basketball data.
+  if (sport === 'basketball') {
+    return (
+      <div style={{ fontSize: 12, color: '#ede9df', lineHeight: 1.6 }}>
+        <div style={{ fontWeight: 700, color: '#C9A84C', marginBottom: 8 }}>Basketball Breakdown</div>
+        <p style={{ color: '#a8a396', marginBottom: 10 }}>
+          Possession control, turnover profile, shot selection (2PT/3PT), pace, and the scoring-zone
+          heat map are built into the scouting report for this film — plus per-player intel.
+        </p>
+        <Link href="/reports" className="tag tg" style={{ padding: '6px 12px', fontSize: 11, textDecoration: 'none' }}>Open scout reports →</Link>
+      </div>
+    )
   }
 
   const off = data.offense || {}
@@ -1796,7 +1813,7 @@ export default function GamePage() {
                   <button onClick={() => handleAutoDetect(false, 'fast')} title="Quick single-pass re-run." style={{ background: 'none', border: 'none', color: '#7a7a6e', fontSize: 11, cursor: 'pointer' }}>
                     Re-run Fast
                   </button>
-                  <button onClick={() => handleAutoDetect(false, 'deep')} title="Three-pass engine: pre-snap, post-snap, and a final check. Richest read, higher confidence, ~3x cost." style={{ background: '#C9A84C', color: '#1c1c1c', border: 'none', borderRadius: 4, padding: '5px 12px', fontSize: 11, fontWeight: 700, cursor: 'pointer', letterSpacing: '0.04em' }}>
+                  <button onClick={() => handleAutoDetect(false, 'deep')} title="Three-pass engine: two detection passes plus a final verification pass. Richest read, higher confidence, ~3x cost." style={{ background: '#C9A84C', color: '#1c1c1c', border: 'none', borderRadius: 4, padding: '5px 12px', fontSize: 11, fontWeight: 700, cursor: 'pointer', letterSpacing: '0.04em' }}>
                     DEEP · 3-PASS
                   </button>
                 </div>
@@ -1829,7 +1846,7 @@ export default function GamePage() {
                   <Zap size={15} style={{ color: '#C9A84C', flexShrink: 0 }} />
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 13, fontWeight: 600, color: '#f8f6f0' }}>Break down the film with AI</div>
-                    <div style={{ fontSize: 11, color: '#7a7a6e' }}>Your film assistant watches the film and tags every play. <b style={{ color: '#a8a89a' }}>Fast</b> = quick &amp; economical. <b style={{ color: '#C9A84C' }}>Deep</b> = 3-pass engine (pre-snap, post-snap, check) — richest read, ~3x the cost.</div>
+                    <div style={{ fontSize: 11, color: '#7a7a6e' }}>Your film assistant watches the film and tags every play. <b style={{ color: '#a8a89a' }}>Fast</b> = quick &amp; economical. <b style={{ color: '#C9A84C' }}>Deep</b> = 3-pass engine (two detection passes plus a verification pass) — richest read, ~3x the cost.</div>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
                     <div style={{ display: 'flex', gap: 6 }}>
@@ -1845,7 +1862,7 @@ export default function GamePage() {
                       </button>
                       <button
                         onClick={() => handleAutoDetect(false, 'deep')}
-                        title="Three-pass engine: pre-snap read, post-snap detail, and a final check. Richest breakdown, ~3x cost."
+                        title="Three-pass engine: two detection passes plus a final verification pass. Richest breakdown, ~3x cost."
                         style={{
                           background: '#C9A84C', color: '#1c1c1c', border: 'none', borderRadius: 4,
                           padding: '8px 16px', fontSize: 12, fontWeight: 700, cursor: 'pointer', letterSpacing: '0.06em',
@@ -1927,7 +1944,11 @@ export default function GamePage() {
                   <div><div style={{ fontSize: 20, fontWeight: 700, color: '#2d8c40' }}>{scorecard.confident}</div><div style={{ fontSize: 10, color: '#7a7a6e' }}>confident</div></div>
                   <div><div style={{ fontSize: 20, fontWeight: 700, color: '#e0a050' }}>{scorecard.flagged_for_review}</div><div style={{ fontSize: 10, color: '#7a7a6e' }}>need your eyes</div></div>
                   <div><div style={{ fontSize: 20, fontWeight: 700, color: '#f8f6f0' }}>{scorecard.avg_confidence}</div><div style={{ fontSize: 10, color: '#7a7a6e' }}>avg confidence</div></div>
-                  <div><div style={{ fontSize: 20, fontWeight: 700, color: '#f8f6f0' }}>{scorecard.side_split?.offense}/{scorecard.side_split?.defense}/{scorecard.side_split?.special_teams}</div><div style={{ fontSize: 10, color: '#7a7a6e' }}>off / def / ST</div></div>
+                  {game?.sport === 'basketball' ? (
+                    <div><div style={{ fontSize: 20, fontWeight: 700, color: '#f8f6f0' }}>{scorecard.side_split?.offense}/{scorecard.side_split?.defense}</div><div style={{ fontSize: 10, color: '#7a7a6e' }}>off / def</div></div>
+                  ) : (
+                    <div><div style={{ fontSize: 20, fontWeight: 700, color: '#f8f6f0' }}>{scorecard.side_split?.offense}/{scorecard.side_split?.defense}/{scorecard.side_split?.special_teams}</div><div style={{ fontSize: 10, color: '#7a7a6e' }}>off / def / ST</div></div>
+                  )}
                 </div>
                 <div style={{ fontSize: 11, color: '#a8a89a', marginBottom: 6 }}>Field coverage (how often each detail was read)</div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 6 }}>
@@ -2022,7 +2043,7 @@ export default function GamePage() {
                 : tab === 'cutups'
                 ? <CutUps events={events} videoRef={videoRef} sport={game.sport} />
                 : tab === 'tendencies'
-                ? <TendenciesPanel gameId={id} />
+                ? <TendenciesPanel gameId={id} sport={game.sport} />
                 : tab === 'players'
                 ? <PlayersPanel gameId={id} />
                 : <AccuracyPanel gameId={id} />

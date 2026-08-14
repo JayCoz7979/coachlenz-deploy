@@ -412,7 +412,7 @@ export default function LoggerPage() {
                 <option value="all">All</option>
                 <option value="offense">Our Offense</option>
                 <option value="defense">Our Defense</option>
-                <option value="special_teams">Special Teams</option>
+                {!isBB && <option value="special_teams">Special Teams</option>}
               </select>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
