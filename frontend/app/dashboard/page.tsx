@@ -49,11 +49,15 @@ export default function DashboardPage() {
   const [report, setReport] = useState<any | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [open, setOpen] = useState<string | null>('games')
+  const [sport, setSport] = useState<string>('')
 
-  // Onboarding gate (unchanged behavior)
+  // Onboarding gate + the org's locked sport (drives sport-aware labels below).
   useEffect(() => {
     if (!user) return
-    api.get('/onboarding/status').then(s => { if (!s.data?.onboarding_completed) router.push('/onboarding') }).catch(() => {})
+    api.get('/onboarding/status').then(s => {
+      if (!s.data?.onboarding_completed) router.push('/onboarding')
+      setSport((s.data?.chosen_sports || [])[0] || '')
+    }).catch(() => {})
   }, [user])
 
   useEffect(() => {
@@ -83,6 +87,10 @@ export default function DashboardPage() {
 
   const totalPlays = s?.total_plays ?? null
   const confidence = report ? (scouting.report_status === 'FINAL' || s?.report_status === 'FINAL' ? 'FINAL' : 'PRELIM') : null
+
+  // Sport-aware labels: "formations" and "pre-snap" are football-only terms.
+  const resolvedSport = sport || report?.sport || games[0]?.sport || 'football'
+  const isBball = resolvedSport === 'basketball'
 
   const briefText = useMemo(() => {
     if (!report) return null
@@ -168,13 +176,23 @@ export default function DashboardPage() {
           <div className="kpi-sub">{report ? 'From latest scout report' : 'Tag film to populate'}</div>
           <div className="kpi-hint">↕ Click for tendencies</div>
         </div>
-        <div className="kpi" onClick={() => t('formations')}>
-          <div className="kpi-accent" />
-          <div className="kpi-lbl">Formations Tracked</div>
-          <div className="kpi-val">{formations.length || '-'}</div>
-          <div className="kpi-sub">{formations[0]?.formation || formations[0]?.key || 'Formation matrix'}</div>
-          <div className="kpi-hint">↕ Click for formation detail</div>
-        </div>
+        {isBball ? (
+          <div className="kpi" onClick={() => t('tendencies')}>
+            <div className="kpi-accent" />
+            <div className="kpi-lbl">Situations Tracked</div>
+            <div className="kpi-val">{tendencies.length || '-'}</div>
+            <div className="kpi-sub">{tendencies[0]?.category || 'Sets, actions & tendencies'}</div>
+            <div className="kpi-hint">↕ Click for tendencies</div>
+          </div>
+        ) : (
+          <div className="kpi" onClick={() => t('formations')}>
+            <div className="kpi-accent" />
+            <div className="kpi-lbl">Formations Tracked</div>
+            <div className="kpi-val">{formations.length || '-'}</div>
+            <div className="kpi-sub">{formations[0]?.formation || formations[0]?.key || 'Formation matrix'}</div>
+            <div className="kpi-hint">↕ Click for formation detail</div>
+          </div>
+        )}
         <div className="kpi" onClick={() => t('tendencies')}>
           <div className="kpi-accent" style={{ background: 'var(--gold)' }} />
           <div className="kpi-lbl">Report Status</div>
@@ -186,7 +204,7 @@ export default function DashboardPage() {
           <div className="kpi-accent" style={{ background: 'var(--green4)' }} />
           <div className="kpi-lbl">Player Intel Profiles</div>
           <div className="kpi-val" style={{ color: 'var(--green4)' }}>{players.length || '-'}</div>
-          <div className="kpi-sub">Pre-snap tells</div>
+          <div className="kpi-sub">{isBball ? 'Player tendencies' : 'Pre-snap tells'}</div>
           <div className="kpi-hint">↕ Click for player tells</div>
         </div>
       </div>
@@ -217,6 +235,7 @@ export default function DashboardPage() {
         ) : <div style={{ color: 'var(--text3)', fontSize: 12 }}>No games yet. <Link href="/games/upload?tab=url" style={{ color: 'var(--green3)' }}>Import your first film →</Link></div>}
       </Section>
 
+      {!isBball && (
       <Section icon="🏈" title="Formation Breakdown" sub={formations.length ? `${formations.length} formations` : 'Populates from tagged film'} open={open === 'formations'} onToggle={() => t('formations')}>
         {formations.length ? (
           <div className="form-grid">
@@ -234,6 +253,7 @@ export default function DashboardPage() {
           </div>
         ) : <Empty />}
       </Section>
+      )}
 
       <Section icon="🎯" title="Top Tendencies" sub={tendencies.length ? `${tendencies.length} ranked patterns` : 'Populates from scout report'} open={open === 'tendencies'} onToggle={() => t('tendencies')}>
         {tendencies.length ? tendencies.map((td: any, i: number) => (
