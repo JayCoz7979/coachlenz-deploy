@@ -298,7 +298,7 @@ function UploadPageInner() {
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
                 <label className="label">Game Title</label>
-                <input className="input" value={form.title} onChange={set('title')} required placeholder="vs Lincoln High — Week 5" />
+                <input className="input" value={form.title} onChange={set('title')} required placeholder={form.sport === 'basketball' ? 'vs Lincoln — Jan 15' : 'vs Lincoln High — Week 5'} />
               </div>
               <div>
                 <label className="label">Sport</label>
