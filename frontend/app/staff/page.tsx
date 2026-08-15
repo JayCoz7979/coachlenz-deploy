@@ -32,6 +32,9 @@ export default function StaffPage() {
   const [showForm, setShowForm] = useState(false)
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
+  // "Special Teams Coordinator" is a football-only role — hide it for basketball.
+  const [isBball, setIsBball] = useState(false)
+  const assignableRoles = ASSIGNABLE_ROLES.filter(r => !isBball || r.value !== 'coordinator_special_teams')
 
   useEffect(() => { fetchMe() }, [])
   useEffect(() => {
@@ -39,6 +42,9 @@ export default function StaffPage() {
     if (!isLoading && user && !user.permissions?.includes('can_invite_staff')) router.push('/dashboard')
   }, [isLoading, user])
   useEffect(() => { if (canInvite) load() }, [canInvite])
+  useEffect(() => {
+    if (user) api.get('/onboarding/status').then(r => setIsBball((r.data?.chosen_sports || [])[0] === 'basketball')).catch(() => {})
+  }, [user])
 
   function flash(setter: (s: string) => void, t: string) { setter(t); setTimeout(() => setter(''), 3500) }
   async function load() { try { const r = await api.get('/staff'); setStaff(r.data) } catch {} }
@@ -93,7 +99,7 @@ export default function StaffPage() {
                 <div><label className="label">Email</label><input type="email" className="input" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} required /></div>
                 <div><label className="label">Role</label>
                   <select className="input" value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
-                    {ASSIGNABLE_ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                    {assignableRoles.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
                   </select>
                 </div>
               </div>
@@ -118,7 +124,7 @@ export default function StaffPage() {
                         {isOwner ? <span className="text-gray-300">Owner</span> : (
                           <select className="input py-1 text-xs" value={s.role} onChange={e => changeRole(s.id, e.target.value)}>
                             {!ROLE_LABEL[s.role] && <option value={s.role}>{s.role}</option>}
-                            {ASSIGNABLE_ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                            {assignableRoles.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
                           </select>
                         )}
                       </td>
