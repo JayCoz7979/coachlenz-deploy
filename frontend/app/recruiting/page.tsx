@@ -65,6 +65,7 @@ export default function RecruitingPage() {
     try { const r = await api.get(`/recruiting/players/${pid}`); setProfile(r.data) } catch { setProfile(null) }
   }
   const shareUrl = profile?.share_path ? `${typeof window !== 'undefined' ? window.location.origin : ''}${profile.share_path}` : ''
+  const isBball = teams.find(t => t.id === teamId)?.sport === 'basketball'  // "Yards" is a football stat
 
   async function enable(withConsent = false) {
     setErr('')
@@ -191,10 +192,10 @@ export default function RecruitingPage() {
                   {/* Season stats */}
                   <div className="card mb-6">
                     <div className="font-semibold mb-3">Season stats</div>
-                    <div className="grid grid-cols-4 gap-3 text-center">
+                    <div className={`grid ${isBball ? 'grid-cols-3' : 'grid-cols-4'} gap-3 text-center`}>
                       <div><div className="text-2xl font-bold tabular-nums">{profile.stats.plays}</div><div className="text-xs text-gray-400">Plays</div></div>
                       <div><div className="text-2xl font-bold tabular-nums">{profile.stats.primary_plays}</div><div className="text-xs text-gray-400">Primary</div></div>
-                      <div><div className="text-2xl font-bold tabular-nums">{profile.stats.total_yards}</div><div className="text-xs text-gray-400">Yards</div></div>
+                      {!isBball && <div><div className="text-2xl font-bold tabular-nums">{profile.stats.total_yards}</div><div className="text-xs text-gray-400">Yards</div></div>}
                       <div><div className="text-2xl font-bold tabular-nums">{profile.stats.games}</div><div className="text-xs text-gray-400">Games</div></div>
                     </div>
                     {profile.top_play_types.length > 0 && (

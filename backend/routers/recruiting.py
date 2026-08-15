@@ -21,6 +21,7 @@ from backend.models.user import User
 from backend.models.organization import Organization
 from backend.models.roster import RosterPlayer
 from backend.models.clip import Clip
+from backend.models.team import Team
 from backend.services.auth import get_current_user, get_current_org, require_permission
 from backend.services.permissions import CAN_MANAGE_ROSTER
 from backend.utils.timeutils import to_naive_utc
@@ -249,9 +250,14 @@ async def public_profile(token: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=410, detail="This recruiting link has expired.")
     clips = await _highlights(p.id, p.organization_id, db)
     stats, tops = await _recruiting_stats(p, p.organization_id, len(clips), db)
+    # Sport so the public page can drop football-only stats (e.g. Yards) for basketball.
+    sport = None
+    if p.team_id:
+        sport = (await db.execute(select(Team.sport).where(Team.id == p.team_id))).scalar_one_or_none()
     return {
         "name": f"{p.first_name} {p.last_name or ''}".strip(),
         "position": p.position, "grade_year": p.grade_year,
+        "sport": sport,
         "highlights": await clip_playback(clips, p.organization_id, db),
         "stats": stats,
         "top_play_types": tops,
