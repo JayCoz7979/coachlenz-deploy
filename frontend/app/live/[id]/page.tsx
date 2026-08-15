@@ -438,7 +438,7 @@ export default function LoggerPage() {
                       <ChevronDown size={14} style={{ color: 'var(--text3)' }} />
                     </div>
                     {editing === rowKey && (
-                      <EditRow p={p} onFlag={() => flagPlay(p)} onDelete={() => deletePlay(p)} onSave={(patch: any) => saveEdit(p, patch)} onClose={() => setEditing(null)} />
+                      <EditRow p={p} isBB={isBB} onFlag={() => flagPlay(p)} onDelete={() => deletePlay(p)} onSave={(patch: any) => saveEdit(p, patch)} onClose={() => setEditing(null)} />
                     )}
                   </div>
                 )
@@ -629,7 +629,7 @@ function QuickPanel({ isBB, cur, set }: any) {
 }
 
 // ── inline edit row ──────────────────────────────────────────────────────────
-function EditRow({ p, onFlag, onDelete, onSave, onClose }: any) {
+function EditRow({ p, isBB, onFlag, onDelete, onSave, onClose }: any) {
   const [yards, setYards] = useState(String(p.yards_gained ?? ''))
   const [result, setResult] = useState(String(p.result ?? ''))
   const [note, setNote] = useState(String(p.note ?? ''))
@@ -637,7 +637,7 @@ function EditRow({ p, onFlag, onDelete, onSave, onClose }: any) {
   return (
     <div style={{ ...card, marginTop: 6, marginBottom: 6, background: 'var(--bg3)' }}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-        <Field label="Yards"><input style={input} inputMode="numeric" value={yards} onChange={e => setYards(e.target.value)} /></Field>
+        <Field label={isBB ? 'Points' : 'Yards'}><input style={input} inputMode="numeric" value={yards} onChange={e => setYards(e.target.value)} /></Field>
         <Field label="Player #"><input style={input} inputMode="numeric" value={player} onChange={e => setPlayer(e.target.value)} /></Field>
       </div>
       <Field label="Result"><input style={input} value={result} onChange={e => setResult(e.target.value)} /></Field>
