@@ -8,6 +8,7 @@ interface Profile {
   name: string
   position: string | null
   grade_year: string | null
+  sport: string | null
   highlights: Highlight[]
   stats: { highlights_count: number; plays: number; primary_plays: number; total_yards: number; games: number }
   top_play_types: { play_type: string; count: number }[]
@@ -53,10 +54,10 @@ export default function SharedRecruitingProfile() {
             </div>
             <div className="card mb-6">
               <div className="text-sm text-gray-400 mb-3">Season stats</div>
-              <div className="grid grid-cols-5 gap-2 text-center">
+              <div className={`grid ${profile.sport === 'basketball' ? 'grid-cols-4' : 'grid-cols-5'} gap-2 text-center`}>
                 <div><div className="text-2xl font-bold text-gray-100 tabular-nums">{profile.stats.plays}</div><div className="text-xs text-gray-500">Plays</div></div>
                 <div><div className="text-2xl font-bold text-gray-100 tabular-nums">{profile.stats.primary_plays}</div><div className="text-xs text-gray-500">Primary</div></div>
-                <div><div className="text-2xl font-bold text-gray-100 tabular-nums">{profile.stats.total_yards}</div><div className="text-xs text-gray-500">Yards</div></div>
+                {profile.sport !== 'basketball' && <div><div className="text-2xl font-bold text-gray-100 tabular-nums">{profile.stats.total_yards}</div><div className="text-xs text-gray-500">Yards</div></div>}
                 <div><div className="text-2xl font-bold text-gray-100 tabular-nums">{profile.stats.games}</div><div className="text-xs text-gray-500">Games</div></div>
                 <div><div className="text-2xl font-bold text-gray-100 tabular-nums">{profile.stats.highlights_count}</div><div className="text-xs text-gray-500">Highlights</div></div>
               </div>
