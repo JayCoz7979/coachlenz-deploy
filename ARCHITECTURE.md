@@ -90,3 +90,28 @@ retention starts. First-party only, no third-party trackers, no PII.
 Activation and paid are intentionally not duplicated here: activation lives in the
 retention gate, paid in billing. The conversion gate thresholds are in
 [BUILD_STATUS.md](BUILD_STATUS.md).
+
+## 6. Channel attribution and traffic assets (the channel gate)
+
+Attribution answers which source actually produces customers, so a channel can be
+judged by qualified traffic (visitors who convert and retain) rather than raw sessions.
+
+- **Source capture:** a coarse channel label (utm_source, else referrer host, else
+  `direct`) is captured on the first visit (`frontend/lib/funnel.ts`), rides every
+  funnel beacon event, and is saved on the org at registration
+  (`organizations.signup_source`, migration 046) so the server-emitted signup steps are
+  attributed too. `funnel_events.source` (migration 046) carries it on each event.
+- **Reporting:** `services/funnel.build_funnel` returns a per-channel breakdown
+  (visitors, signups, visitor-to-signup, gate), rendered in Admin -> Funnel. Because
+  the org stores its source, retention can also be read per channel, which is the
+  qualified-traffic link.
+- **Intent page + lead magnet:** `/tools/film-time-saved` is a public, no-signup
+  calculator targeting the core pain (hours lost to film breakdown). It is a
+  top-of-funnel entry (emits an attributed `landing_view`), offers the primary CTA, and
+  captures a lead email. The server component carries its own SEO metadata.
+- **SEO foundation:** root `metadata` (metadataBase, title template, Open Graph,
+  Twitter, JSON-LD SoftwareApplication) plus `app/sitemap.ts` (public pages) and
+  `app/robots.ts` (authed app disallowed), driven by `NEXT_PUBLIC_SITE_URL`.
+
+The channel gate and the one-channel-at-a-time discipline are in
+[BUILD_STATUS.md](BUILD_STATUS.md).

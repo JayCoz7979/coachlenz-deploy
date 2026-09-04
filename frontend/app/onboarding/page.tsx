@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import api from '@/lib/api'
-import { track, getAnonId } from '@/lib/funnel'
+import { track, getAnonId, getSource } from '@/lib/funnel'
 
 type Sport = { value: string; label: string }
 type Phase = 'register' | 'email' | 'sport'
@@ -79,7 +79,7 @@ function OnboardingForm() {
     e.preventDefault()
     setLoading(true); setError('')
     try {
-      const res = await api.post('/auth/register', { ...form, accepted_terms: acceptedTerms, anon_id: getAnonId() })
+      const res = await api.post('/auth/register', { ...form, accepted_terms: acceptedTerms, anon_id: getAnonId(), source: getSource() })
       localStorage.setItem('access_token', res.data.access_token)
       localStorage.setItem('refresh_token', res.data.refresh_token)
       const status = await api.get('/onboarding/status')

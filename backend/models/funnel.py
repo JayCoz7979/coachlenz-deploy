@@ -13,6 +13,7 @@ class FunnelEvent(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     anon_id = Column(String)
     event = Column(String, nullable=False)   # landing_view|cta_click|signup_view|signup_start|signup_complete
+    source = Column(String)                   # channel: utm_source | referrer host | 'direct'
     path = Column(String)
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="SET NULL"))
     meta = Column(JSONB, nullable=False, default=dict)

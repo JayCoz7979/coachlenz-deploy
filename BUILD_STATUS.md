@@ -1,5 +1,84 @@
 # BUILD_STATUS
 
+## Phase: Traffic Proof (CGE standard)
+
+Status: COMPLETE for this run, scoped deliberately. Confirmed with the founder: build
+only the traffic-GENERATING slice now (attribution, one free-tool lead magnet, the SEO
+foundation), and skip the parts that are dormant with ~0 users (in-product referral, a
+content production system, marketplace presence). A prompt does not create traffic; the
+publishing and outreach motion is the founder's. Building stops after this so that
+motion can begin.
+
+### Channel attribution (built this run)
+
+Extends the conversion funnel from the previous phase. Migration 046 adds
+`funnel_events.source` and `organizations.signup_source`.
+
+- Source is a coarse channel label captured on the first visit: a `utm_source`, else
+  the referrer host, else `direct` (`lib/funnel.ts` `getSource`, persisted per visitor).
+- It rides every beacon event, and is captured on the org at registration
+  (`organizations.signup_source`) so the server-emitted `signup_start` and
+  `signup_complete` are attributed too. The org carrying the source is also the link
+  that lets retention later be read per channel (qualified traffic).
+- `services/funnel.build_funnel` now returns a per-channel breakdown (visitors,
+  signups, visitor-to-signup, gate), best channel first. Shown in Admin -> Funnel
+  under "By channel". Tested in `backend/tests/test_funnel.py`.
+
+### Free tool / lead magnet (built this run)
+
+A genuinely useful, no-signup-required calculator that targets the core pain and ranks
+for it, capturing intent from the right visitor.
+
+- Public page `/tools/film-time-saved`: a coach enters games per season and hours per
+  manual breakdown and sees the season hours it costs them, framed honestly (no
+  invented savings percentage). Server component carries its own SEO metadata; the
+  interactive part is a client child.
+- It is a top-of-funnel entry: it emits `landing_view` (attributed by source), offers
+  the primary CTA to start the trial, and captures a lead email via `POST /leads`.
+
+### SEO foundation (built this run)
+
+- `app/layout.tsx`: `metadataBase`, a title template, Open Graph and Twitter defaults,
+  and a `SoftwareApplication` JSON-LD block (honest, no fabricated ratings).
+- `app/sitemap.ts` (public pages only) and `app/robots.ts` (authed app disallowed,
+  sitemap referenced), both driven by `NEXT_PUBLIC_SITE_URL` (defaults to the app URL).
+- Per-page metadata on the new tool page with a canonical.
+
+Deferred by design: in-product referral (no users to refer yet), a content production
+system (that is the founder's publishing motion, not scaffolding to pre-build), and
+marketplace presence (depends on a chosen ecosystem).
+
+---
+
+## CHANNEL GATE
+
+Prove one channel before adding another, and do not scale paid ads at a low entry
+price. A channel counts only when its QUALIFIED traffic, visitors who convert and then
+retain, clears the bar at acceptable cost.
+
+- **Primary channel to prove first:** SEO and content (owned/earned, near-zero cost,
+  fits a search-driven pain). Its assets this run: the SEO foundation and the
+  `/tools/film-time-saved` intent page.
+- **Qualified-traffic metric:** per channel, visitor -> completed signup (read in Admin
+  -> Funnel, "By channel"), and then whether those signups clear the retention gate
+  (the org carries `signup_source`, so retention can be read per channel).
+- **PASS bar:** a channel clears the conversion gate on its own traffic (visitor ->
+  completed signup >= 5%) AND its signups clear the retention gate, at a cost per
+  qualified signup you accept (for owned/earned, effectively time not dollars).
+- **STOP line:** a channel below the conversion stop line (< 2%) on a fair sample, or
+  that produces no retained users, is dropped rather than scaled.
+- **Discipline:** one channel at a time. Prove it downstream (conversion + retention)
+  before building or scaling a second. Raw sessions are a vanity number.
+
+### Current reading
+
+Empty, because there is ~0 traffic yet. Attribution, the SEO foundation, and the lead
+magnet are live and will attribute the first real visitors by channel. The traffic
+motion (publishing, outreach, getting coaches to the tool and the trial) is the
+founder's and is the actual next step.
+
+---
+
 ## Phase: Conversion Proof (CGE standard)
 
 Status: COMPLETE for this run. Scope confirmed with the founder before code:

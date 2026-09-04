@@ -186,6 +186,28 @@ export default function AdminPage() {
                     </table>
                     {funnel.steps.every((s: any) => s.count === 0) && <div className="text-center text-gray-500 py-12">No funnel events yet. This populates as visitors hit the landing page and move through signup.</div>}
                   </div>
+                  {funnel.by_source && funnel.by_source.length > 0 && (
+                    <div>
+                      <h3 className="text-xs uppercase tracking-wide text-gray-500 mb-2">By channel</h3>
+                      <p className="text-xs text-gray-500 mb-3">Prove one channel clears the gate on qualified traffic before scaling it. Do not split across channels at once.</p>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead><tr className="text-gray-400 border-b border-gray-800"><th className="text-left pb-3">Channel</th><th className="text-right pb-3">Visitors</th><th className="text-right pb-3">Signups</th><th className="text-right pb-3">Visitor to signup</th><th className="text-right pb-3">Gate</th></tr></thead>
+                          <tbody className="divide-y divide-gray-800">
+                            {funnel.by_source.map((s: any) => (
+                              <tr key={s.source}>
+                                <td className="py-3">{s.source}</td>
+                                <td className="py-3 text-right">{s.visitors}</td>
+                                <td className="py-3 text-right">{s.signups}</td>
+                                <td className="py-3 text-right">{pct(s.visitor_to_signup)}</td>
+                                <td className="py-3 text-right"><span className={`text-[11px] px-2 py-0.5 rounded uppercase font-medium ${gateStyle[s.gate]}`}>{s.gate === 'no_data' ? 'no data' : s.gate}</span></td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
               {!funnel && <div className="text-center text-gray-500 py-12">Loading funnel…</div>}

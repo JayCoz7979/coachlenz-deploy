@@ -10,8 +10,8 @@ from backend.services import funnel as F
 NOW = datetime(2026, 9, 4, 12, 0, 0)
 
 
-def _ev(event, anon_id=None, ts=None):
-    return SimpleNamespace(event=event, anon_id=anon_id, created_at=ts or NOW)
+def _ev(event, anon_id=None, ts=None, source=None):
+    return SimpleNamespace(event=event, anon_id=anon_id, created_at=ts or NOW, source=source)
 
 
 def _basic_rows():
@@ -89,6 +89,35 @@ def test_only_known_client_events_are_writable():
     assert "signup_start" not in F.ALLOWED_CLIENT_EVENTS
     assert "signup_complete" not in F.ALLOWED_CLIENT_EVENTS
     assert F.ALLOWED_CLIENT_EVENTS == {"landing_view", "cta_click", "signup_view"}
+
+
+def test_normalize_source_collapses_empty_to_direct():
+    assert F.normalize_source(None) == "direct"
+    assert F.normalize_source("  ") == "direct"
+    assert F.normalize_source("Google") == "google"
+    assert len(F.normalize_source("x" * 300)) == 120
+
+
+def test_by_source_breaks_down_channels():
+    rows = [
+        # google: 4 visitors, 1 signup
+        _ev("landing_view", anon_id="g1", source="google"),
+        _ev("landing_view", anon_id="g2", source="google"),
+        _ev("landing_view", anon_id="g3", source="google"),
+        _ev("landing_view", anon_id="g4", source="google"),
+        _ev("signup_complete", source="google"),
+        # direct: 2 visitors, 0 signups
+        _ev("landing_view", anon_id="d1", source=None),
+        _ev("landing_view", anon_id="d2", source=""),
+    ]
+    out = F.build_funnel(rows, now=NOW)
+    by = {s["source"]: s for s in out["by_source"]}
+    assert by["google"]["visitors"] == 4 and by["google"]["signups"] == 1
+    assert by["google"]["visitor_to_signup"] == 0.25 and by["google"]["gate"] == "pass"
+    assert by["direct"]["visitors"] == 2 and by["direct"]["signups"] == 0
+    assert by["direct"]["visitor_to_signup"] == 0.0 and by["direct"]["gate"] == "stop"
+    # Best channel (most signups) sorts first.
+    assert out["by_source"][0]["source"] == "google"
 
 
 def test_tz_aware_events_do_not_raise():

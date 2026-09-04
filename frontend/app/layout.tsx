@@ -29,9 +29,25 @@ const syne = Syne({
   variable: '--font-syne',
 })
 
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://app.coachlenz.com'
+
 export const metadata: Metadata = {
-  title: 'CoachLenz — AI Film Analyst OS',
+  metadataBase: new URL(SITE_URL),
+  title: { default: 'CoachLenz, AI Film Analyst OS', template: '%s | CoachLenz' },
   description: 'See Every Tendency. Win Every Game.',
+  applicationName: 'CoachLenz',
+  openGraph: {
+    title: 'CoachLenz, AI Film Analyst OS',
+    description: 'See Every Tendency. Win Every Game.',
+    siteName: 'CoachLenz',
+    type: 'website',
+    url: '/',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'CoachLenz, AI Film Analyst OS',
+    description: 'See Every Tendency. Win Every Game.',
+  },
   manifest: '/manifest.webmanifest',
   icons: {
     icon: [
@@ -51,6 +67,21 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body className={`${bebasNeue.variable} ${dmSans.variable} ${dmMono.variable} ${syne.variable}`}>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              '@context': 'https://schema.org',
+              '@type': 'SoftwareApplication',
+              name: 'CoachLenz',
+              applicationCategory: 'SportsApplication',
+              operatingSystem: 'Web',
+              description: 'AI film analysis for coaches. Upload your game film and CoachLenz finds the tendencies, so you spend your time coaching instead of breaking down film.',
+              offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD', description: '14-day free trial' },
+              publisher: { '@type': 'Organization', name: 'Cosby AI Solutions', url: 'https://cosbyaisolutions.com' },
+            }),
+          }}
+        />
         {children}
         <ReconsentGate />
         <ServiceWorkerRegistrar />
