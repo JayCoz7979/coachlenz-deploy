@@ -22,6 +22,7 @@ class EventIn(BaseModel):
     event: str
     anon_id: Optional[str] = None
     path: Optional[str] = None
+    source: Optional[str] = None
     meta: Optional[dict] = None
 
 
@@ -34,7 +35,7 @@ async def track_event(body: EventIn, request: Request, db: AsyncSession = Depend
     if body.event in funnel_svc.ALLOWED_CLIENT_EVENTS:
         await funnel_svc.record_event(
             db, body.event, anon_id=(body.anon_id or None),
-            path=body.path, meta=body.meta or {},
+            path=body.path, source=body.source, meta=body.meta or {},
         )
     return {"ok": True}
 

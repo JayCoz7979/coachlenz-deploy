@@ -35,6 +35,16 @@ traffic the funnel must clear the conversion gate (visitor to completed signup) 
 [BUILD_STATUS.md](BUILD_STATUS.md). No setup or env changes are needed; the landing page
 emits anonymous beacon events and signup steps are recorded server-side.
 
+## Traffic and channels
+
+Every visitor is attributed to a source (utm_source, referrer, or direct), carried
+through signup so Admin, Funnel, By channel shows visitor-to-signup per channel. A free
+tool at `/tools/film-time-saved` targets the core pain and captures leads. The SEO
+foundation (metadata, sitemap, robots, structured data) is driven by
+`NEXT_PUBLIC_SITE_URL` (set it to the public site origin; it defaults to the app URL).
+Prove one channel against the channel gate in [BUILD_STATUS.md](BUILD_STATUS.md) before
+scaling it.
+
 ## Sports Supported
 Football, Basketball, Baseball, Softball, Soccer, Volleyball
 

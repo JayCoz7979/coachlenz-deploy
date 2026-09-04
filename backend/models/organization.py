@@ -27,6 +27,8 @@ class Organization(Base):
     # auto-loop — corrections are still recorded, but no adjustments are proposed
     # or applied. See backend/services/learning_loop.py.
     learning_loop_manual = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    # Channel attribution: the source this account came from, captured at signup.
+    signup_source = Column(String)
     referral_code = Column(String, unique=True)
     referred_by_org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"))
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)

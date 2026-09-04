@@ -51,16 +51,25 @@ def _naive(dt: Optional[datetime]) -> Optional[datetime]:
     return dt.replace(tzinfo=None) if dt.tzinfo is not None else dt
 
 
+def normalize_source(source: Optional[str]) -> str:
+    """Coarse channel label. Empty/unknown collapses to 'direct'. Lowercased, trimmed,
+    capped so a hostile or junk referrer cannot bloat the table."""
+    s = (source or "").strip().lower()
+    if not s:
+        return "direct"
+    return s[:120]
+
+
 async def record_event(db, event: str, anon_id: Optional[str] = None,
                        organization_id=None, path: Optional[str] = None,
-                       meta: Optional[dict] = None) -> None:
+                       source: Optional[str] = None, meta: Optional[dict] = None) -> None:
     """Best-effort funnel write. Swallows every error so telemetry can never break a
     real flow (signup, onboarding). Commits on its own so it is safe to call after the
     caller has already committed its own work."""
     from backend.models.funnel import FunnelEvent
     try:
         db.add(FunnelEvent(event=event, anon_id=anon_id, organization_id=organization_id,
-                           path=path, meta=meta or {}))
+                           path=path, source=normalize_source(source), meta=meta or {}))
         await db.commit()
     except Exception:
         try:
@@ -86,17 +95,9 @@ def _rate(num: int, denom: int) -> Optional[float]:
     return round(num / denom, 4)
 
 
-def build_funnel(rows, now: Optional[datetime] = None,
-                 window_days: int = DEFAULT_WINDOW_DAYS) -> Dict[str, Any]:
-    """rows: iterable exposing event, anon_id, created_at (one per funnel event).
-
-    Returns per-step counts, step-to-step conversion, the single biggest drop-off
-    named with a number, the visitor->completed-signup rate, and the gate verdict.
-    """
-    now = _naive(now) if now is not None else datetime.utcnow()
-    cutoff = now - timedelta(days=window_days)
-
-    # Count each step: unique anon_id for the anonymous steps, raw rows for signup steps.
+def _count_steps(rows, cutoff) -> Dict[str, int]:
+    """Per-step counts over rows in-window: unique anon_id for the anonymous steps,
+    raw rows for the two server-emitted signup steps."""
     seen: Dict[str, set] = {s: set() for s in _DEDUP_BY_ANON}
     raw: Dict[str, int] = {s: 0 for s in STEPS}
     for r in rows:
@@ -114,8 +115,23 @@ def build_funnel(rows, now: Optional[datetime] = None,
                 raw[ev] += 1  # anonymous row with no id still counts as one
         else:
             raw[ev] += 1
+    return {s: (len(seen[s]) + raw[s] if s in _DEDUP_BY_ANON else raw[s]) for s in STEPS}
 
-    counts = {s: (len(seen[s]) + raw[s] if s in _DEDUP_BY_ANON else raw[s]) for s in STEPS}
+
+def build_funnel(rows, now: Optional[datetime] = None,
+                 window_days: int = DEFAULT_WINDOW_DAYS) -> Dict[str, Any]:
+    """rows: iterable exposing event, anon_id, created_at, and optionally source.
+
+    Returns per-step counts, step-to-step conversion, the single biggest drop-off
+    named with a number, the visitor->completed-signup rate and gate verdict, plus a
+    per-source (channel) breakdown so a channel is judged by qualified traffic, not
+    raw sessions.
+    """
+    now = _naive(now) if now is not None else datetime.utcnow()
+    cutoff = now - timedelta(days=window_days)
+    rows = list(rows)
+
+    counts = _count_steps(rows, cutoff)
     steps = [{"step": s, "label": STEP_LABELS[s], "count": counts[s]} for s in STEPS]
 
     # Step-to-step conversion, and the biggest single leak (most visitors lost).
@@ -132,6 +148,24 @@ def build_funnel(rows, now: Optional[datetime] = None,
             biggest = {**entry, "drop_rate": _rate(lost, prev)}
 
     visitor_to_signup = _rate(counts["signup_complete"], counts["landing_view"])
+
+    # Per-channel breakdown: visitors and completed signups by source, best channel
+    # first. This is what the channel gate is read against.
+    sources = {normalize_source(_get(r, "source")) for r in rows}
+    by_source: List[Dict[str, Any]] = []
+    for src in sources:
+        sub = [r for r in rows if normalize_source(_get(r, "source")) == src]
+        c = _count_steps(sub, cutoff)
+        rate = _rate(c["signup_complete"], c["landing_view"])
+        by_source.append({
+            "source": src,
+            "visitors": c["landing_view"],
+            "signups": c["signup_complete"],
+            "visitor_to_signup": rate,
+            "gate": gate_status(rate),
+        })
+    by_source.sort(key=lambda x: (x["signups"], x["visitors"]), reverse=True)
+
     return {
         "window_days": window_days,
         "conversion_bar": CONVERSION_BAR,
@@ -141,4 +175,5 @@ def build_funnel(rows, now: Optional[datetime] = None,
         "biggest_drop": biggest,
         "visitor_to_signup": visitor_to_signup,
         "gate": gate_status(visitor_to_signup),
+        "by_source": by_source,
     }

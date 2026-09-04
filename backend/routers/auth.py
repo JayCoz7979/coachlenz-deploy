@@ -49,6 +49,8 @@ class RegisterRequest(BaseModel):
     # Anonymous funnel id from the landing page, so the account can be tied back to
     # the visit it came from. Optional, best-effort, never required.
     anon_id: str | None = None
+    # Channel the visitor arrived from (utm_source | referrer host | 'direct').
+    source: str | None = None
 
 class LoginRequest(BaseModel):
     email: EmailStr
@@ -89,6 +91,8 @@ async def register(body: RegisterRequest, request: Request, db: AsyncSession = D
         trial_ends_at=datetime.utcnow() + timedelta(days=TRIAL_DAYS),
         referred_by_org_id=referred_by,
     )
+    from backend.services.funnel import normalize_source
+    org.signup_source = normalize_source(body.source)
     db.add(org)
     await db.flush()
 
@@ -121,7 +125,8 @@ async def register(body: RegisterRequest, request: Request, db: AsyncSession = D
         pass
     # Funnel: account created. Best-effort, never blocks signup.
     from backend.services.funnel import record_event
-    await record_event(db, "signup_start", organization_id=org.id, anon_id=body.anon_id)
+    await record_event(db, "signup_start", organization_id=org.id, anon_id=body.anon_id,
+                       source=org.signup_source)
 
     access = create_access_token(str(user.id), str(org.id))
     refresh = create_refresh_token(str(user.id), user.token_version)

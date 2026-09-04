@@ -62,10 +62,11 @@ async def funnel_gate(user: User = Depends(require_admin), db: AsyncSession = De
     Conversion stops where retention starts, so this covers visitor -> completed
     signup and the retention gate takes it from activation onward."""
     rows = (await db.execute(
-        select(FunnelEvent.event, FunnelEvent.anon_id, FunnelEvent.created_at)
+        select(FunnelEvent.event, FunnelEvent.anon_id, FunnelEvent.created_at, FunnelEvent.source)
     )).all()
     return funnel.build_funnel(
-        [{"event": r.event, "anon_id": r.anon_id, "created_at": r.created_at} for r in rows]
+        [{"event": r.event, "anon_id": r.anon_id, "created_at": r.created_at, "source": r.source}
+         for r in rows]
     )
 
 
