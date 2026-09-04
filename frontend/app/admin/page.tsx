@@ -15,7 +15,8 @@ export default function AdminPage() {
   const [flags, setFlags] = useState<any[]>([])
   const [features, setFeatures] = useState<any[]>([])
   const [retention, setRetention] = useState<any>(null)
-  const [tab, setTab] = useState<'orgs'|'retention'|'features'|'flags'|'stats'>('orgs')
+  const [funnel, setFunnel] = useState<any>(null)
+  const [tab, setTab] = useState<'orgs'|'retention'|'funnel'|'features'|'flags'|'stats'>('orgs')
   const [orgToDelete, setOrgToDelete] = useState<{id: string, name: string} | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [err, setErr] = useState('')
@@ -32,6 +33,7 @@ export default function AdminPage() {
     api.get('/admin/risk-flags').then(r => setFlags(r.data))
     api.get('/admin/feature-flags').then(r => setFeatures(r.data.flags || [])).catch(() => {})
     api.get('/admin/retention').then(r => setRetention(r.data)).catch(() => {})
+    api.get('/admin/funnel').then(r => setFunnel(r.data)).catch(() => {})
   }, [user])
 
   const gateStyle: Record<string, string> = {
@@ -39,6 +41,7 @@ export default function AdminPage() {
     watch: 'bg-yellow-500/15 text-yellow-400',
     stop: 'bg-red-500/15 text-red-400',
     maturing: 'bg-gray-700 text-gray-400',
+    no_data: 'bg-gray-700 text-gray-400',
   }
   const pct = (r: number | null) => r === null || r === undefined ? '-' : `${Math.round(r * 100)}%`
 
@@ -79,8 +82,8 @@ export default function AdminPage() {
           <h2 className="text-2xl font-bold mb-6 flex items-center gap-3"><ShieldCheck className="text-brand-400" /> Admin Panel</h2>
           {err && <div className="mb-4 text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-2">{err}</div>}
           <div className="flex gap-2 mb-6">
-            {(['orgs','retention','features','flags','stats'] as const).map(t => (
-              <button key={t} onClick={() => setTab(t)} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === t ? 'bg-brand-500 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-100'}`}>{t === 'orgs' ? 'Organizations' : t === 'retention' ? 'Retention' : t === 'features' ? 'Feature Toggles' : t === 'flags' ? 'Risk Flags' : 'Stats'}</button>
+            {(['orgs','retention','funnel','features','flags','stats'] as const).map(t => (
+              <button key={t} onClick={() => setTab(t)} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === t ? 'bg-brand-500 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-100'}`}>{t === 'orgs' ? 'Organizations' : t === 'retention' ? 'Retention' : t === 'funnel' ? 'Funnel' : t === 'features' ? 'Feature Toggles' : t === 'flags' ? 'Risk Flags' : 'Stats'}</button>
             ))}
           </div>
           {tab === 'stats' && stats && (
@@ -137,6 +140,55 @@ export default function AdminPage() {
                 </>
               )}
               {!retention && <div className="text-center text-gray-500 py-12">Loading retention…</div>}
+            </div>
+          )}
+          {tab === 'funnel' && (
+            <div className="space-y-6">
+              <p className="text-sm text-gray-400 flex items-center gap-2"><TrendingUp size={16} className="text-brand-400" /> The conversion gate. Visitor to completed signup over the last {funnel?.window_days || 30} days. Top steps count unique visitors; the two signup steps are recorded server-side. Conversion stops where retention starts, so activation and paid live on the Retention tab and in billing.</p>
+              {funnel && (
+                <>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                    <div className="card">
+                      <div className="text-sm text-gray-400">Visitor to signup</div>
+                      <div className="text-3xl font-bold">{pct(funnel.visitor_to_signup)}</div>
+                      <div className="mt-1"><span className={`text-[11px] px-2 py-0.5 rounded uppercase font-medium ${gateStyle[funnel.gate]}`}>{funnel.gate === 'no_data' ? 'no data' : funnel.gate}</span></div>
+                    </div>
+                    <div className="card">
+                      <div className="text-sm text-gray-400">Pass bar / stop line</div>
+                      <div className="text-3xl font-bold">{pct(funnel.conversion_bar)} <span className="text-gray-500 text-lg">/ {pct(funnel.stop_line)}</span></div>
+                      <div className="text-xs text-gray-500 mt-1">scale paid traffic only above the bar</div>
+                    </div>
+                    <div className="card">
+                      <div className="text-sm text-gray-400">Biggest drop-off</div>
+                      {funnel.biggest_drop ? (
+                        <>
+                          <div className="text-lg font-bold">{funnel.biggest_drop.from_label} to {funnel.biggest_drop.to_label}</div>
+                          <div className="text-xs text-gray-500 mt-1">lost {funnel.biggest_drop.lost} ({pct(funnel.biggest_drop.drop_rate)} of the step)</div>
+                        </>
+                      ) : <div className="text-lg text-gray-500">No traffic yet</div>}
+                    </div>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead><tr className="text-gray-400 border-b border-gray-800"><th className="text-left pb-3">Step</th><th className="text-right pb-3">Count</th><th className="text-right pb-3">From previous</th></tr></thead>
+                      <tbody className="divide-y divide-gray-800">
+                        {funnel.steps.map((s: any, i: number) => {
+                          const conv = i === 0 ? null : funnel.step_conversion[i - 1]
+                          return (
+                            <tr key={s.step}>
+                              <td className="py-3">{s.label}</td>
+                              <td className="py-3 text-right">{s.count}</td>
+                              <td className="py-3 text-right">{conv ? pct(conv.rate) : <span className="text-gray-500">-</span>}</td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                    {funnel.steps.every((s: any) => s.count === 0) && <div className="text-center text-gray-500 py-12">No funnel events yet. This populates as visitors hit the landing page and move through signup.</div>}
+                  </div>
+                </>
+              )}
+              {!funnel && <div className="text-center text-gray-500 py-12">Loading funnel…</div>}
             </div>
           )}
           {tab === 'orgs' && (

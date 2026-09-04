@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import api from '@/lib/api'
+import { track, getAnonId } from '@/lib/funnel'
 
 type Sport = { value: string; label: string }
 type Phase = 'register' | 'email' | 'sport'
@@ -33,6 +34,9 @@ function OnboardingForm() {
   const [dataConsent, setDataConsent] = useState(false)
 
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, [k]: e.target.value }))
+
+  // Funnel: the visitor reached the signup page. Fires once on mount.
+  useEffect(() => { track('signup_view') }, [])
 
   // On the sport step, load the student-data attestation text (and whether the org
   // already attested, in which case the checkbox is not needed).
@@ -75,7 +79,7 @@ function OnboardingForm() {
     e.preventDefault()
     setLoading(true); setError('')
     try {
-      const res = await api.post('/auth/register', { ...form, accepted_terms: acceptedTerms })
+      const res = await api.post('/auth/register', { ...form, accepted_terms: acceptedTerms, anon_id: getAnonId() })
       localStorage.setItem('access_token', res.data.access_token)
       localStorage.setItem('refresh_token', res.data.refresh_token)
       const status = await api.get('/onboarding/status')

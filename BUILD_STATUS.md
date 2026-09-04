@@ -1,5 +1,80 @@
 # BUILD_STATUS
 
+## Phase: Conversion Proof (CGE standard)
+
+Status: COMPLETE for this run. Scope confirmed with the founder before code:
+instrument the funnel and fix the obvious leaks now, defer the A/B harness and
+leak-finding until real traffic exists (both are blind with ~0 traffic today).
+
+### The funnel, as it exists
+
+`/` (landing) -> Start free trial -> `/onboarding` (register -> verify email -> lock
+sport) -> dashboard -> first analysis (activation) -> subscribe (paid). A logged-out
+visitor lands straight on the register form, so the primary path is not a dead end.
+This chains with the retention gate: conversion covers visitor to completed signup,
+retention takes it from activation onward.
+
+### Funnel instrumentation (built this run)
+
+First-party only, no third-party trackers, no PII. New `funnel_events` table
+(migration 045) plus `services/funnel.py`:
+
+- Anonymous top-of-funnel steps captured via a public beacon (`POST /funnel/event`,
+  rate limited, event allowlist): `landing_view`, `cta_click`, `signup_view`. Counted
+  by DISTINCT anon_id (a random localStorage id) so refreshes do not inflate visitors.
+- Signup steps emitted server-side so they cannot be spoofed: `signup_start`
+  (`/auth/register`) and `signup_complete` (`/onboarding` sport lock). Best-effort,
+  never blocks signup.
+- `GET /admin/funnel` (require_admin, founder-readable) + Admin "Funnel" tab: step
+  counts, step-to-step conversion, the single biggest drop-off named with a number,
+  and the gate verdict.
+- Activation and paid are NOT rebuilt here: the retention gate already has activation,
+  billing has paid. This run measures the conversion half only.
+- Tests: `backend/tests/test_funnel.py` (dedup, window, biggest drop, gate bands,
+  empty state, tz-aware). Logic exercised directly and passing; full suite in CI.
+
+### Conversion hygiene (built this run, copy/structure only, design preserved)
+
+- Hero rewritten to lead with the core pain (time lost to film breakdown) and pass the
+  five-second test. `frontend/app/page.tsx`.
+- One primary CTA ("Start your free trial"). The competing header + hero "Sign in"
+  buttons were demoted to a single quiet header text link.
+- Objections handled inline, honest answers only (price, works-on-your-film,
+  data safety/COPPA-FERPA, time to value).
+- Honest proof only: 14-day free trial, no credit card to start, cancel any time, data
+  stays yours. No invented testimonials, logos, counts, or ratings.
+- Value anchored against the real cost (a coach's evening), not a price in a vacuum.
+- Lead capture for non-converters: `marketing_leads` table + `POST /leads` +
+  a landing email form, so a visitor who does not sign up is not lost.
+
+Deferred by design until traffic exists: the A/B harness (nothing to test against yet)
+and naming the biggest leak from real data.
+
+---
+
+## CONVERSION GATE
+
+Do not scale paid traffic or ad spend until the funnel clears this gate on existing
+traffic. A leaky funnel scaled just loses money faster. Fix the single biggest leak
+first, prove the lift, then move on.
+
+- **Primary conversion metric:** visitor -> completed signup (a `signup_complete` per
+  unique `landing_view` visitor), over a 30-day window.
+- **PASS bar:** >= **5%** visitor-to-completed-signup.
+- **STOP line:** < **2%** -> halt any paid traffic and fix the funnel.
+- **WATCH band:** 2% to 5% -> keep fixing the funnel, hold spend.
+
+Read it live at Admin -> Funnel. Thresholds live in `backend/services/funnel.py`
+(`CONVERSION_BAR`, `STOP_LINE`); change them there and here together.
+
+### Current reading
+
+Empty, because the funnel was not instrumented until now and there is ~0 traffic. The
+instrument is live and will populate as visitors arrive. The real bottleneck remains
+distribution, not the funnel.
+
+---
+
 ## Phase: Retention Proof (CGE standard)
 
 Status: COMPLETE for this run. Scope was telemetry and gate only, confirmed with the

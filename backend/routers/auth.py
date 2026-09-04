@@ -46,6 +46,9 @@ class RegisterRequest(BaseModel):
     referral_code: str | None = None
     # Must be true: the user checked the Terms + Privacy consent box at signup.
     accepted_terms: bool = False
+    # Anonymous funnel id from the landing page, so the account can be tied back to
+    # the visit it came from. Optional, best-effort, never required.
+    anon_id: str | None = None
 
 class LoginRequest(BaseModel):
     email: EmailStr
@@ -116,6 +119,9 @@ async def register(body: RegisterRequest, request: Request, db: AsyncSession = D
         await send_welcome_email(user.email, user.name)
     except Exception:
         pass
+    # Funnel: account created. Best-effort, never blocks signup.
+    from backend.services.funnel import record_event
+    await record_event(db, "signup_start", organization_id=org.id, anon_id=body.anon_id)
 
     access = create_access_token(str(user.id), str(org.id))
     refresh = create_refresh_token(str(user.id), user.token_version)

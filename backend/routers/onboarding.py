@@ -140,6 +140,10 @@ async def choose_sports(
     org.onboarding_completed = True
     flag_modified(org, "chosen_sports")
     await db.commit()
+    # Funnel: signup fully completed (email verified + sport locked). This handler
+    # 409s if already completed, so reaching here is the one-time completion.
+    from backend.services.funnel import record_event
+    await record_event(db, "signup_complete", organization_id=org.id)
     return {
         "chosen_sports": picked,
         "max_sports": max_sports,
