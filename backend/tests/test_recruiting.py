@@ -40,7 +40,7 @@ class _FakeDB:
 
 def _player(**kw):
     base = dict(id="p1", organization_id="o1", first_name="Darius", last_name="M",
-                position="QB", grade_year="2026", jersey_number="7",
+                position="QB", grade_year="2026", jersey_number="7", team_id=None,
                 recruiting_enabled=False, recruiting_token=None, recruiting_expires_at=None)
     base.update(kw)
     return SimpleNamespace(**base)
