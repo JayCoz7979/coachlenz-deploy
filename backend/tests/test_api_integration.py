@@ -75,9 +75,18 @@ from backend.models.job import Job  # noqa: E402
 from backend.models.agent_log import AgentLog  # noqa: E402
 from backend.models.clip import Clip  # noqa: E402
 from backend.models.team import Team  # noqa: E402
+from backend.models.roster import RosterPlayer  # noqa: E402
+from backend.models.grade_annotation import GradeAnnotation  # noqa: E402
+from backend.models.comms import Playlist, PlaylistClip  # noqa: E402
+from backend.models.report_chat import ReportChatMessage  # noqa: E402
+from backend.models.source_connection import SourceConnection  # noqa: E402
 from backend.services.auth import hash_password, create_access_token  # noqa: E402
 from backend.services.encryption import encrypt_json  # noqa: E402
 from backend.routers import scout_football, reports, scout, events, games  # noqa: E402
+# PII-bearing routers, mounted so the tenant-isolation sweep exercises the real
+# handlers. None of these pull in boto3/twilio/playwright at import (verified), so
+# the slim SQLite harness stays self-contained.
+from backend.routers import roster, grades, playlists, report_chat, connections  # noqa: E402
 
 app = FastAPI()
 app.include_router(scout_football.router)
@@ -85,6 +94,11 @@ app.include_router(reports.router)
 app.include_router(scout.router)
 app.include_router(events.router)
 app.include_router(games.router)
+app.include_router(roster.router)
+app.include_router(grades.router)
+app.include_router(playlists.router)
+app.include_router(report_chat.router)
+app.include_router(connections.router)
 
 
 @app.get("/health")
@@ -94,7 +108,9 @@ async def _health():
 
 TABLES = [Organization.__table__, User.__table__, Game.__table__,
           Event.__table__, TendencyReport.__table__, Job.__table__, AgentLog.__table__,
-          Clip.__table__, Team.__table__]
+          Clip.__table__, Team.__table__, RosterPlayer.__table__, GradeAnnotation.__table__,
+          Playlist.__table__, PlaylistClip.__table__, ReportChatMessage.__table__,
+          SourceConnection.__table__]
 
 # Swap the Postgres-only types on just the tables we create.
 for _t in TABLES:
@@ -361,6 +377,9 @@ async def run():
         # ── Cross-org tenant isolation: the systematic leak sweep ──────────
         await cross_org_isolation(ac)
 
+        # ── Cross-org isolation over the PII-bearing resources (COPPA/FERPA) ──
+        await cross_org_pii_isolation(ac)
+
         # ── Entitlement gates fire on a real endpoint (trial vs paid) ──────
         await entitlement_gates(ac)
 
@@ -454,6 +473,143 @@ async def cross_org_isolation(ac):
     check("xorg: B owner reads own report (control)", r.status_code == 200)
     r = await ac.get(f"/events?game_id={B['game']}", headers=tokB)
     check("xorg: B owner sees own event (control)", r.status_code == 200 and len(r.json()) == 1)
+
+
+async def cross_org_pii_isolation(ac):
+    """Adversarial tenant-isolation sweep over the PII-bearing resources the base
+    sweep does not reach: roster (a minor's name, position, grade year), player grade
+    notes, report chat (report content plus an AI endpoint that could be driven), film
+    playlists, and stored film-source credentials (Hudl cookies). A leak on any of
+    these is a COPPA/FERPA event, so each is probed for cross-org READ and MUTATION,
+    org B's rows are then checked byte-for-byte intact, and positive controls prove
+    org B still reaches its own data (so the sweep can't pass by 404-ing everything).
+    """
+    # ── Build a fully independent org B with one of every PII resource ──
+    async with AsyncSessionLocal() as db:
+        orgB = Organization(name="PII Rival HS", slug=f"pii-{uuid.uuid4().hex[:8]}", is_trial=False)
+        db.add(orgB)
+        await db.flush()
+        userB = User(organization_id=orgB.id, name="PII Owner",
+                     email=f"pii-{uuid.uuid4().hex[:6]}@rival.com",
+                     hashed_password=hash_password("x"), role="owner")
+        teamB = Team(id=uuid.uuid4(), organization_id=orgB.id, name="Rival Varsity",
+                     sport="football", season="2026")
+        db.add_all([userB, teamB])
+        await db.flush()
+        playerB = RosterPlayer(id=uuid.uuid4(), organization_id=orgB.id, team_id=teamB.id,
+                               jersey_number="7", first_name="Minor", last_name="Athlete",
+                               position="QB", grade_year="2028")
+        gameB = Game(id=uuid.uuid4(), organization_id=orgB.id, title="Rival Game",
+                     sport="football", status="ready", team_id=teamB.id)
+        db.add_all([playerB, gameB])
+        await db.flush()
+        eventB = Event(id=uuid.uuid4(), game_id=gameB.id, organization_id=orgB.id,
+                       event_type="play", side="offense")
+        db.add(eventB)
+        await db.flush()
+        gradeB = GradeAnnotation(id=uuid.uuid4(), organization_id=orgB.id, game_id=gameB.id,
+                                 event_id=eventB.id, jersey="7", note="rival grade note",
+                                 created_by=userB.id)
+        reportB = TendencyReport(id=uuid.uuid4(), organization_id=orgB.id,
+                                 game_ids=[str(gameB.id)], sport="football",
+                                 report_type="opponent", title="Rival PII Report",
+                                 generated_at=datetime.utcnow())
+        db.add_all([gradeB, reportB])
+        await db.flush()
+        chatB = ReportChatMessage(id=uuid.uuid4(), organization_id=orgB.id, report_id=reportB.id,
+                                  user_id=userB.id, role="user", content="rival secret question")
+        playlistB = Playlist(id=uuid.uuid4(), organization_id=orgB.id, title="Rival Playlist",
+                             created_by=userB.id)
+        connB = SourceConnection(id=uuid.uuid4(), organization_id=orgB.id, provider="hudl",
+                                 account_email="rival@hudl.com",
+                                 encrypted_credentials=encrypt_json({"cookies": "SECRET"}),
+                                 status="connected")
+        db.add_all([chatB, playlistB, connB])
+        await db.commit()
+        B = {"org": str(orgB.id), "user": str(userB.id), "team": str(teamB.id),
+             "player": str(playerB.id), "game": str(gameB.id), "event": str(eventB.id),
+             "report": str(reportB.id), "grade": str(gradeB.id), "chat": str(chatB.id),
+             "playlist": str(playlistB.id), "conn": str(connB.id)}
+    tokB = {"Authorization": f"Bearer {create_access_token(B['user'], B['org'])}"}
+    A = tok("analyst")       # an ordinary org-A member (reads)
+    # A fully-privileged org-A OWNER for mutation probes: this proves the block is
+    # TENANCY, not just role, since an owner holds every capability. Otherwise a
+    # member's 403 (missing can_manage_roster) would fire before the ownership check
+    # and mask whether isolation actually holds.
+    Amgr = tok("reviewer")   # setup_db seeds this user with role="owner"
+
+    # ── ROSTER: a minor's PII must not be readable or mutable cross-org ──
+    r = await ac.get(f"/rosters/{B['team']}", headers=A)
+    check("xorg pii: GET B roster -> 404", r.status_code == 404)
+    r = await ac.get(f"/rosters/{B['team']}/stats", headers=A)
+    check("xorg pii: GET B roster stats -> 404", r.status_code == 404)
+    r = await ac.post(f"/rosters/{B['team']}/players",
+                      json={"jersey_number": "99", "first_name": "Pwned"}, headers=Amgr)
+    check("xorg pii: add player to B roster -> 404", r.status_code == 404)
+    r = await ac.patch(f"/rosters/{B['team']}/players/{B['player']}",
+                       json={"first_name": "Pwned"}, headers=Amgr)
+    check("xorg pii: PATCH B player -> 404", r.status_code == 404)
+    r = await ac.delete(f"/rosters/{B['team']}/players/{B['player']}", headers=Amgr)
+    check("xorg pii: DELETE B player -> 404", r.status_code == 404)
+
+    # ── GRADES: player grade notes ──
+    r = await ac.get(f"/grades/game/{B['game']}", headers=A)
+    check("xorg pii: GET B grades board -> 404", r.status_code == 404)
+    r = await ac.get(f"/grades/game/{B['game']}/annotations", headers=A)
+    check("xorg pii: GET B grade annotations -> 404", r.status_code == 404)
+    r = await ac.post("/grades/annotations",
+                      json={"game_id": B["game"], "event_id": B["event"], "note": "leak"}, headers=Amgr)
+    check("xorg pii: annotate B game -> 404", r.status_code == 404)
+
+    # ── REPORT CHAT: leaks report content and is a drivable AI endpoint ──
+    r = await ac.get(f"/reports/{B['report']}/chat", headers=A)
+    check("xorg pii: GET B report chat -> 404", r.status_code == 404)
+    r = await ac.post(f"/reports/{B['report']}/chat",
+                      json={"question": "what are their tendencies?"}, headers=A)
+    check("xorg pii: POST B report chat -> 404 (blocked before any LLM call)", r.status_code == 404)
+
+    # ── PLAYLISTS ──
+    r = await ac.get("/playlists", headers=A)
+    check("xorg pii: B playlist absent from A's list", B["playlist"] not in [p["id"] for p in r.json()])
+    r = await ac.post(f"/playlists/{B['playlist']}/clips",
+                      json={"clip_id": str(uuid.uuid4())}, headers=A)
+    check("xorg pii: add clip to B playlist -> 404", r.status_code == 404)
+    r = await ac.delete(f"/playlists/{B['playlist']}", headers=A)
+    check("xorg pii: DELETE B playlist -> 404", r.status_code == 404)
+
+    # ── SOURCE CONNECTIONS: stored Hudl credentials must never surface cross-org ──
+    r = await ac.get("/connections", headers=A)
+    listed = r.json()
+    check("xorg pii: A cannot see B's source connection",
+          "hudl" not in [c.get("provider") for c in listed]
+          and "rival@hudl.com" not in [c.get("account_email") for c in listed])
+    r = await ac.delete("/connections/hudl", headers=A)  # A owns none; must not touch B's
+    check("xorg pii: A DELETE hudl does not reach B", r.status_code in (200, 404))
+
+    # ── INTEGRITY: after every hostile probe, org B's data is byte-for-byte intact ──
+    async with AsyncSessionLocal() as db:
+        p = await db.get(RosterPlayer, uuid.UUID(B["player"]))
+        check("xorg pii: B player intact", p is not None and p.first_name == "Minor" and p.grade_year == "2028")
+        g = await db.get(GradeAnnotation, uuid.UUID(B["grade"]))
+        check("xorg pii: B grade note intact", g is not None and g.note == "rival grade note")
+        cm = await db.get(ReportChatMessage, uuid.UUID(B["chat"]))
+        check("xorg pii: B chat message intact", cm is not None and cm.content == "rival secret question")
+        pl = await db.get(Playlist, uuid.UUID(B["playlist"]))
+        check("xorg pii: B playlist intact", pl is not None and pl.title == "Rival Playlist")
+        cn = await db.get(SourceConnection, uuid.UUID(B["conn"]))
+        check("xorg pii: B source connection intact", cn is not None and cn.status == "connected")
+
+    # ── POSITIVE CONTROLS: org B still reaches its own data ──
+    r = await ac.get(f"/rosters/{B['team']}", headers=tokB)
+    check("xorg pii: B owner reads own roster (control)", r.status_code == 200 and r.json()["team_id"] == B["team"])
+    r = await ac.get(f"/grades/game/{B['game']}", headers=tokB)
+    check("xorg pii: B owner reads own grades (control)", r.status_code == 200)
+    r = await ac.get(f"/reports/{B['report']}/chat", headers=tokB)
+    check("xorg pii: B owner reads own chat (control)", r.status_code == 200 and len(r.json()["messages"]) == 1)
+    r = await ac.get("/playlists", headers=tokB)
+    check("xorg pii: B owner sees own playlist (control)", B["playlist"] in [p["id"] for p in r.json()])
+    r = await ac.get("/connections", headers=tokB)
+    check("xorg pii: B owner sees own connection (control)", "hudl" in [c.get("provider") for c in r.json()])
 
 
 async def entitlement_gates(ac):
