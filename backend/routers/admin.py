@@ -8,8 +8,9 @@ from backend.models.user import User
 from backend.models.organization import Organization
 from backend.models.abuse import RiskFlag, AuditLog
 from backend.models.teams_of_month import TeamSubmission, FeaturedTeam
+from backend.models.usage import AnalysisUsage
 from backend.services.auth import require_admin
-from backend.services import feature_flags
+from backend.services import feature_flags, retention
 from datetime import datetime
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -34,6 +35,24 @@ async def set_feature_flag(key: str, body: FlagUpdate, user: User = Depends(requ
     except ValueError:
         raise HTTPException(status_code=404, detail="Unknown feature flag")
     return {"ok": True, "key": key, "enabled": body.enabled}
+
+@router.get("/retention")
+async def retention_gate(user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """The retention gate: per-cohort activation + return, derived from real signup
+    and delivered-analysis events. This is the number that decides whether the
+    product may build feature breadth (see BUILD_STATUS.md). Founder-readable only.
+
+    Kept separate from the Athletic Dept usage dashboard: same events, different
+    question. No new table, so nothing here can drift from or fake the truth."""
+    orgs = (await db.execute(select(Organization.id, Organization.created_at))).all()
+    runs = (await db.execute(
+        select(AnalysisUsage.organization_id, AnalysisUsage.created_at)
+    )).all()
+    return retention.build_cohorts(
+        [{"id": o.id, "created_at": o.created_at} for o in orgs],
+        [{"organization_id": r.organization_id, "created_at": r.created_at} for r in runs],
+    )
+
 
 @router.get("/orgs")
 async def list_orgs(user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
