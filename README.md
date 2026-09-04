@@ -17,6 +17,15 @@ Recent changes are tracked in [CHANGELOG.md](CHANGELOG.md).
 4. **Practice Plans** — Drill planning with AI generation
 5. **Dashboard** — Season record, top performers, team health
 
+## Retention gate
+
+Before building feature breadth, CoachLenz must clear a retention gate: a live signup
+cohort has to come back for the core value moment (a second film analysis within 30
+days). The gate is instrumented and founder-readable at Admin, Retention, and derived
+from real signup and delivered-analysis events (no new table, no setup or env changes).
+The pass bar, stop line, and discipline rule are in [BUILD_STATUS.md](BUILD_STATUS.md);
+the value path is documented in [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ## Sports Supported
 Football, Basketball, Baseball, Softball, Soccer, Volleyball
 
