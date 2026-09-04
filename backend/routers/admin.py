@@ -9,8 +9,9 @@ from backend.models.organization import Organization
 from backend.models.abuse import RiskFlag, AuditLog
 from backend.models.teams_of_month import TeamSubmission, FeaturedTeam
 from backend.models.usage import AnalysisUsage
+from backend.models.funnel import FunnelEvent
 from backend.services.auth import require_admin
-from backend.services import feature_flags, retention
+from backend.services import feature_flags, retention, funnel
 from datetime import datetime
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -51,6 +52,20 @@ async def retention_gate(user: User = Depends(require_admin), db: AsyncSession =
     return retention.build_cohorts(
         [{"id": o.id, "created_at": o.created_at} for o in orgs],
         [{"organization_id": r.organization_id, "created_at": r.created_at} for r in runs],
+    )
+
+
+@router.get("/funnel")
+async def funnel_gate(user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """The conversion gate: the visitor -> completed-signup funnel with the single
+    biggest drop-off named, derived from real funnel events. Founder-readable only.
+    Conversion stops where retention starts, so this covers visitor -> completed
+    signup and the retention gate takes it from activation onward."""
+    rows = (await db.execute(
+        select(FunnelEvent.event, FunnelEvent.anon_id, FunnelEvent.created_at)
+    )).all()
+    return funnel.build_funnel(
+        [{"event": r.event, "anon_id": r.anon_id, "created_at": r.created_at} for r in rows]
     )
 
 

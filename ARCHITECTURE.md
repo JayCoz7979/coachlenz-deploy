@@ -68,3 +68,25 @@ them. This surface is deliberately separate from the Athletic Dept usage dashboa
 
 The gate thresholds and the discipline rule they enforce are in
 [BUILD_STATUS.md](BUILD_STATUS.md).
+
+## 5. Conversion funnel (the conversion gate)
+
+The conversion funnel measures visitor -> completed signup, and it stops where
+retention starts. First-party only, no third-party trackers, no PII.
+
+- **Events:** `funnel_events` (migration 045). Anonymous top-of-funnel steps
+  (`landing_view`, `cta_click`, `signup_view`) arrive via a public rate-limited beacon
+  (`POST /funnel/event`), keyed by a random localStorage `anon_id` and counted as unique
+  visitors. The two signup steps (`signup_start`, `signup_complete`) are emitted
+  server-side from `routers/auth.py` and `routers/onboarding.py`, so the browser cannot
+  forge a conversion. All writes are best-effort and never block signup.
+- **Metric:** `backend/services/funnel.py` (pure, unit-tested) turns events into step
+  counts, step-to-step conversion, the single biggest drop-off, and the gate verdict.
+  The gated number is completed signups per unique landing visitor.
+- **Surfaces:** `GET /admin/funnel` (require_admin) and the Admin "Funnel" tab.
+- **Lead capture:** `marketing_leads` + `POST /leads` capture a non-converter's
+  volunteered email so they can be nurtured rather than lost.
+
+Activation and paid are intentionally not duplicated here: activation lives in the
+retention gate, paid in billing. The conversion gate thresholds are in
+[BUILD_STATUS.md](BUILD_STATUS.md).

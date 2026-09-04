@@ -22,3 +22,4 @@ from .grade_annotation import GradeAnnotation
 from .learning import CoachLabelCorrection, AccountLearningAdjustment, LabelQualityScore
 from .billing_event import ProcessedStripeEvent
 from .purchase_ip import PurchaseIPLog
+from .funnel import FunnelEvent, MarketingLead

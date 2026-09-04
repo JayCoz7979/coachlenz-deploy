@@ -26,6 +26,15 @@ from real signup and delivered-analysis events (no new table, no setup or env ch
 The pass bar, stop line, and discipline rule are in [BUILD_STATUS.md](BUILD_STATUS.md);
 the value path is documented in [ARCHITECTURE.md](ARCHITECTURE.md).
 
+## Conversion gate
+
+The signup funnel is instrumented end to end (first-party, no third-party trackers) and
+founder-readable at Admin, Funnel: visitor, clicked start, reached signup, created
+account, completed signup, with the biggest drop-off named. Before scaling any paid
+traffic the funnel must clear the conversion gate (visitor to completed signup) in
+[BUILD_STATUS.md](BUILD_STATUS.md). No setup or env changes are needed; the landing page
+emits anonymous beacon events and signup steps are recorded server-side.
+
 ## Sports Supported
 Football, Basketball, Baseball, Softball, Soccer, Volleyball
 
