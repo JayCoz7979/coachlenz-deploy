@@ -57,6 +57,19 @@
 @keyframes pgIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
 .clz .sp{display:none}
 .clz .sp.active{display:block}
+/* Primary-action hero: the single dominant next step. Gold CTA is the focal point
+   (highest contrast in the dark-green UI), outcome-framed, routed to the free logger. */
+.clz .hero{display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap;background:linear-gradient(135deg,rgba(201,168,76,.10),rgba(45,80,22,.05));border:1px solid rgba(201,168,76,.28);border-radius:16px;padding:22px 24px;margin-bottom:20px}
+.clz .hero-eyebrow{font-family:var(--display);font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);margin-bottom:8px}
+.clz .hero-title{font-family:var(--display);font-size:22px;font-weight:800;color:var(--text);letter-spacing:-.01em;line-height:1.15;margin-bottom:6px}
+.clz .hero-sub{font-size:13px;color:var(--text2);max-width:54ch;line-height:1.6}
+.clz .hero-actions{display:flex;gap:10px;flex-wrap:wrap;flex-shrink:0}
+.clz .hero-cta{display:inline-block;background:var(--gold);color:#000;font-family:var(--display);font-weight:800;font-size:14px;border-radius:10px;padding:12px 22px;text-decoration:none;transition:.15s;white-space:nowrap;box-shadow:0 6px 20px rgba(201,168,76,.22)}
+.clz .hero-cta:hover{background:var(--gold2);transform:translateY(-1px)}
+.clz .hero-ghost{display:inline-block;background:transparent;color:var(--text2);border:1px solid var(--border2);font-family:var(--display);font-weight:700;font-size:14px;border-radius:10px;padding:11px 20px;text-decoration:none;transition:.15s;white-space:nowrap}
+.clz .hero-ghost:hover{background:var(--bg3);color:var(--text);border-color:var(--gold)}
+@media(max-width:640px){.clz .hero{flex-direction:column;align-items:flex-start}.clz .hero-actions{width:100%}.clz .hero-cta,.clz .hero-ghost{flex:1;text-align:center}}
+
 .clz .ai-brief{background:linear-gradient(135deg,rgba(45,80,22,.12),rgba(45,80,22,.03));border:1px solid rgba(45,80,22,.3);border-radius:16px;padding:20px 22px;margin-bottom:20px}
 .clz .ai-brief-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px}
 .clz .ai-pill{display:flex;align-items:center;gap:6px;background:rgba(45,80,22,.2);border:1px solid rgba(45,80,22,.4);border-radius:99px;padding:4px 12px;font-size:11px;font-weight:700;color:var(--green3);font-family:var(--display)}

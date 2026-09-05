@@ -104,9 +104,36 @@ export default function DashboardPage() {
 
   const t = (id: string) => setOpen(open === id ? null : id)
 
+  // Primary next action. One dominant step: the free Live Game Logger is the way in;
+  // a returning coach is pointed at their next game and latest breakdown.
+  const hasGames = games.length > 0
+  const hero = {
+    title: hasGames ? 'Ready for your next opponent?' : 'Turn your next game into a coordinator breakdown',
+    sub: hasGames
+      ? 'Chart a live game from the sideline and get the tendencies, player keys, and adjustments, or open your latest breakdown.'
+      : 'Chart your game from the sideline and CoachLenz writes the tendencies, player keys, and adjustments. The Live Game Logger is free, no credit card.',
+    ctaHref: '/live',
+    ctaLabel: hasGames ? 'Start a live game' : 'Log your first game free',
+    ghostHref: report ? '/tendencies' : '/examples',
+    ghostLabel: report ? 'Open latest breakdown' : 'See a sample report',
+  }
+
   return (
     <OSShell title="Dashboard">
-      {/* ── AI COACH BRIEF ── */}
+      {/* ── PRIMARY ACTION HERO ── */}
+      <div className="hero">
+        <div className="hero-main">
+          <div className="hero-eyebrow">▶ Live Game Logger · Free</div>
+          <div className="hero-title">{hero.title}</div>
+          <div className="hero-sub">{hero.sub}</div>
+        </div>
+        <div className="hero-actions">
+          <Link href={hero.ctaHref} className="hero-cta">{hero.ctaLabel}</Link>
+          <Link href={hero.ghostHref} className="hero-ghost">{hero.ghostLabel}</Link>
+        </div>
+      </div>
+
+      {/* ── AI COACH BRIEF (only once a real report exists; the hero owns the empty state) ── */}
       {report ? (
         <div className="ai-brief">
           <div className="ai-brief-hdr">
@@ -131,31 +158,6 @@ export default function DashboardPage() {
               ))}
             </div>
           )}
-        </div>
-      ) : loaded ? (
-        <div className="ai-brief">
-          <div className="ai-brief-hdr">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div className="ai-pill"><div className="ai-dot" />AI Coach Brief</div>
-              <div className="ai-title">Welcome, {user?.name?.split(' ')[0]}</div>
-            </div>
-          </div>
-          <div className="ai-summary-text">
-            Your analysis room activates the moment your first game is tagged. Import film and CoachLenz builds
-            the opponent brief, tendency engine, and player intel automatically.
-          </div>
-          <div className="ai-flags">
-            <Link href="/games/upload?tab=url" className="ai-flag" style={{ textDecoration: 'none' }}>
-              <div className="ai-flag-dot af-gold" />
-              <div className="ai-flag-info"><div className="ai-flag-title">Import Film</div><div className="ai-flag-sub">YouTube · Hudl · Upload</div></div>
-              <div className="ai-flag-arrow">→</div>
-            </Link>
-            <Link href="/games" className="ai-flag" style={{ textDecoration: 'none' }}>
-              <div className="ai-flag-dot af-g" />
-              <div className="ai-flag-info"><div className="ai-flag-title">Film Room</div><div className="ai-flag-sub">Tag &amp; review plays</div></div>
-              <div className="ai-flag-arrow">→</div>
-            </Link>
-          </div>
         </div>
       ) : null}
 
