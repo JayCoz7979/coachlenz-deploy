@@ -585,6 +585,10 @@ class AiDetectWorker(BaseWorker):
         try:
             async with AsyncSessionLocal() as db:
                 await db.execute(delete(AnalysisUsage).where(AnalysisUsage.job_id == job_id))
+                # Return the analysis credit too (idempotent no-op for legacy orgs that
+                # spent none). Same job_id ref that the endpoint spent against.
+                from backend.services import credits
+                await credits.refund_for_job(db, str(job_id))
                 await db.commit()
         except Exception as e:
             logger.warning(f"[ai_detect] usage refund failed for job {job_id}: {e}")
