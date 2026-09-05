@@ -55,7 +55,7 @@ export default function SampleView({ sport }: { sport: string }) {
       {/* Logged-out CTA. The Live Game Logger is the free way in; AI film analysis is the upgrade. */}
       <section className="px-6 sm:px-8 py-12 text-center">
         <h2 className="text-xl font-bold mb-2">Want one for your team?</h2>
-        <p className="text-gray-400 text-sm mb-5">Chart your next game and get a breakdown like this. Free to start, no credit card.</p>
+        <p className="text-gray-400 text-sm mb-5">The Live Game Logger is free. Chart your next game from the sideline, we turn it into a breakdown like this, no cost and no credit card. When you want us to watch the film for you instead, that is the paid upgrade.</p>
         <Link
           href="/onboarding"
           onClick={() => track('cta_click', { cta: `sample-${sport}` })}
