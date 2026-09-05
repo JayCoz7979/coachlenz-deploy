@@ -10,7 +10,7 @@ export default function robots(): MetadataRoute.Robots {
     rules: [
       {
         userAgent: '*',
-        allow: ['/', '/tools/', '/terms', '/privacy'],
+        allow: ['/', '/tools/', '/sample/', '/terms', '/privacy'],
         disallow: [
           '/admin', '/dashboard', '/settings', '/games', '/reports', '/roster',
           '/players', '/grades', '/scout', '/live', '/recruiting', '/staff',

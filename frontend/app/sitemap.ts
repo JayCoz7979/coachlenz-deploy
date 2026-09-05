@@ -6,7 +6,11 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://app.coachlenz.com'
 // reports, roster, and the rest) is disallowed in robots and stays out.
 export default function sitemap(): MetadataRoute.Sitemap {
   const now = new Date()
-  const paths = ['/', '/tools/film-time-saved', '/terms', '/privacy']
+  const paths = [
+    '/', '/tools/film-time-saved',
+    '/sample/football', '/sample/flag', '/sample/basketball',
+    '/terms', '/privacy',
+  ]
   return paths.map((p) => ({
     url: `${SITE_URL}${p === '/' ? '' : p}`,
     lastModified: now,
