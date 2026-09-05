@@ -1,8 +1,8 @@
 """
-Analysis-credit balance + top-up pack purchase. The plan grants monthly credits
-(billing webhook); this is where a coach checks the balance and buys more when
-depleted. Packs use one-time Stripe Checkout with inline price_data, so they need no
-pre-created Stripe products.
+Analysis-credit wallet + bundle purchase. Credits are separate from the subscription,
+purchased in bundles, and never expire while the account is active. This is where a
+coach checks the balance and buys more. Bundles use one-time Stripe Checkout with
+inline price_data, so they need no pre-created Stripe products.
 """
 import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -28,37 +28,39 @@ router = APIRouter(prefix="/credits", tags=["credits"])
 async def my_credits(user: User = Depends(get_current_user),
                      org: Organization = Depends(get_current_org),
                      db: AsyncSession = Depends(get_db)):
-    """Balance, the plan's monthly grant, the buyable packs, and recent history."""
+    """Wallet balance, the purchasable bundles, the per-analysis credit costs, and
+    recent history. Credits never expire while the account is active."""
     bal = await credit_svc.balance(db, org.id)
     rows = (await db.execute(
         select(CreditLedger).where(CreditLedger.organization_id == org.id)
         .order_by(CreditLedger.created_at.desc()).limit(10)
     )).scalars().all()
-    return {
-        "plan": plan_for(org),
-        "monthly_included": credit_svc.monthly_credits_for(org.subscription_tier),
-        "credits_per_analysis": credit_svc.CREDITS_PER_ANALYSIS,
-        **bal,
-        "packs": [{"id": k, "credits": c, "price_cents": p} for k, (c, p) in credit_svc.PACKS.items()],
-        "history": [{"kind": r.kind, "amount": r.amount, "note": r.note,
-                     "created_at": r.created_at.isoformat()} for r in rows],
+    bundles = [{"id": k, "credits": c, "price_cents": p, "per_credit": round(p / 100 / c, 2)}
+               for k, (c, p) in credit_svc.BUNDLES.items()]
+    costs = {
+        "standard": credit_svc.STANDARD_CREDITS,
+        "deep_grade": credit_svc.DEEP_GRADE_CREDITS,
+        "reanalysis": credit_svc.REANALYSIS_CREDITS,
     }
+    return {"plan": plan_for(org), **bal, "bundles": bundles, "analysis_costs": costs,
+            "history": [{"kind": r.kind, "amount": r.amount, "note": r.note,
+                         "created_at": r.created_at.isoformat()} for r in rows]}
 
 
-class PackCheckout(BaseModel):
-    pack: str
+class BundleCheckout(BaseModel):
+    bundle: str
     success_url: str
     cancel_url: str
 
 
 @router.post("/checkout")
-async def buy_pack(body: PackCheckout, request: Request,
-                   user: User = Depends(get_current_user),
-                   org: Organization = Depends(get_current_org),
-                   db: AsyncSession = Depends(get_db)):
-    if body.pack not in credit_svc.PACKS:
-        raise HTTPException(status_code=400, detail="Unknown credit pack")
-    n, price_cents = credit_svc.PACKS[body.pack]
+async def buy_bundle(body: BundleCheckout, request: Request,
+                     user: User = Depends(get_current_user),
+                     org: Organization = Depends(get_current_org),
+                     db: AsyncSession = Depends(get_db)):
+    if body.bundle not in credit_svc.BUNDLES:
+        raise HTTPException(status_code=400, detail="Unknown credit bundle")
+    n, price_cents = credit_svc.BUNDLES[body.bundle]
 
     customer_id = org.stripe_customer_id
     if not customer_id:
@@ -75,11 +77,11 @@ async def buy_pack(body: PackCheckout, request: Request,
             "price_data": {
                 "currency": "usd",
                 "unit_amount": price_cents,
-                "product_data": {"name": f"{n} CoachLenz analysis credits"},
+                "product_data": {"name": f"{n} CoachLenz analysis credits ({body.bundle.title()} bundle)"},
             },
         }],
         success_url=body.success_url,
         cancel_url=body.cancel_url,
-        metadata={"org_id": str(org.id), "kind": "credit_pack", "credits": str(n)},
+        metadata={"org_id": str(org.id), "kind": "credit_bundle", "credits": str(n)},
     )
     return {"checkout_url": session.url}
