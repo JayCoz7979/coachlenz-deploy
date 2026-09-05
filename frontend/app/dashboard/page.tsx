@@ -133,6 +133,9 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* ── FIRST-SESSION ACTIVATION CHECKLIST ── */}
+      <Setup sport={sport} hasGames={hasGames} hasReport={!!report} />
+
       {/* ── AI COACH BRIEF (only once a real report exists; the hero owns the empty state) ── */}
       {report ? (
         <div className="ai-brief">
@@ -291,6 +294,58 @@ export default function DashboardPage() {
 
       <div className="powered">Powered by <a href="https://cosbyaisolutions.com" target="_blank" rel="noreferrer">Cosby AI Solutions</a></div>
     </OSShell>
+  )
+}
+
+function Setup({ sport, hasGames, hasReport }: { sport: string; hasGames: boolean; hasReport: boolean }) {
+  // Honest, verifiable steps. Endowed progress: account + sport start checked, so a
+  // fresh coach opens at 2 of 4 and feels pulled to finish, not starting from zero.
+  const steps = [
+    { label: 'Account created', done: true },
+    { label: 'Sport locked in', done: !!sport },
+    { label: 'Log your first game', done: hasGames, href: '/live', cta: 'Log a game free' },
+    { label: 'Get your first breakdown', done: hasReport, href: '/live', cta: 'Open the logger' },
+  ]
+  const doneCount = steps.filter(s => s.done).length
+  const total = steps.length
+  const complete = doneCount === total
+  const nextIdx = steps.findIndex(s => !s.done)
+
+  const [dismissed, setDismissed] = useState(false)
+  useEffect(() => {
+    try { setDismissed(localStorage.getItem('clz_setup_dismissed') === '1') } catch {}
+  }, [])
+  function dismiss() {
+    try { localStorage.setItem('clz_setup_dismissed', '1') } catch {}
+    setDismissed(true)
+  }
+
+  if (complete && dismissed) return null
+  if (complete) {
+    return (
+      <div className="setup-done">
+        <span>✓ You are all set up. {doneCount} of {total} done, your analysis room is live.</span>
+        <button className="setup-x" onClick={dismiss} aria-label="Dismiss">×</button>
+      </div>
+    )
+  }
+  return (
+    <div className="setup">
+      <div className="setup-top">
+        <div className="setup-title">Get to your first breakdown</div>
+        <div className="setup-count">{doneCount} of {total}</div>
+      </div>
+      <div className="setup-bar"><div className="setup-fill" style={{ width: `${(doneCount / total) * 100}%` }} /></div>
+      <div className="setup-steps">
+        {steps.map((s, i) => (
+          <div key={i} className={'setup-step' + (s.done ? ' done' : i === nextIdx ? ' next' : '')}>
+            <span className="setup-check">{s.done ? '✓' : ''}</span>
+            <span>{s.label}</span>
+            {i === nextIdx && s.href && <Link href={s.href} className="setup-cta">{s.cta}</Link>}
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 

@@ -57,6 +57,26 @@
 @keyframes pgIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
 .clz .sp{display:none}
 .clz .sp.active{display:block}
+/* First-session activation checklist: endowed progress (starts with account + sport
+   already checked) that pulls a coach toward first value (Zeigarnik). Real steps only. */
+.clz .setup{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:18px 20px;margin-bottom:20px}
+.clz .setup-top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+.clz .setup-title{font-family:var(--display);font-size:14px;font-weight:700;color:var(--text)}
+.clz .setup-count{font-family:var(--mono);font-size:11px;color:var(--text3)}
+.clz .setup-bar{height:6px;border-radius:99px;background:var(--bg4);overflow:hidden;margin-bottom:14px}
+.clz .setup-fill{height:100%;background:linear-gradient(90deg,var(--green3),var(--green4));border-radius:99px;transition:width .4s}
+.clz .setup-steps{display:flex;flex-direction:column;gap:9px}
+.clz .setup-step{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--text2)}
+.clz .setup-step.done{color:var(--text3)}
+.clz .setup-check{width:18px;height:18px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;border:1px solid var(--border2);color:var(--text3)}
+.clz .setup-step.done .setup-check{background:var(--green3);border-color:var(--green3);color:#fff}
+.clz .setup-step.next{color:var(--text);font-weight:600}
+.clz .setup-cta{margin-left:auto;background:var(--gold);color:#000;font-family:var(--display);font-weight:700;font-size:12px;border-radius:8px;padding:6px 14px;text-decoration:none;white-space:nowrap;transition:.15s}
+.clz .setup-cta:hover{background:var(--gold2)}
+.clz .setup-done{display:flex;align-items:center;justify-content:space-between;gap:12px;background:linear-gradient(135deg,var(--greenl),var(--greenl2));border:1px solid rgba(45,80,22,.3);border-radius:12px;padding:11px 16px;margin-bottom:20px;font-size:13px;color:var(--green3);font-weight:600}
+.clz .setup-x{background:transparent;border:none;color:var(--text3);cursor:pointer;font-size:16px;line-height:1;padding:2px 6px}
+.clz .setup-x:hover{color:var(--text)}
+
 /* Primary-action hero: the single dominant next step. Gold CTA is the focal point
    (highest contrast in the dark-green UI), outcome-framed, routed to the free logger. */
 .clz .hero{display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap;background:linear-gradient(135deg,rgba(201,168,76,.10),rgba(45,80,22,.05));border:1px solid rgba(201,168,76,.28);border-radius:16px;padding:22px 24px;margin-bottom:20px}
