@@ -4,6 +4,7 @@ import Link from 'next/link'
 import IntroOverlay from '@/components/IntroOverlay'
 import { track } from '@/lib/funnel'
 import api from '@/lib/api'
+import logo from '../public/coachlenz-logo.png'
 
 const OBJECTIONS: { q: string; a: string }[] = [
   {
@@ -41,7 +42,7 @@ export default function Home() {
     <div className="min-h-screen bg-gray-950 flex flex-col">
       <IntroOverlay />
       <header className="border-b border-gray-800 px-6 sm:px-8 py-4 flex items-center justify-between">
-        <div className="text-2xl font-bold text-brand-400">CoachLenz</div>
+        <img src={logo.src} alt="CoachLenz" style={{ height: 30, width: 'auto' }} />
         <Link href="/login" className="text-sm text-gray-400 hover:text-gray-100">Sign in</Link>
       </header>
 

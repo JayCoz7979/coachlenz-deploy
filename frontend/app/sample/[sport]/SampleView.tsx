@@ -3,6 +3,7 @@ import { useEffect } from 'react'
 import Link from 'next/link'
 import { EXAMPLES, type ExampleKey } from '../../examples/reports'
 import { track } from '@/lib/funnel'
+import logo from '../../../public/coachlenz-logo.png'
 
 // Public proof page. No auth. Shows the illustrative Live Game Logger sample report in
 // an isolated iframe, with logged-out CTAs and source attribution, so a cold link
@@ -26,7 +27,7 @@ export default function SampleView({ sport }: { sport: string }) {
   return (
     <div className="min-h-screen bg-gray-950 flex flex-col">
       <header className="border-b border-gray-800 px-6 sm:px-8 py-4 flex items-center justify-between">
-        <Link href="/" className="text-2xl font-bold text-brand-400">CoachLenz</Link>
+        <Link href="/"><img src={logo.src} alt="CoachLenz" style={{ height: 28, width: 'auto' }} /></Link>
         <Link href="/login" className="text-sm text-gray-400 hover:text-gray-100">Sign in</Link>
       </header>
 
