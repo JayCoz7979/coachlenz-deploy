@@ -1,5 +1,29 @@
 # BUILD_STATUS
 
+## Packaging: Free Live Game Logger tier (2026-09-04)
+
+Decision: the **Live Game Logger is the permanent free tier**; AI film analysis
+(upload + 3-pass vision detection) is the paid upgrade. This aligns cost with price:
+live logging is the coach's own charting plus one report-writing LLM call (cents),
+while film detection is the ~$50-per-game cost, so the cheap product is free and the
+expensive product is paid.
+
+- The Live Game Logger (`routers/live_game.py`) is intentionally ungated: no trial,
+  subscription, or usage gate. Any org (trial, expired, or never-paid) can chart a game
+  and generate its report for free. A code comment marks it so it is not gated later.
+- `services/trial.plan_for(org)` returns `paid | trial | free`. An expired, never-paid
+  org lands in `free`, not locked out. Exposed at `/me` as `organization.plan` for the
+  UI. Unit-tested in `backend/tests/test_trial_plan.py`.
+- Public proof pages at `/sample/[sport]` (football/flag/basketball) show a real live
+  logger report and position live logging as the free way in.
+- Outreach reframed around "chart your next game free" with the sample link as proof,
+  instead of the upload-a-game framing that triggers the paid film-detection cost.
+
+Free tier serves live reports watermarked (keys off `is_trial`), a gentle upgrade nudge.
+No pricing/entitlement change was needed for AI film analysis (already paid-gated).
+
+---
+
 ## Phase: Traffic Proof (CGE standard)
 
 Status: COMPLETE for this run, scoped deliberately. Confirmed with the founder: build

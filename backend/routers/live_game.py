@@ -52,6 +52,12 @@ from backend.services.agent_log import log_agent_action
 from backend.services.sports import assert_sport_allowed
 from backend.services.legal import assert_student_consent
 
+# The Live Game Logger is the permanent FREE tier and is INTENTIONALLY UNGATED: any
+# coach, on any plan (trial, expired, or never-paid 'free'), can chart a game and
+# generate its report at no cost. It is cheap to serve (manual charting plus one
+# report-writing LLM call, not the paid AI film-detection path), which makes it the
+# zero-cost acquisition wedge. Do NOT add trial/subscription/usage gates to these
+# routes. AI film analysis (routers/ai_detect.py) is the paid upgrade; gate there.
 router = APIRouter(prefix="/live", tags=["live-game"])
 
 # The three sports the live logger supports (mirrors the flag football / football /

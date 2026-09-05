@@ -9,7 +9,7 @@ from backend.models.user import User
 from backend.models.organization import Organization
 from backend.models.usage import AnalysisUsage, CoachUsageLimit
 from backend.services.auth import get_current_user, get_current_org
-from backend.services.trial import is_trial_active, get_trial_days_remaining
+from backend.services.trial import is_trial_active, get_trial_days_remaining, plan_for
 from backend.services.permissions import role_permissions
 from backend.services.usage import month_start
 
@@ -32,6 +32,7 @@ async def get_me(user: User = Depends(get_current_user), org: Organization = Dep
             "name": org.name,
             "slug": org.slug,
             "subscription_tier": org.subscription_tier,
+            "plan": plan_for(org),   # paid | trial | free (free = Live Game Logger only)
             "is_trial": org.is_trial,
             "trial_active": is_trial_active(org),
             "trial_days_remaining": get_trial_days_remaining(org),

@@ -48,6 +48,28 @@ def is_feature_locked(org: Organization, feature: str) -> bool:
         return False
     return feature in TRIAL_LOCKED_FEATURES
 
+
+# Subscription statuses that count as a paying customer.
+PAID_SUB_STATUSES = {"active", "trialing", "past_due"}
+
+
+def plan_for(org: Organization) -> str:
+    """The org's current plan, for UI and messaging.
+
+      'paid'  a paying subscription: the full product, including AI film analysis.
+      'trial' inside the 14-day trial window.
+      'free'  the permanent FREE tier. The Live Game Logger stays free forever here;
+              AI film analysis (upload + detect) is the paid upgrade.
+
+    An expired, never-paid org lands in 'free', not locked out, because the Live
+    Game Logger is intentionally ungated (see routers/live_game.py). This is what
+    makes live logging the zero-cost acquisition wedge."""
+    if (org.stripe_subscription_status or "") in PAID_SUB_STATUSES:
+        return "paid"
+    if is_trial_active(org):
+        return "trial"
+    return "free"
+
 def get_trial_days_remaining(org: Organization) -> int:
     if not org.trial_ends_at:
         return 0
