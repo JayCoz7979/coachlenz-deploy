@@ -134,7 +134,7 @@ export default function DashboardPage() {
       </div>
 
       {/* ── FIRST-SESSION ACTIVATION CHECKLIST ── */}
-      <Setup sport={sport} hasGames={hasGames} hasReport={!!report} />
+      <Setup hasSport={!!(sport || report?.sport || games[0]?.sport)} hasGames={hasGames} hasReport={!!report} />
 
       {/* ── AI COACH BRIEF (only once a real report exists; the hero owns the empty state) ── */}
       {report ? (
@@ -297,12 +297,12 @@ export default function DashboardPage() {
   )
 }
 
-function Setup({ sport, hasGames, hasReport }: { sport: string; hasGames: boolean; hasReport: boolean }) {
+function Setup({ hasSport, hasGames, hasReport }: { hasSport: boolean; hasGames: boolean; hasReport: boolean }) {
   // Honest, verifiable steps. Endowed progress: account + sport start checked, so a
   // fresh coach opens at 2 of 4 and feels pulled to finish, not starting from zero.
   const steps = [
     { label: 'Account created', done: true },
-    { label: 'Sport locked in', done: !!sport },
+    { label: 'Sport locked in', done: hasSport },
     { label: 'Log your first game', done: hasGames, href: '/live', cta: 'Log a game free' },
     { label: 'Get your first breakdown', done: hasReport, href: '/live', cta: 'Open the logger' },
   ]
