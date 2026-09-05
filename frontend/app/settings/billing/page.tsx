@@ -12,7 +12,7 @@ const TIERS = [
     price: '$199',
     annual: '$1,990/yr',
     desc: 'For individual coaches managing one program',
-    features: ['Unlimited film uploads', 'AI tendency reports', 'All sports', 'URL import (YouTube, Hudl, Vimeo)', 'Clip & playlist builder'],
+    features: ['2 deep film-analysis credits / month', 'Free Live Game Logger', 'Unlimited film uploads', 'AI tendency reports', 'All sports', 'Buy more credits anytime'],
   },
   {
     key: 'athletic_dept',
@@ -20,7 +20,7 @@ const TIERS = [
     price: '$399',
     annual: '$3,990/yr',
     desc: 'For athletic departments with multiple teams',
-    features: ['Everything in Coach', 'Multi-team management', 'Coach messaging threads', 'Customer surveys', 'Priority support'],
+    features: ['6 deep film-analysis credits / month', 'Everything in Coach', 'Multi-team management', 'Coach messaging threads', 'Priority support'],
     featured: true,
   },
   {
@@ -29,7 +29,7 @@ const TIERS = [
     price: '$1,999',
     annual: '$19,990/yr',
     desc: 'District-wide deployment across all schools',
-    features: ['Everything in Athletic Dept', 'District-wide access', 'Coach Tenure module', 'Teams of the Month', 'Dedicated account manager'],
+    features: ['30 deep film-analysis credits / month', 'Everything in Athletic Dept', 'District-wide access', 'Coach Tenure module', 'Dedicated account manager'],
   },
   {
     key: 'enterprise',
@@ -37,7 +37,7 @@ const TIERS = [
     price: '$14,999',
     annual: 'Annual billing available',
     desc: 'State associations & large organizations',
-    features: ['Everything in District', 'Custom integrations', 'White-label option', 'SLA guarantee', 'On-site onboarding'],
+    features: ['300 deep film-analysis credits / month', 'Everything in District', 'Custom integrations', 'White-label option', 'On-site onboarding'],
     // Enterprise is contact-sales (no self-serve Stripe price), so its CTA opens an
     // inquiry email instead of /billing/checkout — which would 400 on an unknown tier.
     contactSales: true,
@@ -50,9 +50,20 @@ export default function BillingPage() {
   const { user, isLoading, fetchMe } = useAuth()
   const router = useRouter()
   const [loading, setLoading] = useState('')
+  const [credits, setCredits] = useState<any>(null)
 
   useEffect(() => { fetchMe() }, [])
   useEffect(() => { if (!isLoading && !user) router.push('/login') }, [isLoading, user])
+  useEffect(() => { if (user) api.get('/credits').then(r => setCredits(r.data)).catch(() => {}) }, [user])
+
+  async function buyPack(pack: string) {
+    setLoading(pack)
+    try {
+      const res = await api.post('/credits/checkout', { pack, success_url: `${window.location.origin}/settings/billing`, cancel_url: `${window.location.origin}/settings/billing` })
+      window.location.href = res.data.checkout_url
+    } catch { setLoading('') }
+  }
+  const money = (cents: number) => `$${(cents / 100).toLocaleString()}`
 
   async function checkout(tier: string) {
     setLoading(tier)
@@ -94,6 +105,28 @@ export default function BillingPage() {
               <button onClick={managePortal} disabled={loading === 'portal'} className="btn-gold">{loading === 'portal' ? 'Loading...' : 'Manage Billing'}</button>
             )}
           </div>
+
+          {credits?.on_system && (
+            <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 14, padding: '16px 18px', marginBottom: 20 }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' as const, marginBottom: 4 }}>
+                <div style={{ fontFamily: 'var(--font-syne,sans-serif)', fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>Analysis credits</div>
+                <div style={{ fontFamily: 'var(--font-syne,sans-serif)', fontSize: 26, fontWeight: 800, color: 'var(--green3)' }}>{credits.total}<span style={{ fontSize: 12, fontWeight: 400, color: 'var(--text2)' }}> available</span></div>
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 14 }}>
+                {credits.included} included this month plus {credits.purchased} purchased. One credit is one deep film breakdown. The Live Game Logger is always free and never uses credits.
+              </div>
+              <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' as const }}>
+                {(credits.packs || []).map((p: any) => (
+                  <button key={p.id} onClick={() => buyPack(p.id)} disabled={!!loading} style={{
+                    padding: '8px 14px', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer',
+                    fontFamily: 'var(--font-syne,sans-serif)', background: 'transparent', color: 'var(--text)', border: '1px solid var(--border2)', opacity: loading ? 0.6 : 1,
+                  }}>
+                    {loading === p.id ? 'Redirecting...' : `${p.credits} credits · ${money(p.price_cents)}`}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 11, marginBottom: 20 }}>
             {TIERS.map(tier => {
@@ -150,7 +183,7 @@ export default function BillingPage() {
             })}
           </div>
           <p style={{ fontSize: 11, color: 'var(--text3)', textAlign: 'center' }}>
-            All plans include a 14-day free trial. Cancel anytime.{' '}
+            The Live Game Logger is always free. Paid plans include monthly deep film-analysis credits, and you can buy more anytime. Cancel anytime.{' '}
             <a href="mailto:info@cosbyaisolutions.com" style={{ color: 'var(--green3)' }}>Contact us</a> for annual pricing.
           </p>
         </div>

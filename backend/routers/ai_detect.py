@@ -466,6 +466,16 @@ async def trigger_auto_detect(
             analysis_type=("deep_grade" if grade else ("deep" if mode == "deep" else "fast")),
             job_id=job.id,
         ))
+        # Credit gate. Only orgs on the credit system (a row exists) are metered here;
+        # legacy orgs without a row keep the monthly-cap behavior above. The spend is
+        # linked to job.id so the worker refunds it if the run fails. Insufficient
+        # credits rolls back this whole transaction (job + usage), so nothing is queued.
+        from backend.services import credits
+        if await credits.has_account(db, user.organization_id):
+            ok = await credits.spend(db, user.organization_id, credits.CREDITS_PER_ANALYSIS, ref=str(job.id))
+            if not ok:
+                raise HTTPException(status_code=402, detail=(
+                    "You are out of analysis credits. Buy more credits or upgrade your plan."))
     await db.commit()
     await db.refresh(job)
 

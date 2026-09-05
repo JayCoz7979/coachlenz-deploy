@@ -117,7 +117,9 @@ def test_first_delivery_processes_and_records_marker():
     body = _event("checkout.session.completed", {"metadata": {"org_id": "o1", "tier": "coach"}})
     out = _call(body, _sign(body, int(time.time())), db)
     assert out == {"received": True}
-    assert db.executed == 1 and db.committed           # subscription flip ran once
+    # Subscription flip plus the monthly credit grant now run (>=1 effect execute);
+    # the redelivery test below still asserts 0 effects on a duplicate.
+    assert db.executed >= 1 and db.committed
     assert isinstance(db.added[0], ProcessedStripeEvent) and db.added[0].event_id == "evt_test"
 
 

@@ -7,6 +7,11 @@ import inspect
 import backend.workers.worker_ai_detect as w
 
 
+class _FakeResult:
+    def scalar_one_or_none(self):
+        return None
+
+
 class _FakeSession:
     def __init__(self, sink):
         self._sink = sink
@@ -19,6 +24,7 @@ class _FakeSession:
 
     async def execute(self, stmt):
         self._sink.append(stmt)
+        return _FakeResult()
 
     async def commit(self):
         pass
@@ -28,8 +34,10 @@ def test_refund_issues_a_delete_for_the_job(monkeypatch):
     executed = []
     monkeypatch.setattr(w, "AsyncSessionLocal", lambda: _FakeSession(executed))
     asyncio.run(w.AiDetectWorker()._refund_usage("job-123"))
-    assert len(executed) == 1
+    # Reverses BOTH the usage charge and the analysis credit: the DELETE runs first,
+    # then a credit-refund lookup (a no-op when no credit was spent, as here).
     assert executed[0].__class__.__name__ == "Delete"  # DELETE FROM analysis_usage ...
+    assert any(s.__class__.__name__ == "Select" for s in executed)  # credit refund lookup
 
 
 def test_refund_is_noop_without_a_job_id(monkeypatch):

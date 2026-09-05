@@ -1,5 +1,39 @@
 # BUILD_STATUS
 
+## Monetization: analysis credits (2026-09-05)
+
+Deep film analysis is metered by credits (it has a real ~$50/game COGS). The free Live
+Game Logger never uses credits. Migration 047 adds `org_credits` (two buckets) and
+`credit_ledger` (audit).
+
+- **1 credit = 1 deep film breakdown.** `included` credits are granted monthly by the
+  plan and reset on renewal; `purchased` top-up credits roll over. Spend takes included
+  first, then purchased. Config in `services/credits.py` (tunable):
+  Coach 2 / Athletic Dept 6 / District 30 / Enterprise 300 per month; packs 3/$199,
+  10/$599, 25/$1,299 (each priced above the $50 COGS so a top-up never loses money);
+  new signups get 1 starter credit.
+- **Opt-in by row:** an org gets metered only once it has an `org_credits` row (granted
+  on registration or a paid subscription). Legacy orgs without a row keep the previous
+  monthly-cap path, so nothing existing breaks.
+- **Wiring:** `ai_detect` spends a credit per billable analysis (linked to the job id);
+  `worker_ai_detect._refund_usage` refunds it if the run fails (idempotent). The billing
+  webhook grants monthly credits on subscription + each renewal, and adds purchased
+  credits on a `credit_pack` checkout. `GET /credits` + `POST /credits/checkout`
+  (one-time Stripe Checkout via inline price_data, no pre-created Stripe products).
+- **UI:** Settings, Billing shows the balance, buy-pack buttons, and each plan's monthly
+  credits. Pure bucket math (`split_spend`) is unit-tested in `tests/test_credits.py`.
+
+Margin note: at ~$50 COGS the included credits run thin (Coach's 2 = up to $100 on a
+$199 plan if fully used); top-ups stay positive. The real lever is driving the
+per-analysis cost down, at which point a cheaper "fast" mode could cost 1 credit and
+deep 3. All numbers are config.
+
+NOT in this change (follow-up): retiring the 14-day trial in favor of a "first month
+50% off" Stripe coupon. That needs a coupon set up and touches onboarding, tracked
+separately.
+
+---
+
 ## Packaging: Free Live Game Logger tier (2026-09-04)
 
 Decision: the **Live Game Logger is the permanent free tier**; AI film analysis

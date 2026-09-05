@@ -128,15 +128,25 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None),
         return {"received": True, "duplicate": True}
 
     if et == "checkout.session.completed":
-        org_id = data.get("metadata", {}).get("org_id")
-        tier = data.get("metadata", {}).get("tier")
-        if org_id and tier:
-            await db.execute(update(Organization).where(Organization.id == org_id).values(
-                subscription_tier=tier,
-                is_trial=False,
-                stripe_subscription_id=data.get("subscription"),
-                stripe_subscription_status="active",
-            ))
+        from backend.services import credits as credit_svc
+        md = data.get("metadata", {})
+        org_id = md.get("org_id")
+        if md.get("kind") == "credit_pack":
+            # One-time top-up pack purchase: add rolled-over credits (idempotent per session).
+            n = int(md.get("credits") or 0)
+            if org_id and n:
+                await credit_svc.add_purchased(db, org_id, n, ref=data.get("id"))
+        else:
+            tier = md.get("tier")
+            if org_id and tier:
+                await db.execute(update(Organization).where(Organization.id == org_id).values(
+                    subscription_tier=tier,
+                    is_trial=False,
+                    stripe_subscription_id=data.get("subscription"),
+                    stripe_subscription_status="active",
+                ))
+                # Grant the plan's monthly analysis credits.
+                await credit_svc.grant_monthly(db, org_id, tier, ref=data.get("id"))
 
     elif et == "customer.subscription.updated":
         sub_id = data["id"]
@@ -163,6 +173,13 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None),
             if sub:
                 job = Job(job_type="referral_credit", payload={"customer_id": customer_id, "invoice_id": data["id"]})
                 db.add(job)
+                # Monthly reset: grant this billing period's included credits (purchased
+                # top-ups roll over). Idempotent per invoice id.
+                from backend.services import credits as credit_svc
+                res = await db.execute(select(Organization).where(Organization.stripe_customer_id == customer_id))
+                org = res.scalar_one_or_none()
+                if org:
+                    await credit_svc.grant_monthly(db, org.id, org.subscription_tier, ref=data.get("id"))
 
     elif et == "invoice.payment_failed":
         customer_id = data.get("customer")
