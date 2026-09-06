@@ -472,10 +472,12 @@ async def trigger_auto_detect(
         # credits rolls back this whole transaction (job + usage), so nothing is queued.
         from backend.services import credits
         if await credits.has_account(db, user.organization_id):
-            ok = await credits.spend(db, user.organization_id, credits.CREDITS_PER_ANALYSIS, ref=str(job.id))
+            cost = credits.credits_for(sport=game.sport, deep=(mode == "deep" or bool(grade)), is_rerun=is_rerun)
+            ok = await credits.spend(db, user.organization_id, cost, ref=str(job.id))
             if not ok:
+                bal = (await credits.balance(db, user.organization_id))["balance"]
                 raise HTTPException(status_code=402, detail=(
-                    "You are out of analysis credits. Buy more credits or upgrade your plan."))
+                    f"This analysis needs {cost} credits and you have {bal}. Buy a credit bundle to continue."))
     await db.commit()
     await db.refresh(job)
 

@@ -1,43 +1,56 @@
 """
-Analysis-credit bucket math (pure) + config sanity. The DB wrappers in
-services/credits.py are thin around split_spend; this locks the critical logic.
+Analysis-credit model (pure): locked per-analysis credit costs, bundle catalog, the
+spend bucket math, and the 65% margin-floor helper.
 """
 from backend.services import credits as C
 
 
-def test_split_spend_takes_included_first():
-    assert C.split_spend(2, 3, 1) == (1, 0)
-    assert C.split_spend(2, 3, 2) == (2, 0)
-
-
-def test_split_spend_spills_into_purchased():
-    assert C.split_spend(1, 5, 3) == (1, 2)
-    assert C.split_spend(0, 3, 1) == (0, 1)
-
-
-def test_split_spend_insufficient_returns_none():
+def test_split_spend_bucket_order_and_insufficient():
+    assert C.split_spend(0, 30, 29) == (0, 29)       # drawn from the purchased wallet
     assert C.split_spend(0, 0, 1) is None
-    assert C.split_spend(1, 0, 2) is None
-    assert C.split_spend(2, 2, 5) is None
-
-
-def test_split_spend_zero_is_noop():
+    assert C.split_spend(0, 28, 29) is None          # one short
     assert C.split_spend(5, 5, 0) == (0, 0)
-    assert C.split_spend(0, 0, 0) == (0, 0)
 
 
-def test_monthly_credits_for_known_and_unknown_tiers():
-    assert C.monthly_credits_for("coach") == 2
-    assert C.monthly_credits_for("athletic_dept") == 6
-    assert C.monthly_credits_for("district") == 30
-    assert C.monthly_credits_for("enterprise") == 300
-    assert C.monthly_credits_for("COACH") == 2          # case-insensitive
-    assert C.monthly_credits_for("trial") == 0          # not a paid tier
-    assert C.monthly_credits_for(None) == 0
+def test_locked_credit_costs():
+    # Standard by sport
+    assert C.credits_for(sport="football", deep=False, is_rerun=False) == 29
+    assert C.credits_for(sport="basketball", deep=False, is_rerun=False) == 27
+    assert C.credits_for(sport="flag", deep=False, is_rerun=False) == 22
+    # Deep + grade by sport
+    assert C.credits_for(sport="football", deep=True, is_rerun=False) == 55
+    assert C.credits_for(sport="basketball", deep=True, is_rerun=False) == 60  # provisional
+    # Re-analysis is flat regardless of sport/depth
+    assert C.credits_for(sport="football", deep=True, is_rerun=True) == 9
+    # Unknown sport falls back to the football cost (safe, highest)
+    assert C.credits_for(sport="soccer", deep=False, is_rerun=False) == 29
+    assert C.credits_for(sport=None, deep=True, is_rerun=False) == 55
 
 
-def test_packs_priced_above_unit_cost():
-    # Each pack must price a credit above the ~$50 COGS so a top-up never loses money.
-    for pack_id, (credits, price_cents) in C.PACKS.items():
-        assert credits > 0 and price_cents > 0
-        assert price_cents / credits >= 5000, f"{pack_id} prices a credit below $50 COGS"
+def test_bundles_catalog_and_descending_per_credit():
+    assert C.BUNDLES["starter"] == (30, 2900)
+    assert C.BUNDLES["sideline"] == (100, 8900)
+    assert C.BUNDLES["season"] == (250, 19900)
+    assert C.BUNDLES["program"] == (500, 36900)
+    assert C.BUNDLES["department"] == (1000, 69900)
+    # Per-credit price must fall as bundles get bigger.
+    per = [p / c for c, p in C.BUNDLES.values()]
+    assert per == sorted(per, reverse=True)
+    # Cheapest credit is the Department price used for the margin floor.
+    assert round(min(per) / 100, 2) == C.FLOOR_CREDIT_PRICE
+
+
+def test_margin_floor_ceilings():
+    # Max compute cost per run to hold 65% at the cheapest ($0.70) credit price.
+    assert C.max_cogs_at_floor(29) == 7.105    # standard football
+    assert C.max_cogs_at_floor(55) == 13.475   # deep+grade football
+    assert C.max_cogs_at_floor(9) == 2.205     # re-analysis
+    assert C.MARGIN_FLOOR == 0.65
+
+
+def test_subscription_tiers_are_access_only():
+    assert C.SUBSCRIPTION_TIERS["coach"]["monthly_cents"] == 999
+    assert C.SUBSCRIPTION_TIERS["athletic_dept"]["monthly_cents"] == 2999
+    # No monthly credit grant exists in the model.
+    assert not hasattr(C, "PLAN_MONTHLY_CREDITS")
+    assert not hasattr(C, "grant_monthly")

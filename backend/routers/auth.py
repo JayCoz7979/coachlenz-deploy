@@ -127,10 +127,10 @@ async def register(body: RegisterRequest, request: Request, db: AsyncSession = D
     from backend.services.funnel import record_event
     await record_event(db, "signup_start", organization_id=org.id, anon_id=body.anon_id,
                        source=org.signup_source)
-    # Starter analysis credits so a new account can try one film breakdown. Best-effort.
+    # Optional welcome credits (0 by default; credits are purchased). Best-effort.
     try:
         from backend.services import credits as credit_svc
-        await credit_svc.grant_trial(db, org.id)
+        await credit_svc.grant_welcome(db, org.id)
         await db.commit()
     except Exception:
         await db.rollback()
