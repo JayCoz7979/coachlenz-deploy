@@ -75,6 +75,21 @@ def max_cogs_at_floor(credits: int) -> float:
     return round(revenue * (1 - MARGIN_FLOOR), 4)
 
 
+def margin_verdict(avg_cost_usd: float, credits: int) -> str:
+    """Compare a measured average per-run cost to the credit revenue at the cheapest
+    bundle price. 'pass' holds the 65% floor, 'watch' is 50-65% (thin), 'fail' is below
+    50% margin (or a loss). This is the stress-test at $0.70/credit."""
+    revenue = credits * FLOOR_CREDIT_PRICE
+    if revenue <= 0:
+        return "no_data"
+    margin = 1 - (avg_cost_usd / revenue)
+    if margin >= MARGIN_FLOOR:
+        return "pass"
+    if margin >= 0.50:
+        return "watch"
+    return "fail"
+
+
 def split_spend(included: int, purchased: int, n: int) -> Optional[Tuple[int, int]]:
     """Pure: draw `n` credits, included bucket first then purchased. Returns
     (from_included, from_purchased) or None if the wallet cannot cover `n`. (Included

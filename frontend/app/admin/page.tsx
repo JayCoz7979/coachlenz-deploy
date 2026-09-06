@@ -16,7 +16,8 @@ export default function AdminPage() {
   const [features, setFeatures] = useState<any[]>([])
   const [retention, setRetention] = useState<any>(null)
   const [funnel, setFunnel] = useState<any>(null)
-  const [tab, setTab] = useState<'orgs'|'retention'|'funnel'|'features'|'flags'|'stats'>('orgs')
+  const [costs, setCosts] = useState<any>(null)
+  const [tab, setTab] = useState<'orgs'|'retention'|'funnel'|'costs'|'features'|'flags'|'stats'>('orgs')
   const [orgToDelete, setOrgToDelete] = useState<{id: string, name: string} | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [err, setErr] = useState('')
@@ -34,6 +35,7 @@ export default function AdminPage() {
     api.get('/admin/feature-flags').then(r => setFeatures(r.data.flags || [])).catch(() => {})
     api.get('/admin/retention').then(r => setRetention(r.data)).catch(() => {})
     api.get('/admin/funnel').then(r => setFunnel(r.data)).catch(() => {})
+    api.get('/admin/analysis-costs').then(r => setCosts(r.data)).catch(() => {})
   }, [user])
 
   const gateStyle: Record<string, string> = {
@@ -82,8 +84,8 @@ export default function AdminPage() {
           <h2 className="text-2xl font-bold mb-6 flex items-center gap-3"><ShieldCheck className="text-brand-400" /> Admin Panel</h2>
           {err && <div className="mb-4 text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-2">{err}</div>}
           <div className="flex gap-2 mb-6">
-            {(['orgs','retention','funnel','features','flags','stats'] as const).map(t => (
-              <button key={t} onClick={() => setTab(t)} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === t ? 'bg-brand-500 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-100'}`}>{t === 'orgs' ? 'Organizations' : t === 'retention' ? 'Retention' : t === 'funnel' ? 'Funnel' : t === 'features' ? 'Feature Toggles' : t === 'flags' ? 'Risk Flags' : 'Stats'}</button>
+            {(['orgs','retention','funnel','costs','features','flags','stats'] as const).map(t => (
+              <button key={t} onClick={() => setTab(t)} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === t ? 'bg-brand-500 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-100'}`}>{t === 'orgs' ? 'Organizations' : t === 'retention' ? 'Retention' : t === 'funnel' ? 'Funnel' : t === 'costs' ? 'Costs' : t === 'features' ? 'Feature Toggles' : t === 'flags' ? 'Risk Flags' : 'Stats'}</button>
             ))}
           </div>
           {tab === 'stats' && stats && (
@@ -211,6 +213,36 @@ export default function AdminPage() {
                 </>
               )}
               {!funnel && <div className="text-center text-gray-500 py-12">Loading funnel…</div>}
+            </div>
+          )}
+          {tab === 'costs' && (
+            <div className="space-y-4">
+              <p className="text-sm text-gray-400">Real measured cost per analysis run (from our own token accounting), grouped by sport and type, checked against the {costs ? Math.round(costs.margin_floor * 100) : 65}% margin floor at the cheapest credit price (${costs?.floor_credit_price ?? 0.70}/credit). <span className="text-gray-300">pass</span> holds the floor, <span className="text-gray-300">watch</span> is 50-65%, <span className="text-gray-300">fail</span> is below 50%.</p>
+              {costs && costs.groups?.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead><tr className="text-gray-400 border-b border-gray-800"><th className="text-left pb-3">Sport</th><th className="text-left pb-3">Type</th><th className="text-right pb-3">Runs</th><th className="text-right pb-3">Avg cost</th><th className="text-right pb-3">Max</th><th className="text-right pb-3">Credits</th><th className="text-right pb-3">Rev @ floor</th><th className="text-right pb-3">Margin</th><th className="text-right pb-3">Verdict</th></tr></thead>
+                    <tbody className="divide-y divide-gray-800">
+                      {costs.groups.map((g: any) => {
+                        const vstyle: Record<string,string> = { pass: 'bg-brand-500/15 text-brand-400', watch: 'bg-yellow-500/15 text-yellow-400', fail: 'bg-red-500/15 text-red-400', no_data: 'bg-gray-700 text-gray-400' }
+                        return (
+                          <tr key={g.sport + g.type}>
+                            <td className="py-3 capitalize">{g.sport}</td>
+                            <td className="py-3">{g.type === 'deep_grade' ? 'Deep + grade' : 'Standard'}</td>
+                            <td className="py-3 text-right">{g.runs}</td>
+                            <td className="py-3 text-right">${g.avg_usd}</td>
+                            <td className="py-3 text-right text-gray-500">${g.max_usd}</td>
+                            <td className="py-3 text-right">{g.credits}</td>
+                            <td className="py-3 text-right text-gray-500">${g.revenue_at_floor}</td>
+                            <td className="py-3 text-right">{g.margin_at_floor === null ? '-' : `${Math.round(g.margin_at_floor * 100)}%`}</td>
+                            <td className="py-3 text-right"><span className={`text-[11px] px-2 py-0.5 rounded uppercase font-medium ${vstyle[g.verdict]}`}>{g.verdict === 'no_data' ? 'no data' : g.verdict}</span></td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : <div className="text-center text-gray-500 py-12">No analysis cost data yet. This fills in as coaches run film analyses (measured from real token usage).</div>}
             </div>
           )}
           {tab === 'orgs' && (
