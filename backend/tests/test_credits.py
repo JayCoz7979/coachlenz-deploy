@@ -48,6 +48,15 @@ def test_margin_floor_ceilings():
     assert C.MARGIN_FLOOR == 0.65
 
 
+def test_margin_verdict_bands():
+    # Deep+grade football = 55 credits -> $38.50 revenue at the $0.70 floor.
+    assert C.margin_verdict(10.0, 55) == "pass"      # ~74% margin
+    assert C.margin_verdict(13.475, 55) == "pass"    # exactly 65%
+    assert C.margin_verdict(16.0, 55) == "watch"     # ~58%
+    assert C.margin_verdict(20.0, 55) == "fail"      # ~48% (thin/loss risk)
+    assert C.margin_verdict(5.0, 0) == "no_data"
+
+
 def test_subscription_tiers_are_access_only():
     assert C.SUBSCRIPTION_TIERS["coach"]["monthly_cents"] == 999
     assert C.SUBSCRIPTION_TIERS["athletic_dept"]["monthly_cents"] == 2999

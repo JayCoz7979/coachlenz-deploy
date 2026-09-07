@@ -10,8 +10,10 @@ from backend.models.abuse import RiskFlag, AuditLog
 from backend.models.teams_of_month import TeamSubmission, FeaturedTeam
 from backend.models.usage import AnalysisUsage
 from backend.models.funnel import FunnelEvent
+from backend.models.agent_log import AgentLog
+from backend.models.game import Game
 from backend.services.auth import require_admin
-from backend.services import feature_flags, retention, funnel
+from backend.services import feature_flags, retention, funnel, credits
 from datetime import datetime
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -68,6 +70,52 @@ async def funnel_gate(user: User = Depends(require_admin), db: AsyncSession = De
         [{"event": r.event, "anon_id": r.anon_id, "created_at": r.created_at, "source": r.source}
          for r in rows]
     )
+
+
+@router.get("/analysis-costs")
+async def analysis_costs(user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Real per-run analysis cost from the measured cost logs (agent_logs phase=cost),
+    grouped by sport + type, each checked against its 65% margin ceiling. This is the
+    live answer to 'what does a football deep analysis actually cost', from our own
+    token accounting, not Anthropic's aggregate bill."""
+    rows = (await db.execute(
+        select(AgentLog.detail, Game.sport)
+        .join(Game, Game.id == AgentLog.game_id, isouter=True)
+        .where(AgentLog.phase == "cost")
+        .order_by(AgentLog.created_at.desc()).limit(2000)
+    )).all()
+
+    groups: dict = {}
+    for detail, sport in rows:
+        d = detail or {}
+        total = d.get("total_usd")
+        if total is None:
+            continue
+        deep = (d.get("mode") == "deep") or bool(d.get("grade"))
+        sp = (sport or "football").lower()
+        key = (sp, "deep_grade" if deep else "standard")
+        g = groups.setdefault(key, {"sport": sp, "type": key[1], "deep": deep,
+                                    "runs": 0, "sum": 0.0, "max": 0.0})
+        g["runs"] += 1
+        g["sum"] += float(total)
+        g["max"] = max(g["max"], float(total))
+
+    out = []
+    for g in groups.values():
+        avg = round(g["sum"] / g["runs"], 4)
+        cr = credits.credits_for(sport=g["sport"], deep=g["deep"], is_rerun=False)
+        revenue = round(cr * credits.FLOOR_CREDIT_PRICE, 2)
+        out.append({
+            "sport": g["sport"], "type": g["type"], "runs": g["runs"],
+            "avg_usd": avg, "max_usd": round(g["max"], 4),
+            "credits": cr, "revenue_at_floor": revenue,
+            "max_cogs": credits.max_cogs_at_floor(cr),
+            "margin_at_floor": round(1 - avg / revenue, 4) if revenue else None,
+            "verdict": credits.margin_verdict(avg, cr),
+        })
+    out.sort(key=lambda x: (x["sport"], x["type"]))
+    return {"margin_floor": credits.MARGIN_FLOOR, "floor_credit_price": credits.FLOOR_CREDIT_PRICE,
+            "total_runs": sum(g["runs"] for g in groups.values()), "groups": out}
 
 
 @router.get("/orgs")
