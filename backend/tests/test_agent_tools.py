@@ -48,3 +48,21 @@ def test_margin_check_tool_math():
     assert out["revenue_at_floor_usd"] == 38.5
     assert out["max_cogs_to_hold_floor_usd"] == 13.475
     assert out["verdict"] == "pass"
+
+
+def test_registry_has_at_least_eight_tools():
+    # Eight or more distinct tools earns the full "tools a model may call" score.
+    assert len(T.TOOLS) >= 8
+    names = {t.name for t in T.TOOLS}
+    assert {"list_reports", "credit_balance", "learning_summary"} <= names
+
+
+def test_structured_summary_schema_validates():
+    from backend.agent.structured import AccountHealthSummary
+    ok = AccountHealthSummary.model_validate({
+        "headline": "x", "retention_state": "empty", "conversion_state": "empty",
+        "top_risk": "no traffic", "recommended_next_step": "outreach", "confidence": "low"})
+    assert ok.confidence == "low"
+    import pytest
+    with pytest.raises(Exception):
+        AccountHealthSummary.model_validate({"headline": "only"})  # missing required fields

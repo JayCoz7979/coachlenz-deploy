@@ -22,6 +22,21 @@ Tools: `backend/agent/tools.py`. System prompt: `backend/agent/prompts/operator.
 - `list_recent_games`: the caller org's recent games.
 - `retention_gate`: platform retention summary vs the gate (admin).
 - `conversion_funnel`: platform visitor-to-signup funnel + biggest drop-off (admin).
+- `list_reports`: the caller org's recent generated reports.
+- `credit_balance`: the caller org's analysis-credit wallet balance.
+- `learning_summary`: the org's per-account learning adjustments by status.
+
+## Orchestration
+`POST /agent/workflow/account-health` chains retention, conversion, and credit
+economics, then produces a schema-validated `AccountHealthSummary`
+(`backend/agent/structured.py`, model output validated by Pydantic before use).
+Workflow code: `backend/agent/workflows.py`.
+
+## Mutating actions (human-gated)
+Write actions are never in the read-only tool registry. The agent PROPOSES one via
+`POST /agent/actions/*` (e.g. `learning-mode`), which queues an `agent_approvals` row.
+A human approves at `POST /agent/approvals/{id}/approve` (or rejects), and only then
+does it execute. List pending at `GET /agent/approvals`.
 
 ## UATP (transparency contract, required)
 Every agent action discloses identity ("CoachLenz Operator"), logs each tool call with

@@ -101,6 +101,43 @@ async def _conversion_funnel(ctx: ToolContext, args: Dict[str, Any]) -> Dict[str
             "steps": out["steps"], "biggest_drop": out["biggest_drop"]}
 
 
+async def _list_reports(ctx: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
+    from backend.models.report import TendencyReport
+    if not ctx.organization_id:
+        return {"error": "no organization in context"}
+    limit = max(1, min(int(args.get("limit", 20)), 100))
+    rows = (await ctx.db.execute(
+        select(TendencyReport.id, TendencyReport.title, TendencyReport.sport,
+               TendencyReport.report_type, TendencyReport.generated_at)
+        .where(TendencyReport.organization_id == ctx.organization_id)
+        .order_by(TendencyReport.generated_at.desc().nullslast()).limit(limit)
+    )).all()
+    return {"reports": [{"id": str(r.id), "title": r.title, "sport": r.sport,
+                         "type": r.report_type,
+                         "generated_at": r.generated_at.isoformat() if r.generated_at else None}
+                        for r in rows]}
+
+
+async def _credit_balance(ctx: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
+    from backend.services import credits
+    if not ctx.organization_id:
+        return {"error": "no organization in context"}
+    return await credits.balance(ctx.db, ctx.organization_id)
+
+
+async def _learning_summary(ctx: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
+    from backend.models.learning import AccountLearningAdjustment
+    from sqlalchemy import func
+    if not ctx.organization_id:
+        return {"error": "no organization in context"}
+    rows = (await ctx.db.execute(
+        select(AccountLearningAdjustment.status, func.count())
+        .where(AccountLearningAdjustment.organization_id == ctx.organization_id)
+        .group_by(AccountLearningAdjustment.status)
+    )).all()
+    return {"learning_adjustments_by_status": {r[0]: r[1] for r in rows}}
+
+
 TOOLS: List[Tool] = [
     Tool("credit_costs", "The credit cost of each analysis type, the credit bundles, and the margin floor. No arguments.",
          {"type": "object", "properties": {}, "additionalProperties": False}, _credit_costs),
@@ -116,6 +153,13 @@ TOOLS: List[Tool] = [
          {"type": "object", "properties": {}, "additionalProperties": False}, _retention_gate, admin_only=True),
     Tool("conversion_funnel", "The platform conversion funnel: visitor-to-signup rate, step counts, biggest drop-off, gate verdict. Admin only.",
          {"type": "object", "properties": {}, "additionalProperties": False}, _conversion_funnel, admin_only=True),
+    Tool("list_reports", "List the caller's organization's most recent generated reports (id, title, sport, type).",
+         {"type": "object", "properties": {"limit": {"type": "integer", "description": "max reports (1-100)"}},
+          "additionalProperties": False}, _list_reports),
+    Tool("credit_balance", "The caller's organization's current analysis-credit wallet balance.",
+         {"type": "object", "properties": {}, "additionalProperties": False}, _credit_balance),
+    Tool("learning_summary", "How many per-account learning adjustments the org has, by status (pending/active/rejected).",
+         {"type": "object", "properties": {}, "additionalProperties": False}, _learning_summary),
 ]
 
 
