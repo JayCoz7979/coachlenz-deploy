@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "coachlenz-operator": {
+      "command": "python",
+      "args": ["-m", "backend.mcp_server.server"],
+      "description": "CoachLenz Operator, read-only analytics tools over the CoachLenz API. See backend/mcp_server/server-card.json and AGENTS.md.",
+      "readOnly": true
+    }
+  }
+}

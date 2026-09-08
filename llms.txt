@@ -1,0 +1,15 @@
+# CoachLenz
+
+> AI film-analyst OS for coaches. Upload game film, get a coordinator-style breakdown;
+> or chart a game live for free. FastAPI + Next.js, Railway Postgres + Cloudflare R2.
+
+## For agents
+- [AGENTS.md](AGENTS.md): how an agent operates CoachLenz (API, MCP server, tools, UATP).
+- [mcp.json](mcp.json): MCP server discovery.
+- [backend/mcp_server/server-card.json](backend/mcp_server/server-card.json): MCP server card.
+- [backend/openapi.json](backend/openapi.json): machine-readable API description.
+
+## Operator agent (read-only)
+- Endpoint: `POST /agent/run` (admin), tools at `GET /agent/tools`.
+- Tools: credit_costs, margin_check, list_recent_games, retention_gate, conversion_funnel.
+- All read-only. A mutating tool requires a human-approval gate (see AGENTS.md).
