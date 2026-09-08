@@ -1,0 +1,16 @@
+{
+  "name": "coachlenz-operator",
+  "description": "Read-only operator agent for the CoachLenz AI Film Analyst OS. Exposes safe analytics tools (credit costs, margin check, recent games, retention gate, conversion funnel) to any MCP client. Changes nothing.",
+  "version": "0.1.0",
+  "transport": "stdio",
+  "command": "python",
+  "args": ["-m", "backend.mcp_server.server"],
+  "readOnly": true,
+  "tools": [
+    "credit_costs",
+    "margin_check",
+    "list_recent_games",
+    "retention_gate",
+    "conversion_funnel"
+  ]
+}
