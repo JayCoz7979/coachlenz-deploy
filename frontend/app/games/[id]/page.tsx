@@ -1635,7 +1635,8 @@ export default function GamePage() {
       const r = await api.get(`/games/${id}/auto-detect/status`)
       setDetectStatus(r.data)
       startDetectPoll()
-      showToast(test ? 'Quick test started (first few minutes, pennies)…'
+      showToast(segment ? `Deep 3-pass started on ${+((segment.end - segment.start) / 60).toFixed(1)} min of film (video ${fmtTime(segment.start)}–${fmtTime(segment.end)}, not game clock)…`
+        : test ? 'Quick test started (first few minutes, pennies)…'
         : dryRun ? 'Preview started (nothing will be saved)…'
         : mode === 'deep' ? 'Deep 3-pass breakdown started…' : 'Film breakdown started…')
     } catch (e: any) {
@@ -1854,16 +1855,18 @@ export default function GamePage() {
                   {/* Deep on just a segment (cheaper) */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
                     <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: '#C9A84C', width: 90 }}>DEEP · SEGMENT</span>
-                    <span style={{ fontSize: 11, color: '#7a7a6e' }}>minutes</span>
+                    <span style={{ fontSize: 11, color: '#7a7a6e' }}>film time</span>
                     <input value={segStartMin} onChange={e => setSegStartMin(e.target.value)} placeholder="start" inputMode="decimal"
                       style={{ width: 52, background: '#2e2e28', border: '1px solid #44443c', borderRadius: 5, color: '#f0eee6', fontSize: 11, padding: '6px 8px', textAlign: 'center' }} />
                     <span style={{ fontSize: 11, color: '#7a7a6e' }}>to</span>
                     <input value={segEndMin} onChange={e => setSegEndMin(e.target.value)} placeholder="end" inputMode="decimal"
                       style={{ width: 52, background: '#2e2e28', border: '1px solid #44443c', borderRadius: 5, color: '#f0eee6', fontSize: 11, padding: '6px 8px', textAlign: 'center' }} />
-                    <button onClick={runDeepSegment} title="Run the deep 3-pass engine on ONLY the minutes you pick (e.g. one quarter). Priced pro-rata — a fraction of a full-game deep run." style={{ background: 'none', border: '1px solid #C9A84C', borderRadius: 5, color: '#C9A84C', fontSize: 11, cursor: 'pointer', padding: '6px 12px', fontWeight: 700, letterSpacing: '0.04em' }}>
+                    <span style={{ fontSize: 11, color: '#7a7a6e' }}>min</span>
+                    {(() => { const s = parseFloat(segStartMin), e = parseFloat(segEndMin); return (!isNaN(s) && !isNaN(e) && e > s) ? <span style={{ fontSize: 11, color: '#C9A84C', fontWeight: 700 }}>= {+(e - s).toFixed(1)} min of film</span> : null })()}
+                    <button onClick={runDeepSegment} title="Run the deep 3-pass engine on ONLY the stretch of the VIDEO you pick (film time on the player, not the game clock). Priced pro-rata — a fraction of a full-game deep run." style={{ background: 'none', border: '1px solid #C9A84C', borderRadius: 5, color: '#C9A84C', fontSize: 11, cursor: 'pointer', padding: '6px 12px', fontWeight: 700, letterSpacing: '0.04em' }}>
                       Run Deep Segment
                     </button>
-                    <span style={{ fontSize: 10, color: '#6f6f64' }}>deep quality on just the part you pick — priced by length, far cheaper than a full game</span>
+                    <span style={{ fontSize: 10, color: '#6f6f64', width: '100%' }}>These are timestamps on the video (the time shown in the player), NOT the game clock. 20 to 25 = 5 minutes of film. Priced by length, far cheaper than a full game.</span>
                   </div>
                 </div>
               )
@@ -1936,17 +1939,20 @@ export default function GamePage() {
                         or preview (nothing saved)
                       </button>
                     </div>
-                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 2 }} title="Deep 3-pass on just part of the film (e.g. one quarter). Cost scales with the length you pick, so a 12-minute segment is a fraction of a full-game deep run.">
-                      <span style={{ fontSize: 10, color: '#7a7a6e', fontWeight: 700, letterSpacing: '0.04em' }}>DEEP ON A SEGMENT (MIN)</span>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 2 }} title="Deep 3-pass on just a stretch of the VIDEO (film time on the player, not the game clock). Cost scales with the length you pick, so a 12-minute segment is a fraction of a full-game deep run.">
+                      <span style={{ fontSize: 10, color: '#7a7a6e', fontWeight: 700, letterSpacing: '0.04em' }}>DEEP ON A SEGMENT · FILM TIME</span>
                       <input value={segStartMin} onChange={e => setSegStartMin(e.target.value)} placeholder="start" inputMode="decimal"
                         style={{ width: 46, background: '#2e2e28', border: '1px solid #44443c', borderRadius: 4, color: '#f0eee6', fontSize: 11, padding: '4px 6px', textAlign: 'center' }} />
                       <span style={{ fontSize: 10, color: '#7a7a6e' }}>to</span>
                       <input value={segEndMin} onChange={e => setSegEndMin(e.target.value)} placeholder="end" inputMode="decimal"
                         style={{ width: 46, background: '#2e2e28', border: '1px solid #44443c', borderRadius: 4, color: '#f0eee6', fontSize: 11, padding: '4px 6px', textAlign: 'center' }} />
+                      <span style={{ fontSize: 10, color: '#7a7a6e' }}>min</span>
+                      {(() => { const s = parseFloat(segStartMin), e = parseFloat(segEndMin); return (!isNaN(s) && !isNaN(e) && e > s) ? <span style={{ fontSize: 10, color: '#C9A84C', fontWeight: 700 }}>= {+(e - s).toFixed(1)} min of film</span> : null })()}
                       <button onClick={runDeepSegment}
                         style={{ background: 'none', border: '1px solid #C9A84C', borderRadius: 4, color: '#C9A84C', fontSize: 10, cursor: 'pointer', padding: '4px 10px', fontWeight: 700, letterSpacing: '0.05em' }}>
                         RUN DEEP SEGMENT
                       </button>
+                      <span style={{ fontSize: 10, color: '#6f6f64', width: '100%' }}>Timestamps on the video (the time in the player), not the game clock. 20 to 25 = 5 minutes of film.</span>
                     </div>
                   </div>
                 </div>
