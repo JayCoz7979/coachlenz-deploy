@@ -70,6 +70,18 @@ export default function AdminPage() {
     }
   }
 
+  async function saveTrueShots(gameId: string, raw: string) {
+    const t = raw.trim()
+    const n = t === '' ? null : parseInt(t, 10)
+    if (n !== null && (isNaN(n) || n < 0)) return
+    try {
+      await api.put(`/admin/detection-quality/${gameId}/true-shots`, { true_shot_count: n })
+      const r = await api.get('/admin/detection-quality'); setDetection(r.data)
+    } catch (e: any) {
+      alert(e.response?.data?.detail || 'Could not save the true FGA count.')
+    }
+  }
+
   async function toggleTenure(orgId: string, current: boolean) {
     await api.patch(`/admin/orgs/${orgId}`, { has_coach_tenure_access: !current })
     setOrgs(o => o.map(x => x.id === orgId ? { ...x, has_coach_tenure_access: !current } : x))
@@ -284,7 +296,7 @@ export default function AdminPage() {
                   <div className="overflow-x-auto">
                     <h3 className="text-xs uppercase tracking-wide text-gray-500 mb-2">Per game</h3>
                     <table className="w-full text-sm">
-                      <thead><tr className="text-gray-400 border-b border-gray-800"><th className="text-left pb-3">Game</th><th className="text-left pb-3">Film</th><th className="text-right pb-3">Found</th><th className="text-right pb-3">Missed</th><th className="text-right pb-3">Recall</th><th className="text-right pb-3">True count</th><th className="text-right pb-3">Label edits</th><th className="text-right pb-3">Speed</th><th className="text-right pb-3">Verdict</th></tr></thead>
+                      <thead><tr className="text-gray-400 border-b border-gray-800"><th className="text-left pb-3">Game</th><th className="text-left pb-3">Film</th><th className="text-right pb-3">Found</th><th className="text-right pb-3">Missed</th><th className="text-right pb-3">Recall</th><th className="text-right pb-3">True count</th><th className="text-right pb-3">Shot recall (BB)</th><th className="text-right pb-3">Label edits</th><th className="text-right pb-3">Speed</th><th className="text-right pb-3">Verdict</th></tr></thead>
                       <tbody className="divide-y divide-gray-800">
                         {detection.games.map((g: any) => (
                           <tr key={g.game_id}>
@@ -303,6 +315,23 @@ export default function AdminPage() {
                                 onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
                                 className="w-16 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-right text-xs focus:border-brand-500 outline-none"
                               />
+                            </td>
+                            <td className="py-3 text-right">
+                              {g.sport === 'basketball' ? (
+                                <span className="inline-flex items-center gap-1.5 justify-end">
+                                  <span className="text-gray-500 text-xs">{g.shots_detected}/</span>
+                                  <input
+                                    type="number" min={0}
+                                    defaultValue={g.true_shots ?? ''}
+                                    placeholder="FGA"
+                                    title="Confirmed true field-goal attempts (made + missed, both teams) from the box score. Sets real shot recall. Enter to save."
+                                    onBlur={e => { if ((e.target.value.trim() || null) !== (g.true_shots?.toString() ?? null)) saveTrueShots(g.game_id, e.target.value) }}
+                                    onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                                    className="w-14 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-right text-xs focus:border-brand-500 outline-none"
+                                  />
+                                  {g.shot_recall !== null && <span className={`text-[11px] px-1.5 py-0.5 rounded ${gateStyle[g.shot_recall_verdict]}`}>{pct(g.shot_recall)}</span>}
+                                </span>
+                              ) : <span className="text-gray-600">-</span>}
                             </td>
                             <td className="py-3 text-right">{pct(g.label_edit_rate)}</td>
                             <td className="py-3 text-right">{g.realtime_ratio === null ? '-' : `${g.realtime_ratio}x`}</td>

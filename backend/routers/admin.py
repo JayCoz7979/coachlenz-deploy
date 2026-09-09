@@ -126,7 +126,7 @@ async def detection_quality_gate(user: User = Depends(require_admin), db: AsyncS
     timeliness, per game and cut by film resolution, all from our own data. This is
     the number that says whether film analysis is 'top notch' before a coach ever
     sees it. Recall is a FLOOR unless a true play count is supplied per game."""
-    from sqlalchemy import case
+    from sqlalchemy import case, and_
     from backend.models.event import Event
     from backend.models.learning import CoachLabelCorrection
 
@@ -141,6 +141,7 @@ async def detection_quality_gate(user: User = Depends(require_admin), db: AsyncS
             func.sum(case((auto_b == True, 1), else_=0)).label("auto"),
             func.sum(case((nr_b == True, 1), else_=0)).label("needs_review"),
             func.avg(case((auto_b == True, conf_f), else_=None)).label("avg_conf"),
+            func.sum(case((and_(auto_b == True, Event.event_type == "shot"), 1), else_=0)).label("shots"),
         ).group_by(Event.game_id)
     )).all()
 
@@ -167,7 +168,7 @@ async def detection_quality_gate(user: User = Depends(require_admin), db: AsyncS
     if game_ids:
         grows = (await db.execute(
             select(Game.id, Game.sport, Game.film_height, Game.title, Game.game_date,
-                   Game.true_play_count)
+                   Game.true_play_count, Game.true_shot_count)
             .where(Game.id.in_(game_ids))
         )).all()
         game_meta = {g.id: g for g in grows}
@@ -198,6 +199,8 @@ async def detection_quality_gate(user: User = Depends(require_admin), db: AsyncS
             "auto_plays": auto,
             "coach_added_plays": max(total - auto, 0),
             "true_plays": (meta.true_play_count if meta and meta.true_play_count else None),
+            "shots_detected": int(r.shots or 0),
+            "true_shots": (meta.true_shot_count if meta and meta.true_shot_count else None),
             "corrections": corr_by_game.get(gid, 0),
             "needs_review": int(r.needs_review or 0),
             "avg_confidence": round(float(r.avg_conf), 3) if r.avg_conf is not None else None,
@@ -229,6 +232,26 @@ async def set_true_play_count(game_id: str, body: TrueCountUpdate,
     game.true_play_count = (body.true_count or None)
     await db.commit()
     return {"ok": True, "game_id": game_id, "true_play_count": game.true_play_count}
+
+
+class TrueShotsUpdate(BaseModel):
+    true_shot_count: Optional[int] = None  # None or 0 clears it
+
+
+@router.put("/detection-quality/{game_id}/true-shots")
+async def set_true_shot_count(game_id: str, body: TrueShotsUpdate,
+                              user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Basketball: set (or clear) the admin-confirmed true field-goal-attempt count
+    (made + missed, both teams) for a game, so the gate shows shot-scoped recall
+    (detected shot events / true FGA). Pass null or 0 to clear it."""
+    game = (await db.execute(select(Game).where(Game.id == game_id))).scalar_one_or_none()
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+    if body.true_shot_count is not None and body.true_shot_count < 0:
+        raise HTTPException(status_code=400, detail="true_shot_count cannot be negative")
+    game.true_shot_count = (body.true_shot_count or None)
+    await db.commit()
+    return {"ok": True, "game_id": game_id, "true_shot_count": game.true_shot_count}
 
 
 @router.get("/orgs")

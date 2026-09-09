@@ -83,6 +83,15 @@ def _score_game(g: Dict[str, Any]) -> Dict[str, Any]:
     denom = true_plays if labeled else total
     recall = round(auto / denom, 4) if denom else None
 
+    # Basketball shot-scoped recall: detected 'shot' events vs a true FGA count.
+    # Apples-to-apples for basketball, where the all-event recall above does not
+    # match a scorebook. Only meaningful when a true FGA count is set.
+    shots_detected = int(g.get("shots_detected") or 0)
+    true_shots = g.get("true_shots")
+    shot_labeled = isinstance(true_shots, int) and true_shots > 0
+    shot_recall = round(shots_detected / true_shots, 4) if shot_labeled else None
+    shot_verdict = _recall_verdict(shot_recall, true_shots if shot_labeled else 0)
+
     elapsed = g.get("elapsed_seconds")
     film_secs = g.get("film_seconds")
     realtime_ratio = (round(elapsed / film_secs, 3)
@@ -104,6 +113,10 @@ def _score_game(g: Dict[str, Any]) -> Dict[str, Any]:
         "measurement": "labeled" if labeled else "proxy",
         "recall": recall,
         "recall_verdict": _recall_verdict(recall, denom or 0),
+        "shots_detected": shots_detected,
+        "true_shots": true_shots if shot_labeled else None,
+        "shot_recall": shot_recall,
+        "shot_recall_verdict": shot_verdict,
         "corrections": corrections,
         "label_edit_rate": edit_rate,
         "label_verdict": _label_verdict(edit_rate, auto),
@@ -131,6 +144,12 @@ def _aggregate(games: List[Dict[str, Any]], label: str) -> Dict[str, Any]:
     any_labeled = any(g["measurement"] == "labeled" for g in games)
     recall = round(auto / denom, 4) if denom else None
     edit_rate = round(corrections / auto, 4) if auto else None
+    # Pooled basketball shot recall over the games that have a true FGA count.
+    shots_detected = sum(g["shots_detected"] for g in games)
+    shot_true = sum(g["true_shots"] for g in games if g["true_shots"])
+    shot_recall = round(
+        sum(g["shots_detected"] for g in games if g["true_shots"]) / shot_true, 4
+    ) if shot_true else None
     ratios = [g["realtime_ratio"] for g in games if g["realtime_ratio"] is not None]
     confs = [g["avg_confidence"] for g in games if g["avg_confidence"] is not None]
     return {
@@ -142,6 +161,9 @@ def _aggregate(games: List[Dict[str, Any]], label: str) -> Dict[str, Any]:
         "measurement": "labeled" if any_labeled else "proxy",
         "recall": recall,
         "recall_verdict": _recall_verdict(recall, denom),
+        "shots_detected": shots_detected,
+        "shot_recall": shot_recall,
+        "shot_recall_verdict": _recall_verdict(shot_recall, shot_true),
         "corrections": corrections,
         "label_edit_rate": edit_rate,
         "label_verdict": _label_verdict(edit_rate, auto),
@@ -173,7 +195,8 @@ def build_scorecard(games: List[Dict[str, Any]]) -> Dict[str, Any]:
     overall = _aggregate(scored, "All analyzed film") if scored else {
         "label": "All analyzed film", "games": 0, "auto_plays": 0,
         "coach_added_plays": 0, "total_plays": 0, "measurement": "proxy",
-        "recall": None, "recall_verdict": "no_data", "corrections": 0,
+        "recall": None, "recall_verdict": "no_data", "shots_detected": 0,
+        "shot_recall": None, "shot_recall_verdict": "no_data", "corrections": 0,
         "label_edit_rate": None, "label_verdict": "no_data", "needs_review": 0,
         "needs_review_rate": None, "avg_confidence": None,
         "median_realtime_ratio": None,

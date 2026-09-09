@@ -82,6 +82,28 @@ def test_film_quality_cut_pools_recall_play_weighted():
     assert sc["overall"]["recall"] == 0.805
 
 
+def test_basketball_shot_recall_against_true_fga():
+    # 96 detected shot events vs a scorebook 120 FGA -> 80% shot recall (watch).
+    sc = dq.build_scorecard([{"game_id": "bb", "sport": "basketball",
+                              "auto_plays": 240, "coach_added_plays": 0,
+                              "shots_detected": 96, "true_shots": 120,
+                              "film_height": 720}])
+    g = sc["games"][0]
+    assert g["shots_detected"] == 96
+    assert g["shot_recall"] == 0.8
+    assert g["shot_recall_verdict"] == "watch"
+    # Pooled into the bucket too.
+    assert sc["overall"]["shot_recall"] == 0.8
+
+
+def test_shot_recall_is_none_without_a_true_fga_count():
+    g = dq.build_scorecard([{"game_id": "bb", "sport": "basketball",
+                             "auto_plays": 240, "coach_added_plays": 0,
+                             "shots_detected": 96}])["games"][0]
+    assert g["shot_recall"] is None
+    assert g["shot_recall_verdict"] == "no_data"
+
+
 def test_unknown_resolution_bucketed_separately():
     sc = dq.build_scorecard([{"game_id": "g", "auto_plays": 10, "coach_added_plays": 0,
                               "film_height": None}])
