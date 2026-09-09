@@ -1806,24 +1806,45 @@ export default function GamePage() {
 
               if (isDone) return (
                 <div style={{
-                  display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12,
+                  marginBottom: 12,
                   background: 'rgba(45,140,64,0.07)', border: '1px solid rgba(45,140,64,0.2)',
-                  borderRadius: 6, padding: '10px 16px', fontSize: 13,
+                  borderRadius: 8, padding: '12px 16px',
                 }}>
-                  <CheckCircle size={14} style={{ color: '#2d8c40' }} />
-                  <span style={{ color: '#2d8c40', fontWeight: 600 }}>
-                    {detectStatus.plays_detected} plays broken down
-                  </span>
-                  <span style={{ color: '#7a7a6e', marginLeft: 4 }}>— review in the Play Log, edit any you need.</span>
-                  <button onClick={() => handleAutoDetect(false, 'fast', true)} title="Quick test: first few minutes only, costs pennies. Confirms the breakdown and team colors cheaply." style={{ marginLeft: 'auto', background: 'none', border: '1px solid #44443c', borderRadius: 4, color: '#a8d8b0', fontSize: 11, cursor: 'pointer', padding: '4px 10px', fontWeight: 700 }}>
-                    Quick Test
-                  </button>
-                  <button onClick={() => handleAutoDetect(false, 'fast')} title="Quick single-pass re-run." style={{ background: 'none', border: 'none', color: '#7a7a6e', fontSize: 11, cursor: 'pointer' }}>
-                    Re-run Fast
-                  </button>
-                  <button onClick={() => handleAutoDetect(false, 'deep')} title="Three-pass engine: two detection passes plus a final verification pass. Richest read, higher confidence, ~3x cost." style={{ background: '#C9A84C', color: '#1c1c1c', border: 'none', borderRadius: 4, padding: '5px 12px', fontSize: 11, fontWeight: 700, cursor: 'pointer', letterSpacing: '0.04em' }}>
-                    DEEP · 3-PASS
-                  </button>
+                  {/* Status line */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                    <CheckCircle size={15} style={{ color: '#2d8c40', flexShrink: 0 }} />
+                    <span style={{ color: '#2d8c40', fontWeight: 700 }}>{detectStatus.plays_detected} plays broken down</span>
+                    <span style={{ color: '#7a7a6e' }}>— review them in the Play Log and edit any you need.</span>
+                  </div>
+
+                  {/* Re-analyze the whole film */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 12, paddingTop: 12, borderTop: '1px solid rgba(255,255,255,0.07)' }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: '#8a8a7e', width: 90 }}>RE-ANALYZE</span>
+                    <button onClick={() => handleAutoDetect(false, 'fast', true)} title="Quick test: first few minutes only, costs pennies. Confirms the breakdown and team colors cheaply." style={{ background: 'none', border: '1px solid #44443c', borderRadius: 5, color: '#a8d8b0', fontSize: 11, cursor: 'pointer', padding: '6px 12px', fontWeight: 700 }}>
+                      Quick Test
+                    </button>
+                    <button onClick={() => handleAutoDetect(false, 'fast')} title="Single-pass re-run of the whole film — quick and economical." style={{ background: '#2e2e28', border: '1px solid #44443c', borderRadius: 5, color: '#f0eee6', fontSize: 11, cursor: 'pointer', padding: '6px 12px', fontWeight: 700 }}>
+                      Fast (full game)
+                    </button>
+                    <button onClick={() => handleAutoDetect(false, 'deep')} title="Three-pass engine on the whole film: two detection passes plus a verification pass. Richest read, ~3x the cost." style={{ background: '#C9A84C', color: '#1c1c1c', border: 'none', borderRadius: 5, padding: '6px 14px', fontSize: 11, fontWeight: 700, cursor: 'pointer', letterSpacing: '0.04em' }}>
+                      DEEP · 3-PASS (full game)
+                    </button>
+                  </div>
+
+                  {/* Deep on just a segment (cheaper) */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: '#C9A84C', width: 90 }}>DEEP · SEGMENT</span>
+                    <span style={{ fontSize: 11, color: '#7a7a6e' }}>minutes</span>
+                    <input value={segStartMin} onChange={e => setSegStartMin(e.target.value)} placeholder="start" inputMode="decimal"
+                      style={{ width: 52, background: '#2e2e28', border: '1px solid #44443c', borderRadius: 5, color: '#f0eee6', fontSize: 11, padding: '6px 8px', textAlign: 'center' }} />
+                    <span style={{ fontSize: 11, color: '#7a7a6e' }}>to</span>
+                    <input value={segEndMin} onChange={e => setSegEndMin(e.target.value)} placeholder="end" inputMode="decimal"
+                      style={{ width: 52, background: '#2e2e28', border: '1px solid #44443c', borderRadius: 5, color: '#f0eee6', fontSize: 11, padding: '6px 8px', textAlign: 'center' }} />
+                    <button onClick={runDeepSegment} title="Run the deep 3-pass engine on ONLY the minutes you pick (e.g. one quarter). Priced pro-rata — a fraction of a full-game deep run." style={{ background: 'none', border: '1px solid #C9A84C', borderRadius: 5, color: '#C9A84C', fontSize: 11, cursor: 'pointer', padding: '6px 12px', fontWeight: 700, letterSpacing: '0.04em' }}>
+                      Run Deep Segment
+                    </button>
+                    <span style={{ fontSize: 10, color: '#6f6f64' }}>deep quality on just the part you pick — priced by length, far cheaper than a full game</span>
+                  </div>
                 </div>
               )
 
