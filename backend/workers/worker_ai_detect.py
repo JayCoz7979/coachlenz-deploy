@@ -52,7 +52,7 @@ CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "multipass-v17-bball-team-and-make"
+CODE_VERSION = "multipass-v18-bball-dense-frames"
 
 # Parallel ranged extraction: one long fps=0.5 pass over a 2.75h stream times out
 # silently. Instead decode many short windows concurrently, each its own ffmpeg.
@@ -63,6 +63,13 @@ FRAMES_PER_WINDOW = 40     # default / back-compat -> 1 frame / 7.5s
 # more frames for better recall.
 FRAMES_PER_WINDOW_FAST = 66  # ~1 frame / 4.5s
 FRAMES_PER_WINDOW_DEEP = 50  # ~1 frame / 6s
+# Basketball is continuous and its key events (a shot, a steal) happen in under a
+# second, so football-cadence sampling misses them — the shot lands between frames and
+# the possession gets logged with no outcome. Basketball samples MUCH denser so the
+# shot moment is actually on screen. Cost scales with frames, which is why deep-on-a-
+# segment exists (run this density on one quarter, not a full game).
+FRAMES_PER_WINDOW_BB_FAST = 120  # ~1 frame / 2.5s
+FRAMES_PER_WINDOW_BB_DEEP = 100  # ~1 frame / 3s
 PARALLEL_JOBS = 6          # concurrent ffmpeg processes
 JOB_TIMEOUT = 300          # per-window timeout (s); a stuck window fails alone, not the whole job
 
@@ -724,8 +731,14 @@ class AiDetectWorker(BaseWorker):
                         reason="A cheap sample to confirm the breakdown and team colors before you spend on a full game.",
                         detail={"test_seconds": int(duration)},
                     )
-                # Denser sampling for recall; lighter in deep mode since each batch is 3 calls.
-                fpw = FRAMES_PER_WINDOW_DEEP if getattr(self, "_multipass", False) else FRAMES_PER_WINDOW_FAST
+                # Denser sampling for recall; lighter in deep mode since each batch is 3
+                # calls. Basketball samples much denser (fast events land between football
+                # -cadence frames), which is why deep-on-a-segment exists to bound the cost.
+                _is_bb_sport = (getattr(game, "sport", "") or "").lower() == "basketball"
+                if getattr(self, "_multipass", False):
+                    fpw = FRAMES_PER_WINDOW_BB_DEEP if _is_bb_sport else FRAMES_PER_WINDOW_DEEP
+                else:
+                    fpw = FRAMES_PER_WINDOW_BB_FAST if _is_bb_sport else FRAMES_PER_WINDOW_FAST
                 frame_paths = await self._extract_windows(video_source, duration, frames_dir,
                                                           frames_per_window=fpw,
                                                           start_offset=seg_start, end_limit=seg_end)
