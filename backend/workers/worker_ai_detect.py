@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from typing import Optional
 
 from sqlalchemy import select, update, delete
@@ -51,7 +52,7 @@ CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "multipass-v12-grade-memory-fix"
+CODE_VERSION = "multipass-v13-film-profile"
 
 # Parallel ranged extraction: one long fps=0.5 pass over a 2.75h stream times out
 # silently. Instead decode many short windows concurrently, each its own ffmpeg.
@@ -217,6 +218,10 @@ DETECTION_PROMPT = """You are the most thorough football film analyst in the wor
 
 Your job: identify every DISTINCT football play in this window and extract MAXIMUM structured intelligence. Consecutive frames often show ONE play developing (pre-snap → snap → result) — return ONE play using pre-snap frames for formation/alignment and post-snap frames for result. If frames clearly span multiple snaps, return one object per snap.
 
+FILM SOURCE — READ FIRST. This is almost always single-camera coaches' or broadcast film from Hudl or the NFHS Network: one camera that stays wide before the snap, then pans and zooms to FOLLOW THE BALL, then RESETS to a wide shot between plays. Use that wide reset, with the offense breaking the huddle and lining up again, as the boundary between one play and the next: one snap is one play. Most raw Hudl film has NO score graphic at all (just the field); NFHS Network broadcast usually does. When there is no score bug, down, distance and field_position are null, and that is EXPECTED on this film, not a mistake — never invent them.
+
+CATCH EVERY SNAP FIRST. For a coach, a MISSED play is the worst possible error: it breaks their play count and their trust. A slightly-wrong label is a two-second fix. So when you see a real snap, ALWAYS emit it — even at lower confidence — rather than dropping it; the low confidence flags it for the coach's eyes. Spend your best reads on the fields this wide angle actually shows (side, formation, personnel, receiver alignment, motion, run vs pass, run direction/gap, pass depth/area, result). On this wide angle you usually CANNOT see a lineman's hand or stance, so leave the pre-snap micro-tells null rather than guessing.
+
 Catch EVERY snap: run, pass, screen, draw, QB sneak, RPO, option, punt, field goal, PAT, kickoff, return.
 
 Skip: timeouts, huddles, sideline shots, commercials, halftime, replays (same action shown twice), pre-game, post-game, no live action.
@@ -321,6 +326,8 @@ DETECTION_PROMPT_PRESNAP = """You are the best pre-snap film analyst alive — b
 YOUR ONLY JOB IN THIS PASS: find every DISTINCT football play in this window and read the PRE-SNAP picture for each. Do NOT judge the result yet — another pass handles that.
 
 Identify each distinct snap (run, pass, screen, RPO, option, punt, FG, PAT, kickoff). Skip huddles, timeouts, sideline shots, replays, commercials, dead time.
+
+FILM SOURCE — READ FIRST. This is almost always single-camera film from Hudl or the NFHS Network: one camera wide before the snap, then panning and zooming to follow the ball, then RESETTING to a wide shot between plays. Use that wide reset, with the offense lining up again, as the boundary between plays: one snap is one play. It is better to emit a real snap you are unsure about (at lower confidence) than to drop it — a missed play breaks the coach's count and their trust, while a wrong label is an easy fix. Raw Hudl film usually has NO score bug, so down/distance/field_position null is expected and fine; NFHS broadcast usually does have one — read it when present, never invent it when absent.
 
 For each play, assign a sequential play_index starting at 0 (0,1,2…) in time order — this is the KEY that the post-snap pass uses to match your read, so it MUST be present and stable.
 
@@ -595,6 +602,7 @@ class AiDetectWorker(BaseWorker):
 
     async def _detect_plays(self, game_id: str, dry_run: bool = False, job_id=None) -> dict:
         self._usage = {}  # per-run token accounting for the cost report
+        self._t0 = time.monotonic()  # wall-clock start, for the timeliness metric
         # ── Load game ──────────────────────────────────────────────────────
         async with AsyncSessionLocal() as db:
             result = await db.execute(select(Game).where(Game.id == game_id))
@@ -1039,17 +1047,24 @@ class AiDetectWorker(BaseWorker):
                 # ── Cost report (measured token usage -> $) ────────────────
                 cost = self._cost_summary()
                 per_play = round(cost["total_usd"] / total_plays, 4) if total_plays else None
+                elapsed = round(time.monotonic() - getattr(self, "_t0", time.monotonic()), 1)
+                film_secs = getattr(game, "duration_seconds", None)
                 await log_agent_action(
                     game_id=game_id, organization_id=str(org_id), job_id=job_id,
                     phase="cost", level="info",
                     action=f"Run cost: ${cost['total_usd']} ({total_plays} plays"
-                           + (f", ${per_play}/play" if per_play is not None else "") + ")",
+                           + (f", ${per_play}/play" if per_play is not None else "")
+                           + f", {elapsed}s)",
                     reason=(f"Measured API token usage for this {getattr(self, '_multipass', False) and 'deep' or 'fast'} run"
                             + (" with grading" if getattr(self, '_grade', False) else "")
                             + f". CODE_VERSION={CODE_VERSION}."),
                     detail={**cost, "per_play_usd": per_play,
                             "grade": getattr(self, "_grade", False),
-                            "mode": "deep" if getattr(self, "_multipass", False) else "fast"},
+                            "mode": "deep" if getattr(self, "_multipass", False) else "fast",
+                            # timeliness + film-quality context for the detection-quality gate
+                            "elapsed_seconds": elapsed, "film_seconds": film_secs,
+                            "film_height": getattr(game, "film_height", None),
+                            "film_width": getattr(game, "film_width", None)},
                 )
 
         except Exception as e:
