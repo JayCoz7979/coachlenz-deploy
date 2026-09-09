@@ -30,6 +30,9 @@ class Game(Base):
     # the gate reports real (labeled) recall for this game instead of the coach-added
     # floor. Null = not ground-truthed yet (gate uses the proxy floor).
     true_play_count = Column(Integer)
+    # Basketball only: admin-confirmed true field-goal-attempt count (made + missed,
+    # both teams, from the box score) for shot-scoped recall on the gate.
+    true_shot_count = Column(Integer)
     error_message = Column(String)
     is_trial_game = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
