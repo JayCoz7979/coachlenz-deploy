@@ -94,8 +94,11 @@ export default function OSShell({ title, children }: { title: string; children: 
   const org = user.organization
   const isAdmin = !!org.admin_level
   const tabs = ALL_SPORTS.filter(s => sports.includes(s.key))
-  const shownTabs = tabs.length ? tabs : [ALL_SPORTS[0]]
-  const activeSport = shownTabs[0]?.key || 'football'
+  // Show ONLY the org's actually-chosen sport(s). Never invent a default (the old
+  // code fell back to Football, which was wrong for a basketball coach). If the sport
+  // is not known yet, show nothing rather than a guess.
+  const shownTabs = tabs
+  const activeSport = shownTabs[0]?.key || ''
 
   const isActive = (href: string) =>
     href === '/dashboard' ? pathname === '/dashboard' : pathname === href || pathname.startsWith(href + '/')
@@ -157,13 +160,15 @@ export default function OSShell({ title, children }: { title: string; children: 
           {/* The org's plan sports. These are indicators, not a switcher (content
               is not sport-scoped yet), so they are non-interactive spans rather
               than buttons that look clickable but do nothing. */}
-          <div className="sport-tabs">
-            {shownTabs.map(s => (
-              <span key={s.key} className={'stab' + (s.key === activeSport ? ' active' : '')} style={{ cursor: 'default' }}>
-                {s.emoji} {s.label}
-              </span>
-            ))}
-          </div>
+          {shownTabs.length > 0 && (
+            <div className="sport-tabs">
+              {shownTabs.map(s => (
+                <span key={s.key} className={'stab' + (s.key === activeSport ? ' active' : '')} style={{ cursor: 'default' }}>
+                  {s.emoji} {s.label}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
         <div className="page">{children}</div>
       </div>
