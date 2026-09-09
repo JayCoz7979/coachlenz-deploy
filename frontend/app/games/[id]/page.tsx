@@ -374,6 +374,10 @@ const BB_SIT_RESULTS = ['made', 'missed', 'reset', 'turnover']
 // box so an unorthodox call gets named and lands in the AI report verbatim.
 const BB_OFFENSIVE_SETS = ['5-out motion', '4-out 1-in', '3-out 2-in', 'Horns', 'Flex', 'Princeton', 'Dribble-drive', 'Pick & Roll (primary)', 'Isolation', 'Post-up', 'Transition / early offense', 'Other']
 const BB_DEFENSES = ['Man-to-man', '2-3 zone', '1-3-1 zone', '3-2 zone', 'Matchup zone', 'Junk (box-and-1 / triangle-2)', 'Full-court press', 'Half-court trap', 'Other']
+// How a defensive possession ended — drives defensive success rate + turnovers-forced
+// per scheme in the report. Stop / Forced turnover / Defensive rebound = a successful
+// stop. Strings MUST match _DEF_STOP_RESULTS / _DEF_SCORE_RESULTS in basketball.py.
+const BB_DEF_RESULTS = ['Stop (forced miss)', 'Forced turnover', 'Defensive rebound', 'Basket allowed', 'Off. rebound allowed', 'Shooting foul', 'Non-shooting foul']
 const BB_PRESSES = ['1-2-1-1 zone press', '2-2-1 zone press', 'Full-court man', 'Run-and-jump', 'Half-court trap (1-3-1 / 1-2-2)', 'Diamond press', 'Other']
 const BB_PRESS_BREAKS = ['Dribble up the middle', 'Long pass over the top', 'Middle-man reversal', 'Guard-to-guard release', '1-4 spread break', '2-1-2 break', 'Other']
 // Legal HS jersey numbers use only digits 0-5 (refs signal them by hand).
@@ -410,10 +414,11 @@ function BasketballTagForm({ currentTime, onSave, saving, opponent }: {
   const [pressBreak, setPressBreak] = useState(''); const [pressBreakOther, setPressBreakOther] = useState('')
   const [defScheme, setDefScheme] = useState(''); const [defSchemeOther, setDefSchemeOther] = useState('')
   const [pressType, setPressType] = useState(''); const [pressTypeOther, setPressTypeOther] = useState('')
+  const [defResult, setDefResult] = useState('')  // how the defensive possession ended
 
   const reset = () => {
     setJersey(''); setMade(false); setToType(''); setDeflType(''); setPossChange(false)
-    setFormation(''); setAction(''); setTarget(''); setLateClose(false)
+    setFormation(''); setAction(''); setTarget(''); setLateClose(false); setDefResult('')
   }
 
   const jerseyBad = jersey.trim() !== '' && !bbLegalJersey(jersey)
@@ -424,7 +429,7 @@ function BasketballTagForm({ currentTime, onSave, saving, opponent }: {
     // 'Other' resolves to the typed text so an unorthodox call is named in the report.
     const resolve = (v: string, other: string) => (v === 'Other' ? (other.trim() || undefined) : (v || undefined))
     const offScheme = { offensive_set: resolve(offSet, offSetOther), press_break_action: resolve(pressBreak, pressBreakOther) }
-    const defSchemeData = { defensive_scheme: resolve(defScheme, defSchemeOther), press_type: resolve(pressType, pressTypeOther) }
+    const defSchemeData = { defensive_scheme: resolve(defScheme, defSchemeOther), press_type: resolve(pressType, pressTypeOther), defensive_result: defResult || undefined }
     let data: any
     if (bside === 'offense') {
       if (offAction === 'shot') {
@@ -565,6 +570,7 @@ function BasketballTagForm({ currentTime, onSave, saving, opponent }: {
               </label>
             </>
           )}
+          <div>{lbl('DEFENSIVE RESULT (how the possession ended)')}{sel(defResult, setDefResult, BB_DEF_RESULTS)}<div style={{ fontSize: 10, color: '#7a7a6e', marginTop: 3 }}>powers defensive success rate &amp; turnovers-forced per scheme in the report</div></div>
           {schemeField('DEFENSE', defScheme, setDefScheme, defSchemeOther, setDefSchemeOther, BB_DEFENSES)}
           {schemeField('PRESS (if pressing)', pressType, setPressType, pressTypeOther, setPressTypeOther, BB_PRESSES)}
         </>
@@ -749,7 +755,8 @@ function PlayLog({
               )}
               {ev.side === 'defense' ? (
                 <>
-                  <div style={{ fontSize: 9, color: '#7a7a6e', letterSpacing: '0.06em' }}>DEFENSE SCHEME · PRESS</div>
+                  <div style={{ fontSize: 9, color: '#7a7a6e', letterSpacing: '0.06em' }}>DEFENSE RESULT · SCHEME · PRESS</div>
+                  {xsel('defensive_result', BB_DEF_RESULTS)}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>{xsel('defensive_scheme', BB_DEFENSES)}{xsel('press_type', BB_PRESSES)}</div>
                 </>
               ) : ev.event_type !== 'special_situation' ? (
