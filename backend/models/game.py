@@ -26,6 +26,10 @@ class Game(Base):
     film_width = Column(Integer)       # ingested video resolution (see migration 021);
     film_height = Column(Integer)      # < 720 height = low-res, jersey reading is limited
     status = Column(String, nullable=False, default="pending")
+    # Admin-confirmed true play/event count for the detection-quality gate. When set,
+    # the gate reports real (labeled) recall for this game instead of the coach-added
+    # floor. Null = not ground-truthed yet (gate uses the proxy floor).
+    true_play_count = Column(Integer)
     error_message = Column(String)
     is_trial_game = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
