@@ -52,7 +52,7 @@ CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "multipass-v16-segment"
+CODE_VERSION = "multipass-v17-bball-team-and-make"
 
 # Parallel ranged extraction: one long fps=0.5 pass over a 2.75h stream times out
 # silently. Instead decode many short windows concurrently, each its own ffmpeg.
@@ -458,6 +458,18 @@ SKIP: dead balls between possessions already captured, halftime, non-game footag
 FILM SOURCE — READ FIRST. This is almost always single-camera coaches' or broadcast film from Hudl or the NFHS Network: one camera that pans end to end following the ball. A possession ends and the next begins at a made basket, a defensive rebound, a turnover, a steal, or the ball going out of bounds — use those transitions, plus the camera swinging to the other end, as the boundary between possessions. Most raw Hudl film has NO score/clock graphic at all (just the court); NFHS broadcast usually does. When there is no graphic, score_margin, quarter and shot_clock_range are null, and that is EXPECTED on this film, not a mistake — never invent them.
 
 CATCH EVERY REAL EVENT. For a coach, a MISSED shot or possession is the worst error: it breaks their count and their trust. So when you can SEE a real basketball event — a shot, a turnover, a steal, a block, a rebound, a scored possession — ALWAYS emit it, even at lower confidence; the low confidence flags it for the coach's eyes. This recall bias applies ONLY to events you can actually see happen. It does NOT loosen the EVENT-TYPE DISCIPLINE below: a whistle, a dead ball, a substitution, or a clip where you cannot tell what happened still gets NO event, and an uncertain stoppage is never a timeout. Better to catch a real shot you are unsure about than to drop it; never fabricate an event you cannot see.
+
+━━━ TEAM & SIDE DISCIPLINE (the #1 error to avoid) ━━━
+WHO HAS THE BALL decides side, NOTHING ELSE. side="offense" ONLY when the SCOUTED team (the jersey color named in the team attribution above) has the ball and is trying to score. side="defense" when the OTHER team has the ball. Read this off the JERSEY COLOR of whoever is holding/dribbling/shooting the ball, on EVERY possession, fresh.
+- Basketball teams SWITCH ENDS after each made basket and every stoppage, and the camera FOLLOWS THE BALL. So court direction, which basket, and left/right tell you NOTHING about whose possession it is. Do NOT infer side from the direction of play or which end of the floor the action is on.
+- Re-identify the ball-handler's jersey color EVERY possession. Never carry the previous possession's side forward — possession flips constantly. If you are not certain of the color on a possession, say so in blind_spot and give your best read; do not flip the whole game because one possession was unclear.
+- A quick check: if the scouted team just shot, the very next possession is almost always the OTHER team's (side flips). Alternating offense/defense is the normal pattern; a long run of the same side is a red flag that you have lost the thread — re-read the jerseys.
+
+━━━ MADE vs MISSED DISCIPLINE ━━━
+Do NOT judge a make from the shot arc alone. Read what happens AFTER the ball reaches the rim:
+- MADE: the ball drops DOWN THROUGH the net (the net kicks/flips up), there is NO rebound scramble, and the other team takes the ball out of bounds or pushes it the other way. Retreating defense + an inbound = a make.
+- MISSED: the ball hits rim or backboard and caroms out, players crash the glass, and a REBOUND battle follows. A rebound happening = the shot missed.
+When the ball itself is obscured (traffic, angle, far basket), decide from that after-play reaction (inbound vs rebound), and if you still cannot tell, set result null and note it in blind_spot — never guess made/missed 50/50.
 
 ━━━ EVENT-TYPE DISCIPLINE (read before labeling) ━━━
 TIMEOUT — tag event_type "timeout" ONLY when you can SEE a real timeout: the team walking to and huddling at the bench with coaches, a referee's raised-T signal, or a "TIMEOUT"/"TO" scoreboard graphic. A generic stoppage is NOT a timeout. Do NOT tag as "timeout": a whistle, a dead ball, a substitution, an inbound, a foul shot, the gap between possessions, an end-of-quarter break, or any clip where you simply cannot tell what is happening. When in doubt, it is NOT a timeout — emit no event for that clip rather than guess. A full game has only a handful of real timeouts; if you find yourself tagging many, you are mislabeling stoppages.
