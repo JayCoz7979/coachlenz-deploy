@@ -1583,7 +1583,14 @@ export default function GamePage() {
   useEffect(() => () => { if (detectPollRef.current) clearInterval(detectPollRef.current) }, [])
 
   const [confirmReq, setConfirmReq] = useState<{ title: string; message: string; confirmLabel?: string; danger?: boolean; onConfirm: () => void } | null>(null)
-  const handleAutoDetect = async (dryRun = false, mode: 'fast' | 'deep' = 'fast', test = false, confirmRerun = false) => {
+  const [segStartMin, setSegStartMin] = useState('')
+  const [segEndMin, setSegEndMin] = useState('')
+  const runDeepSegment = () => {
+    const s = parseFloat(segStartMin), e = parseFloat(segEndMin)
+    if (isNaN(s) || isNaN(e) || s < 0 || e <= s) { showToast('Enter a start and end in minutes (end after start).'); return }
+    handleAutoDetect(false, 'deep', false, false, { start: s * 60, end: e * 60 })
+  }
+  const handleAutoDetect = async (dryRun = false, mode: 'fast' | 'deep' = 'fast', test = false, confirmRerun = false, segment?: { start: number; end: number }) => {
     try {
       setAgentLog([])
       const qs = new URLSearchParams()
@@ -1591,6 +1598,7 @@ export default function GamePage() {
       qs.set('mode', mode)
       if (test) qs.set('test', 'true')
       if (confirmRerun) qs.set('confirm_rerun', 'true')
+      if (segment) { qs.set('segment_start', String(Math.round(segment.start))); qs.set('segment_end', String(Math.round(segment.end))) }
       const res = await api.post(`/games/${id}/auto-detect?${qs.toString()}`)
       // Duplicate-run financial control (#4b): the backend asks the coach to confirm
       // a 2nd analysis on already-analyzed film before charging + notifying the team.
@@ -1600,7 +1608,7 @@ export default function GamePage() {
           message: res.data.message || 'This film was already analyzed. Run it again and use another analysis?',
           confirmLabel: 'Run analysis',
           danger: false,
-          onConfirm: () => { setConfirmReq(null); handleAutoDetect(dryRun, mode, test, true) },
+          onConfirm: () => { setConfirmReq(null); handleAutoDetect(dryRun, mode, test, true, segment) },
         })
         return
       }
@@ -1885,6 +1893,18 @@ export default function GamePage() {
                         style={{ background: 'none', border: 'none', color: '#7a7a6e', fontSize: 10, cursor: 'pointer', padding: 0 }}
                       >
                         or preview (nothing saved)
+                      </button>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 2 }} title="Deep 3-pass on just part of the film (e.g. one quarter). Cost scales with the length you pick, so a 12-minute segment is a fraction of a full-game deep run.">
+                      <span style={{ fontSize: 10, color: '#7a7a6e', fontWeight: 700, letterSpacing: '0.04em' }}>DEEP ON A SEGMENT (MIN)</span>
+                      <input value={segStartMin} onChange={e => setSegStartMin(e.target.value)} placeholder="start" inputMode="decimal"
+                        style={{ width: 46, background: '#2e2e28', border: '1px solid #44443c', borderRadius: 4, color: '#f0eee6', fontSize: 11, padding: '4px 6px', textAlign: 'center' }} />
+                      <span style={{ fontSize: 10, color: '#7a7a6e' }}>to</span>
+                      <input value={segEndMin} onChange={e => setSegEndMin(e.target.value)} placeholder="end" inputMode="decimal"
+                        style={{ width: 46, background: '#2e2e28', border: '1px solid #44443c', borderRadius: 4, color: '#f0eee6', fontSize: 11, padding: '4px 6px', textAlign: 'center' }} />
+                      <button onClick={runDeepSegment}
+                        style={{ background: 'none', border: '1px solid #C9A84C', borderRadius: 4, color: '#C9A84C', fontSize: 10, cursor: 'pointer', padding: '4px 10px', fontWeight: 700, letterSpacing: '0.05em' }}>
+                        RUN DEEP SEGMENT
                       </button>
                     </div>
                   </div>

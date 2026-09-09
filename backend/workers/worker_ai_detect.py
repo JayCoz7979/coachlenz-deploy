@@ -52,7 +52,7 @@ CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "multipass-v15-scoreboard-crop-skip"
+CODE_VERSION = "multipass-v16-segment"
 
 # Parallel ranged extraction: one long fps=0.5 pass over a 2.75h stream times out
 # silently. Instead decode many short windows concurrently, each its own ffmpeg.
@@ -568,6 +568,11 @@ class AiDetectWorker(BaseWorker):
         self._full_coverage = bool(payload.get("full"))
         # Quick test: analyze only the opening slice of film (cheap confirmation run).
         self._test_mode = bool(payload.get("test"))
+        # Segment: analyze ONLY [segment_start, segment_end] seconds (e.g. one quarter),
+        # so deep analysis on a long game costs a fraction of a full-game run. Both must
+        # be present and sane, or it's treated as a full-film run (see _detect_plays).
+        self._segment_start = payload.get("segment_start")
+        self._segment_end = payload.get("segment_end")
         # Technique-grading pass (opt-in): grade=true on the trigger, or the module
         # default. Expensive per-play Opus pass, so off unless explicitly requested.
         self._grade = bool(payload.get("grade")) or PLAY_GRADE_ENABLED
@@ -671,9 +676,34 @@ class AiDetectWorker(BaseWorker):
                 # instead of one fps=0.5 pass over the whole stream (which timed out
                 # silently and yielded 0 grid frames on long film).
                 duration = await self._probe_duration(video_source, game.duration_seconds)
+
+                # Segment: analyze only a chosen [start, end] slice (e.g. one quarter) so
+                # deep analysis on a long game costs a fraction of a full run. Overrides
+                # the quick test. Falls back to a full-film run if the bounds are unusable.
+                seg_start = seg_end = None
+                ss, se = getattr(self, "_segment_start", None), getattr(self, "_segment_end", None)
+                if ss is not None and se is not None:
+                    try:
+                        seg_start = max(0.0, float(ss))
+                        seg_end = min(float(duration), float(se))
+                        if seg_end - seg_start < 5.0:   # too short / inverted -> ignore
+                            seg_start = seg_end = None
+                    except (TypeError, ValueError):
+                        seg_start = seg_end = None
+                if seg_start is not None:
+                    await log_agent_action(
+                        game_id=game_id, organization_id=str(org_id), job_id=job_id,
+                        phase="segment", level="info",
+                        action=(f"Breaking down only {int(seg_start//60)}:{int(seg_start%60):02d}"
+                                f"–{int(seg_end//60)}:{int(seg_end%60):02d} of the film"),
+                        reason="You chose a segment, so I analyze just that window. Deep analysis on "
+                               "one part of the game costs a fraction of a full-game run.",
+                        detail={"segment_start": int(seg_start), "segment_end": int(seg_end)},
+                    )
                 # Quick test: only analyze the opening slice so it costs pennies — enough
-                # to confirm detection + team attribution work before a full run.
-                if getattr(self, "_test_mode", False):
+                # to confirm detection + team attribution work before a full run. Skipped
+                # when a segment is chosen (the segment is the explicit window).
+                elif getattr(self, "_test_mode", False):
                     duration = min(duration, TEST_CLIP_SECONDS)
                     await log_agent_action(
                         game_id=game_id, organization_id=str(org_id), job_id=job_id,
@@ -684,7 +714,9 @@ class AiDetectWorker(BaseWorker):
                     )
                 # Denser sampling for recall; lighter in deep mode since each batch is 3 calls.
                 fpw = FRAMES_PER_WINDOW_DEEP if getattr(self, "_multipass", False) else FRAMES_PER_WINDOW_FAST
-                frame_paths = await self._extract_windows(video_source, duration, frames_dir, frames_per_window=fpw)
+                frame_paths = await self._extract_windows(video_source, duration, frames_dir,
+                                                          frames_per_window=fpw,
+                                                          start_offset=seg_start, end_limit=seg_end)
                 # Snap-aware clustering: drop same-moment duplicates (no-op on the uniform
                 # window grid, but harmless and protects against overlapping windows).
                 frame_paths = self._cluster_frames(frame_paths, CLUSTER_GAP_SECONDS)
@@ -1095,6 +1127,9 @@ class AiDetectWorker(BaseWorker):
                             "mode": "deep" if getattr(self, "_multipass", False) else "fast",
                             # timeliness + film-quality context for the detection-quality gate
                             "elapsed_seconds": elapsed, "film_seconds": film_secs,
+                            "analyzed_seconds": (int(seg_end - seg_start) if seg_start is not None
+                                                 else int(duration)),
+                            "segment": ([int(seg_start), int(seg_end)] if seg_start is not None else None),
                             "film_height": getattr(game, "film_height", None),
                             "film_width": getattr(game, "film_width", None),
                             "has_scoreboard": getattr(self, "_has_scoreboard", True)},
@@ -1162,14 +1197,25 @@ class AiDetectWorker(BaseWorker):
             return -1, f"TIMEOUT window {idx} start={start}"
 
     async def _extract_windows(self, url: str, total_duration: float, out_base: str,
-                               frames_per_window: int = FRAMES_PER_WINDOW):
+                               frames_per_window: int = FRAMES_PER_WINDOW,
+                               start_offset: Optional[float] = None,
+                               end_limit: Optional[float] = None):
         """Parallel ranged extraction. Returns (path, time_seconds) tuples and stamps
         self._extract_diag so the DB proves coverage. Replaces the single fps=0.5 pass
-        that timed out silently on long streams."""
+        that timed out silently on long streams.
+
+        start_offset/end_limit bound the analyzed span to a chosen segment (e.g. one
+        quarter). Frame timestamps stay absolute, so downstream reads are unaffected."""
         windows = []
-        start = float(SKIP_START_SECONDS)
-        while start < total_duration - 10:
-            windows.append((start, min(WINDOW_SIZE, total_duration - start)))
+        segment = start_offset is not None or end_limit is not None
+        lo = float(start_offset) if start_offset is not None else float(SKIP_START_SECONDS)
+        hi = float(end_limit) if end_limit is not None else float(total_duration)
+        # Full film skips the trailing sub-10s dead tail; a chosen segment is covered
+        # to its exact end so the last plays in it are not dropped.
+        tail = 0.5 if segment else 10.0
+        start = lo
+        while start < hi - tail:
+            windows.append((start, min(WINDOW_SIZE, hi - start)))
             start += WINDOW_SIZE
 
         # Safety cap: keep total frames under MAX_FRAMES by thinning density on long film.
