@@ -52,7 +52,7 @@ CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "multipass-v14-film-profile-all-sports"
+CODE_VERSION = "multipass-v15-scoreboard-crop-skip"
 
 # Parallel ranged extraction: one long fps=0.5 pass over a 2.75h stream times out
 # silently. Instead decode many short windows concurrently, each its own ffmpeg.
@@ -607,6 +607,11 @@ class AiDetectWorker(BaseWorker):
     async def _detect_plays(self, game_id: str, dry_run: bool = False, job_id=None) -> dict:
         self._usage = {}  # per-run token accounting for the cost report
         self._t0 = time.monotonic()  # wall-clock start, for the timeliness metric
+        # Whether this film has a visible scoreboard/score bug. Set by a one-shot probe
+        # below. When False (most raw Hudl film), the two zoomed score-bug crops per
+        # frame are pure waste, so we stop sending them — a large token saving with no
+        # quality cost (there is no bug to read). Default True = keep them (safe).
+        self._has_scoreboard = True
         # ── Load game ──────────────────────────────────────────────────────
         async with AsyncSessionLocal() as db:
             result = await db.execute(select(Game).where(Game.id == game_id))
@@ -707,6 +712,29 @@ class AiDetectWorker(BaseWorker):
                            "snap. Each frame keeps its real timestamp.",
                     detail={"frame_count": len(frame_paths), "after_cluster": len(frame_paths),
                             **getattr(self, "_extract_diag", {})},
+                )
+
+                # ── Scoreboard probe (one cheap call) ──────────────────────
+                # Decide ONCE whether this film has a visible score bug. If not, the
+                # per-frame score-bug crops are dropped for the whole run (see
+                # _frame_blocks), cutting image tokens ~2/3 with nothing lost.
+                try:
+                    self._has_scoreboard = await self._probe_scoreboard(frame_paths)
+                except Exception as e:
+                    logger.warning(f"[ai_detect] scoreboard probe failed, keeping crops: {e}")
+                    self._has_scoreboard = True
+                await log_agent_action(
+                    game_id=game_id, organization_id=str(org_id), job_id=job_id,
+                    phase="scoreboard_probe", level="info",
+                    action=("Scoreboard found — reading down/distance/clock off the score bug"
+                            if self._has_scoreboard else
+                            "No scoreboard on this film — skipping the score-bug crops to cut cost"),
+                    reason=("This film has a visible score graphic, so the zoomed score-bug crops "
+                            "are worth sending." if self._has_scoreboard else
+                            "Raw film with no score bug (common on Hudl). The zoomed crops would "
+                            "read a graphic that isn't there, so dropping them saves ~2/3 of the "
+                            "image cost per frame with no loss — down/distance stay null as expected."),
+                    detail={"has_scoreboard": self._has_scoreboard},
                 )
 
                 # ── Send batches to Claude Vision ──────────────────────────
@@ -1068,7 +1096,8 @@ class AiDetectWorker(BaseWorker):
                             # timeliness + film-quality context for the detection-quality gate
                             "elapsed_seconds": elapsed, "film_seconds": film_secs,
                             "film_height": getattr(game, "film_height", None),
-                            "film_width": getattr(game, "film_width", None)},
+                            "film_width": getattr(game, "film_width", None),
+                            "has_scoreboard": getattr(self, "_has_scoreboard", True)},
                 )
 
         except Exception as e:
@@ -1283,16 +1312,11 @@ class AiDetectWorker(BaseWorker):
                 kept.append(ft)
         return kept
 
-    def _frame_blocks(self, path: str, frame_no: int) -> list:
-        """Return Claude content blocks for one frame: the full image PLUS upscaled
-        crops of the upper and lower regions where the broadcast score/down-distance
-        graphic usually sits. The full frame loses overlay legibility once Vision
-        downsamples it; the zoomed crops keep the small digits readable.
-        """
-        blocks = []
-        with open(path, "rb") as f:
-            full = base64.standard_b64encode(f.read()).decode()
-        blocks.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": full}})
+    def _overlay_crop_blocks(self, path: str, frame_no: int) -> list:
+        """The two upscaled score-bug crops (upper + lower) for one frame. These exist
+        only to read a broadcast score graphic; they are the bulk of the per-frame image
+        cost, so they are skipped entirely on film with no scoreboard (see _frame_blocks)."""
+        blocks: list = []
         try:
             import io
             from PIL import Image
@@ -1312,6 +1336,21 @@ class AiDetectWorker(BaseWorker):
             logger.warning(f"[ai_detect] overlay crop failed for {path}: {e}")
         return blocks
 
+    def _frame_blocks(self, path: str, frame_no: int) -> list:
+        """Return Claude content blocks for one frame: the full image, PLUS the two
+        upscaled score-bug crops WHEN this film has a scoreboard. On scoreboard-less
+        film (`self._has_scoreboard is False`, decided once by _probe_scoreboard) the
+        crops are dropped, since they would only magnify a graphic that isn't there —
+        the single biggest zero-quality-loss cost cut on raw Hudl film.
+        """
+        blocks = []
+        with open(path, "rb") as f:
+            full = base64.standard_b64encode(f.read()).decode()
+        blocks.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": full}})
+        if getattr(self, "_has_scoreboard", True):
+            blocks.extend(self._overlay_crop_blocks(path, frame_no))
+        return blocks
+
     def _frame_content(self, batch) -> list:
         """Shared Claude content blocks for a batch (full frame + zoomed overlay
         crops). Built once and reused across multi-pass calls — same images."""
@@ -1320,6 +1359,37 @@ class AiDetectWorker(BaseWorker):
             content.append({"type": "text", "text": f"Frame {i + 1} (timestamp {int(t)}s):"})
             content.extend(self._frame_blocks(path, i + 1))
         return content
+
+    async def _probe_scoreboard(self, frame_paths: list) -> bool:
+        """One cheap call to decide whether this film has a visible scoreboard/score
+        bug. Samples a few frames from the MIDDLE of the film (skips pregame), sends
+        only the zoomed score-bug crops, and asks yes/no. Returns True on any doubt or
+        error (keep the crops — the safe default). A True->drop-crops mistake would only
+        cost tokens; a False->drop-crops mistake would lose down/distance, so we bias to
+        True."""
+        if not frame_paths:
+            return True
+        n = len(frame_paths)
+        idxs = sorted({min(n - 1, int(n * f)) for f in (0.25, 0.5, 0.75)})
+        content: list = [{"type": "text", "text":
+            "Below are zoomed crops of the top and bottom overlay strips of a few frames "
+            "from ONE game film. Question: does this film have a visible on-screen "
+            "SCOREBOARD / score bug showing numbers (team score, game or shot clock, or "
+            "down and distance)? A plain gym or field with no graphic overlay is NO. "
+            "Answer ONLY JSON: {\"scoreboard\": true} or {\"scoreboard\": false}."}]
+        for i in idxs:
+            content.extend(self._overlay_crop_blocks(frame_paths[i][0], i + 1))
+        import anthropic
+        async with anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY,
+                                            timeout=DETECT_TIMEOUT_S, max_retries=1) as client:
+            parsed = await self._vision_json(
+                client, DETECT_MODEL, content, max_tokens=50,
+                system=self._cached_system(
+                    "You decide only whether game film has a visible scoreboard graphic. "
+                    "Reply with the JSON asked for and nothing else."))
+        val = parsed.get("scoreboard")
+        # Only an explicit False turns off the crops; anything else keeps them.
+        return not (val is False)
 
     # ── EAGLE EYE jersey reader ──────────────────────────────────────────────
     async def _extract_hires_frame(self, url: str, ts: float, out_path: str,
