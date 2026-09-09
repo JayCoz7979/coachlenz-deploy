@@ -1,3 +1,4 @@
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, update, and_, or_
@@ -326,6 +327,8 @@ async def trigger_auto_detect(
     full: bool = False,  # bypass the per-run segment cost guard (analyze every segment)
     test: bool = False,  # quick test: analyze only the opening minutes (pennies)
     grade: bool = False, # opt-in technique-grading pass (OL/DL/QB/tackle/coverage), Opus per-play
+    segment_start: Optional[float] = None,  # analyze only [segment_start, segment_end] seconds
+    segment_end: Optional[float] = None,    # (e.g. one quarter) — deep on a slice, not the whole game
     confirm_rerun: bool = False,  # #4b: the coach has confirmed a 2nd billable run on already-analyzed film
     user: User = Depends(get_current_user),
     org: Organization = Depends(get_current_org),
@@ -342,6 +345,14 @@ async def trigger_auto_detect(
     game = result.scalar_one_or_none()
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
+
+    # Segment: analyze only [segment_start, segment_end] (e.g. one quarter) so deep
+    # analysis on a long game costs a fraction of a full run. Both or neither, end
+    # after start. The worker clamps to the real film length.
+    if (segment_start is None) != (segment_end is None):
+        raise HTTPException(status_code=400, detail="Give both segment_start and segment_end, or neither.")
+    if segment_start is not None and (segment_start < 0 or segment_end <= segment_start):
+        raise HTTPException(status_code=400, detail="segment_end must be greater than segment_start (seconds).")
 
     # Sport lock on the EXPENSIVE path. Film import is already guarded, but the
     # analysis trigger is where Opus COGS is actually spent (deep = 3-pass +
@@ -450,7 +461,9 @@ async def trigger_auto_detect(
         job_type="ai_detect",
         payload={"game_id": game_id, "dry_run": dry_run,
                  "detection_mode": ("deep" if mode == "deep" else "fast"),
-                 "full": bool(full), "test": bool(test), "grade": bool(grade)},
+                 "full": bool(full), "test": bool(test), "grade": bool(grade),
+                 **({"segment_start": float(segment_start), "segment_end": float(segment_end)}
+                    if segment_start is not None else {})},
     )
     db.add(job)
     await db.flush()  # assign job.id so the usage row can be linked to it for refunds
