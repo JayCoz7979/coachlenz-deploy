@@ -12,6 +12,20 @@ def test_split_spend_bucket_order_and_insufficient():
     assert C.split_spend(5, 5, 0) == (0, 0)
 
 
+def test_segment_credits_are_prorated_and_margin_neutral():
+    # Football deep = 55. A 12-min slice of a 48-min game = 25% -> ceil(55*.25)=14.
+    assert C.segment_credits("football", deep=True, full_seconds=48 * 60, segment_seconds=12 * 60) == 14
+    # Basketball deep = 60. Half the film -> 30.
+    assert C.segment_credits("basketball", deep=True, full_seconds=3600, segment_seconds=1800) == 30
+    # A tiny slice is floored (never charged near-zero).
+    assert C.segment_credits("football", deep=True, full_seconds=97 * 60, segment_seconds=5 * 60) == C.SEGMENT_MIN_CREDITS
+    # A full-length "segment" is never more than the full run.
+    assert C.segment_credits("football", deep=True, full_seconds=2880, segment_seconds=2880) == 55
+    # Unknown film length -> fall back to the full cost (no unfair discount).
+    assert C.segment_credits("football", deep=True, full_seconds=None, segment_seconds=720) == 55
+    assert C.segment_credits("football", deep=True, full_seconds=0, segment_seconds=720) == 55
+
+
 def test_locked_credit_costs():
     # Standard by sport
     assert C.credits_for(sport="football", deep=False, is_rerun=False) == 29
