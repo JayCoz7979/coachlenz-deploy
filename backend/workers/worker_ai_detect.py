@@ -52,7 +52,7 @@ CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "multipass-v13-film-profile"
+CODE_VERSION = "multipass-v14-film-profile-all-sports"
 
 # Parallel ranged extraction: one long fps=0.5 pass over a 2.75h stream times out
 # silently. Instead decode many short windows concurrently, each its own ffmpeg.
@@ -454,6 +454,10 @@ FRAMES: Consecutive moments from basketball game film. Each frame cluster typica
 CAPTURE EVERY EVENT: shots (made or missed), turnovers, fouls, rebounds (offensive/defensive), assists, steals, blocks, timeouts, and significant possessions.
 
 SKIP: dead balls between possessions already captured, halftime, non-game footage.
+
+FILM SOURCE — READ FIRST. This is almost always single-camera coaches' or broadcast film from Hudl or the NFHS Network: one camera that pans end to end following the ball. A possession ends and the next begins at a made basket, a defensive rebound, a turnover, a steal, or the ball going out of bounds — use those transitions, plus the camera swinging to the other end, as the boundary between possessions. Most raw Hudl film has NO score/clock graphic at all (just the court); NFHS broadcast usually does. When there is no graphic, score_margin, quarter and shot_clock_range are null, and that is EXPECTED on this film, not a mistake — never invent them.
+
+CATCH EVERY REAL EVENT. For a coach, a MISSED shot or possession is the worst error: it breaks their count and their trust. So when you can SEE a real basketball event — a shot, a turnover, a steal, a block, a rebound, a scored possession — ALWAYS emit it, even at lower confidence; the low confidence flags it for the coach's eyes. This recall bias applies ONLY to events you can actually see happen. It does NOT loosen the EVENT-TYPE DISCIPLINE below: a whistle, a dead ball, a substitution, or a clip where you cannot tell what happened still gets NO event, and an uncertain stoppage is never a timeout. Better to catch a real shot you are unsure about than to drop it; never fabricate an event you cannot see.
 
 ━━━ EVENT-TYPE DISCIPLINE (read before labeling) ━━━
 TIMEOUT — tag event_type "timeout" ONLY when you can SEE a real timeout: the team walking to and huddling at the bench with coaches, a referee's raised-T signal, or a "TIMEOUT"/"TO" scoreboard graphic. A generic stoppage is NOT a timeout. Do NOT tag as "timeout": a whistle, a dead ball, a substitution, an inbound, a foul shot, the gap between possessions, an end-of-quarter break, or any clip where you simply cannot tell what is happening. When in doubt, it is NOT a timeout — emit no event for that clip rather than guess. A full game has only a handful of real timeouts; if you find yourself tagging many, you are mislabeling stoppages.
