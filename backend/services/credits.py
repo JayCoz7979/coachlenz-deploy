@@ -17,6 +17,7 @@ Margin: a 65% gross floor is non-negotiable. Validate against the CHEAPEST credi
 price ($0.70 at the Department bundle) versus real compute cost, if it holds at $0.70
 it holds everywhere. max_cogs_at_floor() gives the ceiling per analysis size.
 """
+import math
 from typing import Optional, Tuple
 
 from sqlalchemy import select
@@ -47,6 +48,28 @@ def credits_for(sport: Optional[str], deep: bool, is_rerun: bool) -> int:
     if deep:
         return DEEP_GRADE_CREDITS.get(s, _DEFAULT_DEEP)
     return STANDARD_CREDITS.get(s, _DEFAULT_STANDARD)
+
+
+# A segment run is charged at least this much (guards the fixed per-run overhead on a
+# tiny slice). A segment analysis is at least as costly as a re-analysis.
+SEGMENT_MIN_CREDITS = REANALYSIS_CREDITS
+
+
+def segment_credits(sport: Optional[str], deep: bool,
+                    full_seconds: Optional[float], segment_seconds: Optional[float]) -> int:
+    """Discounted credit cost for analyzing only a segment (e.g. one quarter).
+
+    Charge the full-run cost scaled by the fraction of the film analyzed. This is
+    margin-NEUTRAL: compute cost and revenue both scale with the slice, so the 65%
+    floor holds exactly as it does on a full run. Falls back to the full cost when the
+    film length is unknown, and never charges more than a full run or less than the
+    segment floor."""
+    base = credits_for(sport, deep, is_rerun=False)
+    if not full_seconds or full_seconds <= 0 or not segment_seconds or segment_seconds <= 0:
+        return base
+    frac = min(1.0, float(segment_seconds) / float(full_seconds))
+    charged = math.ceil(base * frac)
+    return max(SEGMENT_MIN_CREDITS, min(base, charged))
 
 
 # ── Credit bundles (one-time purchases): id -> (credits, price_cents). ──

@@ -485,7 +485,16 @@ async def trigger_auto_detect(
         # credits rolls back this whole transaction (job + usage), so nothing is queued.
         from backend.services import credits
         if await credits.has_account(db, user.organization_id):
-            cost = credits.credits_for(sport=game.sport, deep=(mode == "deep" or bool(grade)), is_rerun=is_rerun)
+            deep_run = (mode == "deep" or bool(grade))
+            # A segment run is charged pro-rata to the slice analyzed (margin-neutral);
+            # a re-analysis stays flat (already discounted).
+            if segment_start is not None and not is_rerun:
+                cost = credits.segment_credits(
+                    sport=game.sport, deep=deep_run,
+                    full_seconds=game.duration_seconds,
+                    segment_seconds=(segment_end - segment_start))
+            else:
+                cost = credits.credits_for(sport=game.sport, deep=deep_run, is_rerun=is_rerun)
             ok = await credits.spend(db, user.organization_id, cost, ref=str(job.id))
             if not ok:
                 bal = (await credits.balance(db, user.organization_id))["balance"]
