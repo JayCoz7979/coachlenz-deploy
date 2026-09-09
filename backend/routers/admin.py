@@ -13,7 +13,7 @@ from backend.models.funnel import FunnelEvent
 from backend.models.agent_log import AgentLog
 from backend.models.game import Game
 from backend.services.auth import require_admin
-from backend.services import feature_flags, retention, funnel, credits
+from backend.services import feature_flags, retention, funnel, credits, detection_quality
 from datetime import datetime
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -116,6 +116,91 @@ async def analysis_costs(user: User = Depends(require_admin), db: AsyncSession =
     out.sort(key=lambda x: (x["sport"], x["type"]))
     return {"margin_floor": credits.MARGIN_FLOOR, "floor_credit_price": credits.FLOOR_CREDIT_PRICE,
             "total_runs": sum(g["runs"] for g in groups.values()), "groups": out}
+
+
+@router.get("/detection-quality")
+async def detection_quality_gate(user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """The detection-quality gate: does the film agent actually chop the plays.
+
+    Recall (plays found vs plays the coach had to add back), label-edit rate, and
+    timeliness, per game and cut by film resolution, all from our own data. This is
+    the number that says whether film analysis is 'top notch' before a coach ever
+    sees it. Recall is a FLOOR unless a true play count is supplied per game."""
+    from sqlalchemy import case
+    from backend.models.event import Event
+    from backend.models.learning import CoachLabelCorrection
+
+    auto_b = Event.extra_data["auto_detected"].as_boolean()
+    nr_b = Event.extra_data["needs_review"].as_boolean()
+    conf_f = Event.extra_data["confidence"].as_float()
+
+    ev_rows = (await db.execute(
+        select(
+            Event.game_id,
+            func.count().label("total"),
+            func.sum(case((auto_b == True, 1), else_=0)).label("auto"),
+            func.sum(case((nr_b == True, 1), else_=0)).label("needs_review"),
+            func.avg(case((auto_b == True, conf_f), else_=None)).label("avg_conf"),
+        ).group_by(Event.game_id)
+    )).all()
+
+    corr_rows = (await db.execute(
+        select(CoachLabelCorrection.game_id, func.count().label("n"))
+        .where(CoachLabelCorrection.was_auto_detected == True)  # noqa: E712
+        .group_by(CoachLabelCorrection.game_id)
+    )).all()
+    corr_by_game = {r.game_id: int(r.n) for r in corr_rows if r.game_id}
+
+    # Latest measured cost log per game -> timeliness + ingested resolution.
+    cost_rows = (await db.execute(
+        select(AgentLog.game_id, AgentLog.detail)
+        .where(AgentLog.phase == "cost")
+        .order_by(AgentLog.created_at.desc()).limit(3000)
+    )).all()
+    cost_by_game: dict = {}
+    for gid, detail in cost_rows:
+        if gid and gid not in cost_by_game:
+            cost_by_game[gid] = detail or {}
+
+    game_ids = {r.game_id for r in ev_rows if r.game_id}
+    game_meta: dict = {}
+    if game_ids:
+        grows = (await db.execute(
+            select(Game.id, Game.sport, Game.film_height, Game.title, Game.game_date)
+            .where(Game.id.in_(game_ids))
+        )).all()
+        game_meta = {g.id: g for g in grows}
+
+    games = []
+    for r in ev_rows:
+        gid = r.game_id
+        if not gid:
+            continue
+        meta = game_meta.get(gid)
+        cost = cost_by_game.get(gid, {})
+        auto = int(r.auto or 0)
+        total = int(r.total or 0)
+        fh = cost.get("film_height")
+        if fh is None and meta is not None:
+            fh = meta.film_height
+        games.append({
+            "game_id": str(gid),
+            "sport": (meta.sport if meta else None),
+            "title": (meta.title if meta else None),
+            "game_date": (meta.game_date.isoformat() if meta and meta.game_date else None),
+            "auto_plays": auto,
+            "coach_added_plays": max(total - auto, 0),
+            "corrections": corr_by_game.get(gid, 0),
+            "needs_review": int(r.needs_review or 0),
+            "avg_confidence": round(float(r.avg_conf), 3) if r.avg_conf is not None else None,
+            "elapsed_seconds": cost.get("elapsed_seconds"),
+            "film_seconds": cost.get("film_seconds"),
+            "film_height": fh,
+        })
+
+    # Newest first (games without a date sort last).
+    games.sort(key=lambda g: g["game_date"] or "", reverse=True)
+    return detection_quality.build_scorecard(games)
 
 
 @router.get("/orgs")

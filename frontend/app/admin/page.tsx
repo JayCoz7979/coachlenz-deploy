@@ -17,7 +17,8 @@ export default function AdminPage() {
   const [retention, setRetention] = useState<any>(null)
   const [funnel, setFunnel] = useState<any>(null)
   const [costs, setCosts] = useState<any>(null)
-  const [tab, setTab] = useState<'orgs'|'retention'|'funnel'|'costs'|'features'|'flags'|'stats'>('orgs')
+  const [detection, setDetection] = useState<any>(null)
+  const [tab, setTab] = useState<'orgs'|'retention'|'funnel'|'detection'|'costs'|'features'|'flags'|'stats'>('orgs')
   const [orgToDelete, setOrgToDelete] = useState<{id: string, name: string} | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [err, setErr] = useState('')
@@ -36,6 +37,7 @@ export default function AdminPage() {
     api.get('/admin/retention').then(r => setRetention(r.data)).catch(() => {})
     api.get('/admin/funnel').then(r => setFunnel(r.data)).catch(() => {})
     api.get('/admin/analysis-costs').then(r => setCosts(r.data)).catch(() => {})
+    api.get('/admin/detection-quality').then(r => setDetection(r.data)).catch(() => {})
   }, [user])
 
   const gateStyle: Record<string, string> = {
@@ -84,8 +86,8 @@ export default function AdminPage() {
           <h2 className="text-2xl font-bold mb-6 flex items-center gap-3"><ShieldCheck className="text-brand-400" /> Admin Panel</h2>
           {err && <div className="mb-4 text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-2">{err}</div>}
           <div className="flex gap-2 mb-6">
-            {(['orgs','retention','funnel','costs','features','flags','stats'] as const).map(t => (
-              <button key={t} onClick={() => setTab(t)} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === t ? 'bg-brand-500 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-100'}`}>{t === 'orgs' ? 'Organizations' : t === 'retention' ? 'Retention' : t === 'funnel' ? 'Funnel' : t === 'costs' ? 'Costs' : t === 'features' ? 'Feature Toggles' : t === 'flags' ? 'Risk Flags' : 'Stats'}</button>
+            {(['orgs','retention','funnel','detection','costs','features','flags','stats'] as const).map(t => (
+              <button key={t} onClick={() => setTab(t)} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === t ? 'bg-brand-500 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-100'}`}>{t === 'orgs' ? 'Organizations' : t === 'retention' ? 'Retention' : t === 'funnel' ? 'Funnel' : t === 'detection' ? 'Film Quality' : t === 'costs' ? 'Costs' : t === 'features' ? 'Feature Toggles' : t === 'flags' ? 'Risk Flags' : 'Stats'}</button>
             ))}
           </div>
           {tab === 'stats' && stats && (
@@ -213,6 +215,85 @@ export default function AdminPage() {
                 </>
               )}
               {!funnel && <div className="text-center text-gray-500 py-12">Loading funnel…</div>}
+            </div>
+          )}
+          {tab === 'detection' && (
+            <div className="space-y-6">
+              <p className="text-sm text-gray-400 flex items-center gap-2"><TrendingUp size={16} className="text-brand-400" /> The detection-quality gate. Does the agent actually chop the plays. <span className="text-gray-300">Recall</span> = plays auto-detected out of every play on the game (a play the coach added by hand is a snap we missed), so this is a floor unless a true count is set. <span className="text-gray-300">Label edits</span> = share of found plays the coach had to relabel. The cut by film resolution is the whole point: it shows whether misses come from the model or from bad film.</p>
+              {detection && (
+                <>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="card">
+                      <div className="text-sm text-gray-400">Recall ({detection.overall.measurement})</div>
+                      <div className="text-3xl font-bold">{pct(detection.overall.recall)}</div>
+                      <div className="mt-1"><span className={`text-[11px] px-2 py-0.5 rounded uppercase font-medium ${gateStyle[detection.overall.recall_verdict]}`}>{detection.overall.recall_verdict === 'no_data' ? 'no data' : detection.overall.recall_verdict}</span></div>
+                    </div>
+                    <div className="card">
+                      <div className="text-sm text-gray-400">Pass bar / watch line</div>
+                      <div className="text-3xl font-bold">{pct(detection.recall_pass_bar)} <span className="text-gray-500 text-lg">/ {pct(detection.recall_watch_line)}</span></div>
+                      <div className="text-xs text-gray-500 mt-1">a true 90% is top notch</div>
+                    </div>
+                    <div className="card">
+                      <div className="text-sm text-gray-400">Label edit rate</div>
+                      <div className="text-3xl font-bold">{pct(detection.overall.label_edit_rate)}</div>
+                      <div className="mt-1"><span className={`text-[11px] px-2 py-0.5 rounded uppercase font-medium ${gateStyle[detection.overall.label_verdict]}`}>{detection.overall.label_verdict === 'no_data' ? 'no data' : detection.overall.label_verdict}</span></div>
+                    </div>
+                    <div className="card">
+                      <div className="text-sm text-gray-400">Speed (median)</div>
+                      <div className="text-3xl font-bold">{detection.overall.median_realtime_ratio === null ? '-' : `${detection.overall.median_realtime_ratio}x`}</div>
+                      <div className="text-xs text-gray-500 mt-1">run time / film length</div>
+                    </div>
+                  </div>
+
+                  {detection.by_film_quality.length > 0 && (
+                    <div>
+                      <h3 className="text-xs uppercase tracking-wide text-gray-500 mb-2">By film quality</h3>
+                      <p className="text-xs text-gray-500 mb-3">If HD passes and SD stops, the leak is the film, not the model. Curate the first coach onto HD, end-zone or sideline all-22.</p>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead><tr className="text-gray-400 border-b border-gray-800"><th className="text-left pb-3">Film</th><th className="text-right pb-3">Games</th><th className="text-right pb-3">Plays</th><th className="text-right pb-3">Recall</th><th className="text-right pb-3">Label edits</th><th className="text-right pb-3">Verdict</th></tr></thead>
+                          <tbody className="divide-y divide-gray-800">
+                            {detection.by_film_quality.map((b: any) => (
+                              <tr key={b.label}>
+                                <td className="py-3">{b.label}</td>
+                                <td className="py-3 text-right">{b.games}</td>
+                                <td className="py-3 text-right">{b.total_plays}</td>
+                                <td className="py-3 text-right">{pct(b.recall)}</td>
+                                <td className="py-3 text-right">{pct(b.label_edit_rate)}</td>
+                                <td className="py-3 text-right"><span className={`text-[11px] px-2 py-0.5 rounded uppercase font-medium ${gateStyle[b.recall_verdict]}`}>{b.recall_verdict === 'no_data' ? 'no data' : b.recall_verdict}</span></td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="overflow-x-auto">
+                    <h3 className="text-xs uppercase tracking-wide text-gray-500 mb-2">Per game</h3>
+                    <table className="w-full text-sm">
+                      <thead><tr className="text-gray-400 border-b border-gray-800"><th className="text-left pb-3">Game</th><th className="text-left pb-3">Film</th><th className="text-right pb-3">Found</th><th className="text-right pb-3">Missed</th><th className="text-right pb-3">Recall</th><th className="text-right pb-3">Label edits</th><th className="text-right pb-3">Speed</th><th className="text-right pb-3">Verdict</th></tr></thead>
+                      <tbody className="divide-y divide-gray-800">
+                        {detection.games.map((g: any) => (
+                          <tr key={g.game_id}>
+                            <td className="py-3">{g.title || g.game_id.slice(0, 8)}<span className="text-gray-500"> {g.game_date || ''}</span></td>
+                            <td className="py-3 uppercase text-gray-400">{g.film_quality === 'hd' ? 'HD' : g.film_quality === 'sd' ? 'SD' : '?'}</td>
+                            <td className="py-3 text-right">{g.auto_plays}</td>
+                            <td className="py-3 text-right">{g.coach_added_plays}</td>
+                            <td className="py-3 text-right">{pct(g.recall)}{g.measurement === 'labeled' && <span className="text-brand-400"> *</span>}</td>
+                            <td className="py-3 text-right">{pct(g.label_edit_rate)}</td>
+                            <td className="py-3 text-right">{g.realtime_ratio === null ? '-' : `${g.realtime_ratio}x`}</td>
+                            <td className="py-3 text-right"><span className={`text-[11px] px-2 py-0.5 rounded uppercase font-medium ${gateStyle[g.recall_verdict]}`}>{g.recall_verdict === 'no_data' ? 'no data' : g.recall_verdict}</span></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {detection.games.length === 0 && <div className="text-center text-gray-500 py-12">No analyzed film yet. This fills in as coaches run film breakdowns. Recall reads as a floor until you set a true play count on a labeled game.</div>}
+                    <p className="text-xs text-gray-500 mt-3">* recall measured against a confirmed true play count. Unmarked recall is a floor from coach-added plays.</p>
+                  </div>
+                </>
+              )}
+              {!detection && <div className="text-center text-gray-500 py-12">Loading film quality…</div>}
             </div>
           )}
           {tab === 'costs' && (
