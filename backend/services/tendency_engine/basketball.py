@@ -862,6 +862,10 @@ def _defensive_scheme_analysis(events) -> Dict[str, Any]:
             "count": count,
             "pct": round(count / total * 100, 1),
             "quarters_used": dict(by_q.most_common(4)),
+            # Effectiveness of THIS defense: is it working? (from defensive_result +
+            # the opponent shots allowed while in it). This is what tells a coach the
+            # 1-3-1 forces turnovers, or that they shoot well against man, etc.
+            **_defense_effectiveness(se),
         }
 
     man_pct = round(schemes.get("Man", 0) / total * 100, 1)
@@ -875,6 +879,39 @@ def _defensive_scheme_analysis(events) -> Dict[str, Any]:
         "zone_pct": round(zone_count / total * 100, 1),
         "press_count": press_count,
         "by_scheme": scheme_detail,
+        "overall_effectiveness": _defense_effectiveness(events),
+    }
+
+
+# Defensive-possession outcomes a coach tags (mirror of BB_DEF_RESULTS in the UI).
+_DEF_STOP_RESULTS = {"Stop (forced miss)", "Defensive rebound", "Forced turnover"}
+_DEF_SCORE_RESULTS = {"Basket allowed"}
+
+
+def _defense_effectiveness(events) -> Dict[str, Any]:
+    """How successful the defense was: from the coach-tagged defensive_result plus the
+    opponent shots allowed. Returns empty-ish (Nones) until possessions are graded, so
+    the report shows honest 'no data yet' rather than fake 0s."""
+    graded = [r for r in (_x(e, "defensive_result") for e in events) if r]
+    stops = sum(1 for r in graded if r in _DEF_STOP_RESULTS)
+    tos = sum(1 for r in graded if r == "Forced turnover")
+    scored = sum(1 for r in graded if r in _DEF_SCORE_RESULTS)
+    shots = [e for e in events if e.event_type == "shot"]
+    makes = sum(1 for e in shots if (getattr(e, "result", None) or "") == "made")
+    threes = [e for e in shots if _x(e, "shot_type") == "3pt"]
+    three_makes = sum(1 for e in threes if (getattr(e, "result", None) or "") == "made")
+    n = len(graded)
+    ns = len(shots)
+    return {
+        "possessions_graded": n,
+        "success_rate": round(stops / n * 100, 1) if n else None,   # stops + forced TOs
+        "turnovers_forced": tos,
+        "turnover_rate": round(tos / n * 100, 1) if n else None,
+        "baskets_allowed": scored,
+        "shots_allowed": ns,
+        "fg_pct_allowed": round(makes / ns * 100, 1) if ns else None,
+        "threes_allowed": len(threes),
+        "three_pct_allowed": round(three_makes / len(threes) * 100, 1) if threes else None,
     }
 
 
