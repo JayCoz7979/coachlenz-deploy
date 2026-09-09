@@ -138,6 +138,14 @@ _COVERAGE_FIELDS = [
     ("coverage", False), ("defensive_front", False),
 ]
 
+# Basketball reads a different set — no down/distance/formation. These are the fields
+# a basketball coach actually cares whether the AI caught (in-film reads).
+_COVERAGE_FIELDS_BB = [
+    ("event_type", False), ("side", False), ("result", False),
+    ("shot_zone", True), ("shot_type", True), ("possession_origin", True),
+    ("defensive_scheme", True), ("quarter", True),
+]
+
 
 @router.post("/{game_id}/rederive-downs")
 async def rederive_downs(
@@ -266,6 +274,42 @@ def _assess_film_quality(fill_rates: dict, avg_conf: float, confident_pct: float
     }
 
 
+def _assess_film_quality_bb(fill_rates: dict, avg_conf: float, confident_pct: float) -> dict:
+    """Basketball film-quality verdict. There is no down/distance in basketball; the
+    scoreboard gives quarter/clock/score, so when it is absent the game-situation
+    splits (by quarter, clutch, shot clock) are limited, but shots, zones, results and
+    defense read normally."""
+    q = fill_rates.get("quarter", 0) or 0
+    if q < 40:
+        return {
+            "level": "limited",
+            "scoreboard_readable": False,
+            "headline": "No scoreboard detected on this film",
+            "detail": (
+                f"The quarter/clock was read on {q}% of possessions. With no visible score "
+                "bug, game-situation splits (by quarter, late-and-close, shot clock) will be "
+                "limited. Shots, shot zones, makes/misses, and defense were still read normally."
+            ),
+            "recommendation": (
+                "Use film with a visible scoreboard, or set the quarter on the possessions "
+                "that matter in the Play Log."
+            ),
+        }
+    if confident_pct < 40:
+        return {
+            "level": "caution",
+            "scoreboard_readable": True,
+            "headline": "Lower-confidence film",
+            "detail": (
+                f"Only {confident_pct}% of possessions came back high-confidence (avg {avg_conf}). "
+                "Wide or shaky single-camera angles reduce the detail the AI can read."
+            ),
+            "recommendation": "Review the flagged possessions in the Play Log before game-planning. Tighter or multi-angle film sharpens the read.",
+        }
+    return {"level": "ok", "scoreboard_readable": True, "headline": "Film quality looks good",
+            "detail": "", "recommendation": ""}
+
+
 @router.get("/{game_id}/coverage")
 async def coverage_scorecard(
     game_id: str,
@@ -275,6 +319,12 @@ async def coverage_scorecard(
     """Instant detection scorecard, no manual tagging required. Reports how complete
     the AI reads are (fill rate per field) and how confident (confident vs flagged),
     so a coach can judge a game's data quality before game-planning around it."""
+    gres = await db.execute(
+        select(Game).where(Game.id == game_id, Game.organization_id == user.organization_id))
+    game = gres.scalar_one_or_none()
+    sport = (game.sport if game else "football").lower()
+    is_bb = sport == "basketball"
+
     res = await db.execute(
         select(Event).where(Event.game_id == game_id, Event.organization_id == user.organization_id)
     )
@@ -291,7 +341,8 @@ async def coverage_scorecard(
                 c += 1
         return round(c / n * 100, 1)
 
-    fill_rates = {attr: filled(attr, in_extra) for attr, in_extra in _COVERAGE_FIELDS}
+    fields = _COVERAGE_FIELDS_BB if is_bb else _COVERAGE_FIELDS
+    fill_rates = {attr: filled(attr, in_extra) for attr, in_extra in fields}
 
     confs = [float((e.extra_data or {}).get("confidence") or 0) for e in events]
     avg_conf = round(sum(confs) / n, 2)
@@ -314,8 +365,10 @@ async def coverage_scorecard(
         "flagged_for_review": flagged,
         "confident_pct": round(confident / n * 100, 1),
         "side_split": sides,
+        "sport": sport,
         "weakest_fields": [k for k, _ in weakest],
-        "film_quality": _assess_film_quality(fill_rates, avg_conf, round(confident / n * 100, 1)),
+        "film_quality": (_assess_film_quality_bb if is_bb else _assess_film_quality)(
+            fill_rates, avg_conf, round(confident / n * 100, 1)),
     }
 
 

@@ -395,7 +395,7 @@ function BasketballTagForm({ currentTime, onSave, saving, opponent }: {
   const [origin, setOrigin] = useState('half_court')
   const [toType, setToType] = useState('')
   // defense
-  const [defAction, setDefAction] = useState<'deflection' | 'steal' | 'block' | 'rebound'>('deflection')
+  const [defAction, setDefAction] = useState<'shot' | 'deflection' | 'steal' | 'block' | 'rebound'>('shot')
   const [deflType, setDeflType] = useState('')
   const [possChange, setPossChange] = useState(false)
   // special situations
@@ -435,7 +435,12 @@ function BasketballTagForm({ currentTime, onSave, saving, opponent }: {
           extra_data: { primary_player_jersey: j, turnover_type: toType || undefined, quarter: q, ...offScheme } }
       }
     } else if (bside === 'defense') {
-      if (defAction === 'deflection') {
+      if (defAction === 'shot') {
+        // The opponent's shot on a defensive possession — record made/missed + zone
+        // so the defense's shots-allowed is real, not just deflections/rebounds.
+        data = { event_type: 'shot', side: 'defense', time_seconds: currentTime, result: made ? 'made' : 'missed', player: j,
+          extra_data: { primary_player_jersey: j, shot_zone: zone, shot_type: BB_THREE.has(zone) ? '3pt' : '2pt', shot_by: 'opponent', quarter: q, ...defSchemeData } }
+      } else if (defAction === 'deflection') {
         data = { event_type: 'deflection', side: 'defense', time_seconds: currentTime, result: possChange ? 'possession_change' : undefined, player: j,
           extra_data: { primary_player_jersey: j, deflection_type: deflType || undefined, resulted_in_possession_change: possChange, quarter: q, ...defSchemeData } }
       } else {
@@ -539,11 +544,19 @@ function BasketballTagForm({ currentTime, onSave, saving, opponent }: {
       ) : bside === 'defense' ? (
         <>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {(['deflection', 'steal', 'block', 'rebound'] as const).map(a => (
-              <button key={a} onClick={() => setDefAction(a)} style={{ flex: '1 0 45%', padding: '6px 0', fontSize: 12, fontWeight: 700, cursor: 'pointer', borderRadius: 4,
-                border: defAction === a ? 'none' : '1px solid rgba(255,255,255,0.1)', background: defAction === a ? '#1a5c2a' : 'transparent', color: defAction === a ? '#f8f6f0' : '#7a7a6e', textTransform: 'capitalize' }}>{a}</button>
+            {(['shot', 'deflection', 'steal', 'block', 'rebound'] as const).map(a => (
+              <button key={a} onClick={() => setDefAction(a)} style={{ flex: '1 0 30%', padding: '6px 0', fontSize: 12, fontWeight: 700, cursor: 'pointer', borderRadius: 4,
+                border: defAction === a ? 'none' : '1px solid rgba(255,255,255,0.1)', background: defAction === a ? '#1a5c2a' : 'transparent', color: defAction === a ? '#f8f6f0' : '#7a7a6e', textTransform: 'capitalize' }}>{a === 'shot' ? 'Shot allowed' : a}</button>
             ))}
           </div>
+          {defAction === 'shot' && (
+            <>
+              <div>{lbl('SHOT ZONE (opponent)')}{sel(zone, setZone, BB_ZONES)}<div style={{ fontSize: 10, color: '#7a7a6e', marginTop: 3 }}>{BB_THREE.has(zone) ? '3-point' : '2-point'}</div></div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
+                <input type="checkbox" checked={made} onChange={e => setMade(e.target.checked)} /><span style={{ color: made ? '#2d8c40' : '#7a7a6e', fontWeight: 600 }}>{made ? 'MADE (they scored)' : 'Missed (stop)'}</span>
+              </label>
+            </>
+          )}
           {defAction === 'deflection' && (
             <>
               <div>{lbl('DEFLECTION TYPE')}{sel(deflType, setDeflType, BB_DEFL)}</div>
@@ -737,7 +750,7 @@ function PlayLog({
               {ev.side === 'defense' ? (
                 <>
                   <div style={{ fontSize: 9, color: '#7a7a6e', letterSpacing: '0.06em' }}>DEFENSE SCHEME · PRESS</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>{xfree('defensive_scheme', 'dl-bb-def', BB_DEFENSES)}{xfree('press_type', 'dl-bb-press', BB_PRESSES)}</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>{xsel('defensive_scheme', BB_DEFENSES)}{xsel('press_type', BB_PRESSES)}</div>
                 </>
               ) : ev.event_type !== 'special_situation' ? (
                 <>
