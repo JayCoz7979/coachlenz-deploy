@@ -166,7 +166,8 @@ async def detection_quality_gate(user: User = Depends(require_admin), db: AsyncS
     game_meta: dict = {}
     if game_ids:
         grows = (await db.execute(
-            select(Game.id, Game.sport, Game.film_height, Game.title, Game.game_date)
+            select(Game.id, Game.sport, Game.film_height, Game.title, Game.game_date,
+                   Game.true_play_count)
             .where(Game.id.in_(game_ids))
         )).all()
         game_meta = {g.id: g for g in grows}
@@ -176,10 +177,16 @@ async def detection_quality_gate(user: User = Depends(require_admin), db: AsyncS
         gid = r.game_id
         if not gid:
             continue
-        meta = game_meta.get(gid)
-        cost = cost_by_game.get(gid, {})
         auto = int(r.auto or 0)
         total = int(r.total or 0)
+        # Only score games that actually had an AI DETECTION run: at least one
+        # auto-detected play, or a measured cost log. This drops live-logged /
+        # scout / manual-only records (0 auto, no run) so they stop showing as
+        # false "0% recall / STOP" rows.
+        if auto == 0 and gid not in cost_by_game:
+            continue
+        meta = game_meta.get(gid)
+        cost = cost_by_game.get(gid, {})
         fh = cost.get("film_height")
         if fh is None and meta is not None:
             fh = meta.film_height
@@ -190,6 +197,7 @@ async def detection_quality_gate(user: User = Depends(require_admin), db: AsyncS
             "game_date": (meta.game_date.isoformat() if meta and meta.game_date else None),
             "auto_plays": auto,
             "coach_added_plays": max(total - auto, 0),
+            "true_plays": (meta.true_play_count if meta and meta.true_play_count else None),
             "corrections": corr_by_game.get(gid, 0),
             "needs_review": int(r.needs_review or 0),
             "avg_confidence": round(float(r.avg_conf), 3) if r.avg_conf is not None else None,
@@ -201,6 +209,26 @@ async def detection_quality_gate(user: User = Depends(require_admin), db: AsyncS
     # Newest first (games without a date sort last).
     games.sort(key=lambda g: g["game_date"] or "", reverse=True)
     return detection_quality.build_scorecard(games)
+
+
+class TrueCountUpdate(BaseModel):
+    true_count: Optional[int] = None  # None or 0 clears it (back to the proxy floor)
+
+
+@router.put("/detection-quality/{game_id}/true-count")
+async def set_true_play_count(game_id: str, body: TrueCountUpdate,
+                              user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Set (or clear) the admin-confirmed true play/event count for a game. With it
+    set, the game's row on the Film Quality gate shows real (labeled) recall instead
+    of the coach-added floor. Pass null or 0 to clear it."""
+    game = (await db.execute(select(Game).where(Game.id == game_id))).scalar_one_or_none()
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+    if body.true_count is not None and body.true_count < 0:
+        raise HTTPException(status_code=400, detail="true_count cannot be negative")
+    game.true_play_count = (body.true_count or None)
+    await db.commit()
+    return {"ok": True, "game_id": game_id, "true_play_count": game.true_play_count}
 
 
 @router.get("/orgs")
