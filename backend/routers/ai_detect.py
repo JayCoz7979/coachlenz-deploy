@@ -382,6 +382,8 @@ async def trigger_auto_detect(
     grade: bool = False, # opt-in technique-grading pass (OL/DL/QB/tackle/coverage), Opus per-play
     segment_start: Optional[float] = None,  # analyze only [segment_start, segment_end] seconds
     segment_end: Optional[float] = None,    # (e.g. one quarter) — deep on a slice, not the whole game
+    skip_start: Optional[float] = None,     # exclude a middle gap (halftime) from analysis
+    skip_end: Optional[float] = None,       # so dead footage isn't analyzed / billed
     confirm_rerun: bool = False,  # #4b: the coach has confirmed a 2nd billable run on already-analyzed film
     user: User = Depends(get_current_user),
     org: Organization = Depends(get_current_org),
@@ -410,6 +412,11 @@ async def trigger_auto_detect(
         raise HTTPException(status_code=400, detail="segment_end cannot be negative.")
     if segment_start is not None and segment_end is not None and segment_end <= segment_start:
         raise HTTPException(status_code=400, detail="segment_end must be greater than segment_start (seconds).")
+    # Halftime / dead-footage skip: a middle range to exclude. Both or neither.
+    if (skip_start is None) != (skip_end is None):
+        raise HTTPException(status_code=400, detail="Give both skip_start and skip_end, or neither.")
+    if skip_start is not None and (skip_start < 0 or skip_end <= skip_start):
+        raise HTTPException(status_code=400, detail="skip_end must be greater than skip_start (seconds).")
 
     # Sport lock on the EXPENSIVE path. Film import is already guarded, but the
     # analysis trigger is where Opus COGS is actually spent (deep = 3-pass +
@@ -520,7 +527,9 @@ async def trigger_auto_detect(
                  "detection_mode": ("deep" if mode == "deep" else "fast"),
                  "full": bool(full), "test": bool(test), "grade": bool(grade),
                  **({"segment_start": float(segment_start)} if segment_start is not None else {}),
-                 **({"segment_end": float(segment_end)} if segment_end is not None else {})},
+                 **({"segment_end": float(segment_end)} if segment_end is not None else {}),
+                 **({"skip_start": float(skip_start), "skip_end": float(skip_end)}
+                    if skip_start is not None else {})},
     )
     db.add(job)
     await db.flush()  # assign job.id so the usage row can be linked to it for refunds
@@ -543,16 +552,21 @@ async def trigger_auto_detect(
         from backend.services import credits
         if await credits.has_account(db, user.organization_id):
             deep_run = (mode == "deep" or bool(grade))
-            # A segment / start-offset run is charged pro-rata to the slice analyzed
-            # (margin-neutral); a re-analysis stays flat (already discounted). Either
-            # bound may be absent: missing start = 0, missing end = film length.
-            if (segment_start is not None or segment_end is not None) and not is_rerun:
+            # A segment / start-offset / halftime-skip run is charged pro-rata to the
+            # span actually analyzed (margin-neutral); a re-analysis stays flat. Either
+            # segment bound may be absent (missing start = 0, missing end = film length),
+            # and a halftime skip subtracts its overlap from the analyzed span.
+            if (segment_start is not None or segment_end is not None or skip_start is not None) and not is_rerun:
                 _s = segment_start or 0.0
                 _e = segment_end if segment_end is not None else (game.duration_seconds or 0)
+                analyzed = (_e - _s) if _e > _s else None
+                if analyzed and skip_start is not None:
+                    overlap = max(0.0, min(_e, skip_end) - max(_s, skip_start))
+                    analyzed = max(0.0, analyzed - overlap)
                 cost = credits.segment_credits(
                     sport=game.sport, deep=deep_run,
                     full_seconds=game.duration_seconds,
-                    segment_seconds=((_e - _s) if _e > _s else None))
+                    segment_seconds=(analyzed or None))
             else:
                 cost = credits.credits_for(sport=game.sport, deep=deep_run, is_rerun=is_rerun)
             ok = await credits.spend(db, user.organization_id, cost, ref=str(job.id))

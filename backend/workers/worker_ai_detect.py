@@ -52,7 +52,7 @@ CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "multipass-v23-foul-turnover-discipline"
+CODE_VERSION = "multipass-v24-skip-halftime"
 
 # Parallel ranged extraction: one long fps=0.5 pass over a 2.75h stream times out
 # silently. Instead decode many short windows concurrently, each its own ffmpeg.
@@ -606,6 +606,9 @@ class AiDetectWorker(BaseWorker):
         # be present and sane, or it's treated as a full-film run (see _detect_plays).
         self._segment_start = payload.get("segment_start")
         self._segment_end = payload.get("segment_end")
+        # Skip a middle gap (halftime), where Hudl keeps the camera rolling.
+        self._skip_start = payload.get("skip_start")
+        self._skip_end = payload.get("skip_end")
         # Technique-grading pass (opt-in): grade=true on the trigger, or the module
         # default. Expensive per-play Opus pass, so off unless explicitly requested.
         self._grade = bool(payload.get("grade")) or PLAY_GRADE_ENABLED
@@ -756,6 +759,27 @@ class AiDetectWorker(BaseWorker):
                         reason="A cheap sample to confirm the breakdown and team colors before you spend on a full game.",
                         detail={"test_seconds": int(duration)},
                     )
+                # Skip a middle gap (halftime): a coach-set range to exclude so dead
+                # footage isn't analyzed. Clamped to the film and only used when valid.
+                exclude = None
+                sk_s, sk_e = getattr(self, "_skip_start", None), getattr(self, "_skip_end", None)
+                if sk_s is not None and sk_e is not None:
+                    try:
+                        _es, _ee = max(0.0, float(sk_s)), min(float(duration), float(sk_e))
+                        if _ee - _es >= 5.0:
+                            exclude = (_es, _ee)
+                    except (TypeError, ValueError):
+                        exclude = None
+                if exclude:
+                    await log_agent_action(
+                        game_id=game_id, organization_id=str(org_id), job_id=job_id,
+                        phase="skip_halftime", level="info",
+                        action=(f"Skipping {int(exclude[0]//60)}:{int(exclude[0]%60):02d}"
+                                f"–{int(exclude[1]//60)}:{int(exclude[1]%60):02d} (halftime / dead footage)"),
+                        reason="You marked this stretch as halftime, so I skip it — no cost wasted "
+                               "analyzing a stopped game.",
+                        detail={"skip_start": int(exclude[0]), "skip_end": int(exclude[1])},
+                    )
                 # Denser sampling for recall; lighter in deep mode since each batch is 3
                 # calls. Basketball samples much denser (fast events land between football
                 # -cadence frames), which is why deep-on-a-segment exists to bound the cost.
@@ -766,7 +790,8 @@ class AiDetectWorker(BaseWorker):
                     fpw = FRAMES_PER_WINDOW_BB_FAST if _is_bb_sport else FRAMES_PER_WINDOW_FAST
                 frame_paths = await self._extract_windows(video_source, duration, frames_dir,
                                                           frames_per_window=fpw,
-                                                          start_offset=seg_start, end_limit=seg_end)
+                                                          start_offset=seg_start, end_limit=seg_end,
+                                                          exclude=exclude)
                 # Snap-aware clustering: drop same-moment duplicates (no-op on the uniform
                 # window grid, but harmless and protects against overlapping windows).
                 frame_paths = self._cluster_frames(frame_paths, CLUSTER_GAP_SECONDS)
@@ -1277,13 +1302,16 @@ class AiDetectWorker(BaseWorker):
     async def _extract_windows(self, url: str, total_duration: float, out_base: str,
                                frames_per_window: int = FRAMES_PER_WINDOW,
                                start_offset: Optional[float] = None,
-                               end_limit: Optional[float] = None):
+                               end_limit: Optional[float] = None,
+                               exclude: Optional[tuple] = None):
         """Parallel ranged extraction. Returns (path, time_seconds) tuples and stamps
         self._extract_diag so the DB proves coverage. Replaces the single fps=0.5 pass
         that timed out silently on long streams.
 
         start_offset/end_limit bound the analyzed span to a chosen segment (e.g. one
-        quarter). Frame timestamps stay absolute, so downstream reads are unaffected."""
+        quarter). `exclude`=(start,end) drops a middle gap (e.g. halftime, where the
+        Hudl camera keeps rolling) so a coach never pays to analyze dead footage. Frame
+        timestamps stay absolute, so downstream reads are unaffected."""
         windows = []
         segment = start_offset is not None or end_limit is not None
         lo = float(start_offset) if start_offset is not None else float(SKIP_START_SECONDS)
@@ -1291,10 +1319,25 @@ class AiDetectWorker(BaseWorker):
         # Full film skips the trailing sub-10s dead tail; a chosen segment is covered
         # to its exact end so the last plays in it are not dropped.
         tail = 0.5 if segment else 10.0
-        start = lo
-        while start < hi - tail:
-            windows.append((start, min(WINDOW_SIZE, hi - start)))
-            start += WINDOW_SIZE
+        # Split [lo, hi] around an excluded middle gap (halftime) into kept ranges.
+        ranges = [(lo, hi)]
+        if exclude:
+            es, ee = float(exclude[0]), float(exclude[1])
+            kept = []
+            for a, b in ranges:
+                if ee <= a or es >= b:          # gap doesn't overlap this range
+                    kept.append((a, b))
+                    continue
+                if a < es:                       # keep the part before the gap
+                    kept.append((a, min(es, b)))
+                if ee < b:                       # keep the part after the gap
+                    kept.append((max(ee, a), b))
+            ranges = kept
+        for a, b in ranges:
+            start = a
+            while start < b - tail:
+                windows.append((start, min(WINDOW_SIZE, b - start)))
+                start += WINDOW_SIZE
 
         # Safety cap: keep total frames under MAX_FRAMES by thinning density on long film.
         if windows and frames_per_window * len(windows) > MAX_FRAMES:
