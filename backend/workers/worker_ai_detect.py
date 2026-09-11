@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import select, update, delete
@@ -20,6 +21,7 @@ from sqlalchemy import select, update, delete
 from backend.config import settings
 from backend.models.base import AsyncSessionLocal
 from backend.models.event import Event
+from backend.models.analysis_run import AnalysisRunArchive, ARCHIVE_EVENT_COLUMNS
 from backend.models.game import Game
 from backend.models.job import Job
 from backend.models.usage import AnalysisUsage
@@ -52,7 +54,11 @@ CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "multipass-v27-free-throws"
+CODE_VERSION = "multipass-v28-preserve-runs"
+
+def _serialize_event(ev: "Event") -> dict:
+    """Snapshot an Event's data columns into a JSON-safe dict for archiving."""
+    return {c: getattr(ev, c) for c in ARCHIVE_EVENT_COLUMNS}
 
 # Parallel ranged extraction: one long fps=0.5 pass over a 2.75h stream times out
 # silently. Instead decode many short windows concurrently, each its own ffmpeg.
@@ -1032,15 +1038,39 @@ class AiDetectWorker(BaseWorker):
                         g = result.scalar_one()
                         org_id = g.organization_id
 
-                        # Replace prior auto-detected plays so a re-run doesn't duplicate
-                        # (manually-tagged plays are preserved).
+                        # PRESERVE PRIOR RUNS. A coach pays for every run and may want
+                        # several takes (a Quick Test, then a Deep pass), so a re-run must
+                        # NEVER silently lose the last run's plays. Snapshot the prior
+                        # auto-detected plays into an AnalysisRunArchive, THEN clear them so
+                        # the active game shows only this run (reports never double-count).
+                        # The archived take stays restorable until the coach deletes it.
+                        # Manually-tagged plays are never touched.
                         from sqlalchemy import delete as sa_delete
-                        await db.execute(
-                            sa_delete(Event).where(
+                        prior = (await db.execute(
+                            select(Event).where(
                                 Event.game_id == game_id,
                                 Event.extra_data["auto_detected"].as_boolean() == True,
                             )
-                        )
+                        )).scalars().all()
+                        if prior:
+                            snap = [_serialize_event(e) for e in prior]
+                            when = datetime.utcnow().strftime("%b %d, %I:%M %p").replace(" 0", " ")
+                            db.add(AnalysisRunArchive(
+                                game_id=game_id,
+                                organization_id=org_id,
+                                label=f"{len(prior)} plays · saved {when}",
+                                play_count=len(prior),
+                                plays=snap,
+                            ))
+                            await db.flush()
+                            await db.execute(
+                                sa_delete(Event).where(
+                                    Event.game_id == game_id,
+                                    Event.extra_data["auto_detected"].as_boolean() == True,
+                                )
+                            )
+                            logger.info(f"[ai_detect] game {game_id}: archived prior run "
+                                        f"({len(prior)} plays) before writing new run")
 
                         def _side(p):
                             s = (p.get("side") or "offense").lower().replace(" ", "_")

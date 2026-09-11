@@ -25,3 +25,4 @@ from .purchase_ip import PurchaseIPLog
 from .funnel import FunnelEvent, MarketingLead
 from .credits import OrgCredits, CreditLedger
 from .agent_approval import AgentApproval
+from .analysis_run import AnalysisRunArchive
