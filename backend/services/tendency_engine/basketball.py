@@ -1,6 +1,7 @@
 from typing import List, Dict, Any
 from collections import Counter, defaultdict
 from .basketball_scout import build_scouting_report
+from . import court_zones
 
 
 def _x(e, key, default=None):
@@ -14,19 +15,26 @@ def _is_made(e) -> bool:
     return (e.result or "").lower() in ("made", "good", "and-1")
 
 
+def _is_free_throw(e) -> bool:
+    st = (_x(e, "shot_type") or "").strip().lower()
+    return st in ("free throw", "ft", "free-throw") or court_zones.is_free_throw_zone(_x(e, "shot_zone"))
+
+
 def _is_three(e) -> bool:
-    zone = _x(e, "shot_zone") or ""
-    return "3" in zone or "Corner" in zone or "Wing 3" in zone or "Top of Key" in zone
+    st = (_x(e, "shot_type") or "").lower()
+    if st in ("3pt", "3", "three"):
+        return True
+    if st in ("2pt", "2", "two"):
+        return False
+    return court_zones.is_three_zone(_x(e, "shot_zone"))
 
 
 def _is_paint(e) -> bool:
-    zone = _x(e, "shot_zone") or ""
-    return zone in ("Restricted Area", "Paint Non-RA")
+    return court_zones.is_paint_zone(_x(e, "shot_zone"))
 
 
 def _is_mid_range(e) -> bool:
-    zone = _x(e, "shot_zone") or ""
-    return "Mid" in zone or "Elbow" in zone
+    return court_zones.is_mid_zone(_x(e, "shot_zone"))
 
 
 def analyze_basketball(events) -> Dict[str, Any]:
@@ -34,6 +42,9 @@ def analyze_basketball(events) -> Dict[str, Any]:
         return {"total_plays": 0}
 
     shots = [e for e in events if e.event_type == "shot"]
+    # Field goals only for shooting %/eFG/zone views — free throws are not FGA and
+    # would distort every shooting split and the shot-zone map.
+    field_goals = [e for e in shots if not _is_free_throw(e)]
     turnovers = [e for e in events if e.event_type == "turnover"]
     fouls = [e for e in events if e.event_type == "foul"]
     rebounds = [e for e in events if e.event_type == "rebound"]
@@ -51,11 +62,11 @@ def analyze_basketball(events) -> Dict[str, Any]:
         # Six-category opponent scouting brief, in strict order of importance
         # (Category 1 weighted heaviest). Drives the coach-facing report sections.
         "scouting": build_scouting_report(events),
-        "shooting_overview": _shooting_overview(shots),
-        "shot_zone_map": _shot_zone_map(shots),
+        "shooting_overview": _shooting_overview(field_goals),
+        "shot_zone_map": _shot_zone_map(field_goals),
         # §12 Map 2 — per-player shot spots (eFG by zone, hot/cold).
-        "player_shot_zones": _player_shot_zones(shots),
-        "shot_creation": _shot_creation(shots),
+        "player_shot_zones": _player_shot_zones(field_goals),
+        "shot_creation": _shot_creation(field_goals),
         "pick_and_roll": _pick_and_roll_analysis(offense_events),
         "isolation": _isolation_analysis(offense_events),
         "post_up": _post_up_analysis(offense_events),
