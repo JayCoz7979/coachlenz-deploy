@@ -194,6 +194,16 @@ def _category_1_possession(events) -> Dict[str, Any]:
     team_seconds = sum(a["seconds"] for a in players.values()) or 0.0
     team_touches = sum(a["touches"] for a in players.values()) or 0
 
+    # Time-of-possession is a DURATION metric. Single-camera film rarely yields a
+    # per-possession clock, so possession_seconds comes back all-zero. Without real
+    # seconds, role classification (initiator / ghost / dead-zone) and the
+    # isolation-dependency flag are meaningless — every player would fall to "ghost"
+    # purely because avg-seconds-per-touch is 0, which is a false tell that then
+    # drives a bogus "sag off #X, he just catches and passes" game-plan call.
+    # When timing is absent we still surface WHO handles the ball (touch counts are
+    # real), but we suppress every duration-derived role/flag and say so.
+    timing_available = team_seconds > 0
+
     rows = []
     for j, a in players.items():
         secs = round(a["seconds"], 1)
@@ -201,14 +211,19 @@ def _category_1_possession(events) -> Dict[str, Any]:
         avg_per_touch = round(secs / touches, 2) if touches else 0.0
         share = _pct(int(secs), int(team_seconds)) if team_seconds else 0.0
 
-        # Role classification (initiator / role player / ghost).
-        is_dead_zone = touches >= DEAD_ZONE_MIN_TOUCHES and avg_per_touch < DEAD_ZONE_SECONDS
-        if is_dead_zone or (touches and share < 6 and avg_per_touch < DEAD_ZONE_SECONDS):
-            role = "ghost"
-        elif share >= 20 or (avg_per_touch >= 3.0 and touches >= DEAD_ZONE_MIN_TOUCHES):
-            role = "initiator"
+        if timing_available:
+            # Role classification (initiator / role player / ghost).
+            is_dead_zone = touches >= DEAD_ZONE_MIN_TOUCHES and avg_per_touch < DEAD_ZONE_SECONDS
+            if is_dead_zone or (touches and share < 6 and avg_per_touch < DEAD_ZONE_SECONDS):
+                role = "ghost"
+            elif share >= 20 or (avg_per_touch >= 3.0 and touches >= DEAD_ZONE_MIN_TOUCHES):
+                role = "initiator"
+            else:
+                role = "role_player"
         else:
-            role = "role_player"
+            # No duration data: cannot classify by time. Report touches only.
+            is_dead_zone = False
+            role = "unknown"
 
         rows.append({
             "jersey": j,
@@ -220,20 +235,28 @@ def _category_1_possession(events) -> Dict[str, Any]:
             "dead_zone": is_dead_zone,
         })
 
-    rows.sort(key=lambda r: (r["possession_seconds"], r["touches"]), reverse=True)
+    # Rank by possession time when we have it, otherwise by touches.
+    rows.sort(key=lambda r: ((r["possession_seconds"], r["touches"]) if timing_available
+                             else (r["touches"], r["possession_seconds"])), reverse=True)
 
     primary = rows[0] if rows else None
-    iso_flag = bool(primary and primary["possession_share_pct"] > ISO_DEPENDENCY_PCT)
+    # Every duration-derived signal is suppressed when timing is unavailable.
+    iso_flag = bool(timing_available and primary and primary["possession_share_pct"] > ISO_DEPENDENCY_PCT)
     initiators = [r["jersey"] for r in rows if r["role"] == "initiator"]
     ghosts = [r["jersey"] for r in rows if r["role"] == "ghost"]
 
     return {
         "tracked": True,
+        "timing_available": timing_available,
+        "note": (None if timing_available else
+                 "Possession duration is not measurable on this film (single-camera). "
+                 "Players are ranked by touches; time-of-possession roles are withheld."),
         "players": rows,
         "team_possession_seconds": round(team_seconds, 1),
         "team_touches": team_touches,
+        # Who handles the ball most: by time if we have it, else by touches (still real).
         "primary_ball_handler": primary["jersey"] if primary else None,
-        "primary_share_pct": primary["possession_share_pct"] if primary else 0.0,
+        "primary_share_pct": (primary["possession_share_pct"] if (timing_available and primary) else None),
         "secondary_initiators": initiators[1:] if len(initiators) > 1 else [],
         "ghost_players": ghosts,
         "isolation_dependency_flag": iso_flag,
@@ -493,18 +516,20 @@ def _category_4_shot_ratio(events) -> Dict[str, Any]:
 # CATEGORY 5 — PACE OF PLAY
 # ═══════════════════════════════════════════════════════════════════════════
 def _category_5_pace(events) -> Dict[str, Any]:
-    # A possession is any event carrying possession_seconds, or an explicit
-    # "possession" ledger event. Prefer explicit possession rows when present.
-    poss = [e for e in events if e.event_type == "possession"]
-    if not poss:
-        poss = [e for e in events
-                if _x(e, "possession_seconds") is not None
-                and e.event_type in ("shot", "turnover", "touch")]
-    if not poss:
+    # Count each side's possessions INDEPENDENTLY, preferring explicit "possession"
+    # ledger rows for that side and falling back to that side's shots/turnovers when
+    # it has none. Single-camera film often logs only the DEFENSE's possession rows
+    # (plus the offense's shots/turnovers); the old all-or-nothing rule then saw the
+    # defensive rows, skipped the fallback, and reported 0 offensive possessions —
+    # contradicting the 9 the rest of the report counted. Per-side fallback keeps
+    # this consistent with _offensive_possession_count / _defensive_possession_count.
+    explicit = [e for e in events if e.event_type == "possession"]
+    off = [e for e in explicit if _is_offense(e)] or \
+        [e for e in events if _is_offense(e) and e.event_type in ("shot", "turnover")]
+    deff = [e for e in explicit if _side(e) == "defense"] or \
+        [e for e in events if _side(e) == "defense" and e.event_type in ("shot", "turnover")]
+    if not off and not deff:
         return {"tracked": False}
-
-    off = [e for e in poss if _is_offense(e)]
-    deff = [e for e in poss if _side(e) == "defense"]
 
     def avg_secs(rows):
         vals = [_num(_x(e, "possession_seconds")) for e in rows if _x(e, "possession_seconds") is not None]
@@ -555,8 +580,15 @@ def _category_5_pace(events) -> Dict[str, Any]:
     else:
         rating = "slow"
 
+    # Pace RATING needs a possession clock. Say so plainly when the film has none,
+    # rather than leaving a bare "unknown" next to real possession counts.
+    timing_available = off_avg is not None
     return {
         "tracked": True,
+        "timing_available": timing_available,
+        "note": (None if timing_available else
+                 "Possession length is not measurable on this film (single-camera), so pace "
+                 "rating is withheld. Possession counts below are still accurate."),
         "offensive_possessions": len(off),
         "defensive_possessions": len(deff),
         "avg_offensive_possession_seconds": off_avg,

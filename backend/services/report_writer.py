@@ -666,9 +666,12 @@ def _scout_priority_sections(scouting):
             "insight_type": "tendency",
             "instructions": (
                 "3-4 tight sentences on this opponent's identity across the six scouting categories. "
-                "Lead with Category 1: name the primary_ball_handler and their possession_share_pct, and if "
-                "isolation_dependency_flag is true say plainly they are isolation-dependent (>35% of possession in one player). "
-                "Then one line each on their biggest turnover risk, their shot-selection lean (2PT vs 3PT), and their pace_rating. "
+                "Lead with Category 1: name the primary_ball_handler (their possession_share_pct too, but ONLY if "
+                "category_1_time_of_possession.timing_available is true — otherwise call them the most-frequent handler "
+                "by touches and do not cite a possession percentage or isolation dependency). If isolation_dependency_flag "
+                "is true, say plainly they are isolation-dependent (>35% of possession in one player). "
+                "Then one line each on their biggest turnover risk and their shot-selection lean (2PT vs 3PT), and their "
+                "pace_rating ONLY if category_5_pace.timing_available is true (else skip pace). "
                 "End with the single most important thing the staff must know, drawn from game_plan_priorities[0]."
             ),
         },
@@ -677,14 +680,18 @@ def _scout_priority_sections(scouting):
             "insight_type": "tendency",
             "instructions": (
                 "THE HIGHEST-PRIORITY SECTION. Use scouting.category_1_time_of_possession. "
-                "Open with one lead sentence naming the primary_ball_handler, their possession_share_pct and role. "
-                "Then bullets: rank the top players by possession_seconds with their role (initiator / role_player / ghost), "
-                "possession_share_pct, touches, and avg_seconds_per_touch. "
-                "If isolation_dependency_flag is true, make it the headline bullet: one player over the 35% possession line is an "
-                "isolation dependency to attack by denying/trapping that player. "
-                "Name secondary_initiators (who else creates), ghost_players (players who never really handle it), and "
-                "dead_zone_players (catch-and-immediately-pass, avg under 1s/touch). "
-                "Close with the defensive call: who to deny/trap on the catch, and who to sag off."
+                "IMPORTANT: if timing_available is false, possession DURATION could not be measured on this film "
+                "(single-camera). In that case, do NOT state possession_share_pct or seconds, do NOT call anyone a "
+                "ghost / dead-zone / isolation-dependent player, and do NOT make a 'sag off #X, he just catches and "
+                "passes' call. Instead say plainly that possession-time is not measurable on this film, rank the top "
+                "players by touches (name the primary_ball_handler as the most-frequent handler), and note that a "
+                "possession-time read needs a tighter or multi-angle camera. Then stop. "
+                "ONLY when timing_available is true: open with one lead sentence naming the primary_ball_handler, their "
+                "possession_share_pct and role; then bullets ranking the top players by possession_seconds with role "
+                "(initiator / role_player / ghost), possession_share_pct, touches, and avg_seconds_per_touch; if "
+                "isolation_dependency_flag is true make it the headline bullet (one player over the 35% possession line "
+                "is an isolation dependency to deny/trap); name secondary_initiators, ghost_players, and "
+                "dead_zone_players; and close with the defensive call: who to deny/trap on the catch, and who to sag off."
             ),
         },
         {
@@ -726,12 +733,16 @@ def _scout_priority_sections(scouting):
             "heading": "Section 5 - Pace Profile",
             "insight_type": "tendency",
             "instructions": (
-                "Use scouting.category_5_pace. Lead with pace_rating (slow/moderate/fast) and the avg_offensive_possession_seconds. "
-                "Bullets: avg offensive vs defensive possession seconds, transition_frequency_pct (share of possessions starting "
-                "within 5 seconds of a change), situational_pace (do they speed up or slow down when trailing vs leading), and "
-                "pace_control (coach_controlled = consistent, player_driven = variable). "
-                "Close with the tempo plan: speed them up or slow them down, and when. "
-                "If tracked is false, say possession-timing was not tagged and skip."
+                "Use scouting.category_5_pace. If tracked is false, say possession data was not tagged and skip. "
+                "If timing_available is false, possession LENGTH was not measurable on this film (single-camera): do NOT "
+                "state a pace_rating or possession seconds; instead report the offensive_possessions and "
+                "defensive_possessions counts and transition_frequency_pct if present, say the pace rating needs a "
+                "possession clock (tighter/multi-angle film), and stop. "
+                "ONLY when timing_available is true: lead with pace_rating (slow/moderate/fast) and "
+                "avg_offensive_possession_seconds; bullets on avg offensive vs defensive possession seconds, "
+                "transition_frequency_pct (possessions starting within 5s of a change), situational_pace (speed up or "
+                "slow down when trailing vs leading), and pace_control (coach_controlled = consistent, player_driven = "
+                "variable); close with the tempo plan: speed them up or slow them down, and when."
             ),
         },
         {
