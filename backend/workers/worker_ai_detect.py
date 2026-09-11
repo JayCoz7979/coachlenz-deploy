@@ -52,7 +52,7 @@ CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "multipass-v18-bball-dense-frames"
+CODE_VERSION = "multipass-v19-bball-made-miss-scoreboard"
 
 # Parallel ranged extraction: one long fps=0.5 pass over a 2.75h stream times out
 # silently. Instead decode many short windows concurrently, each its own ffmpeg.
@@ -430,6 +430,8 @@ VERIFY_PROMPT_BB = """You are the sharpest, most skeptical basketball film revie
 
 Look at the frames carefully. Correct any field you can clearly see is wrong, and ONLY change a field if the film actually supports a different value. If the user message lists a contradiction, resolve it by deciding which value the film supports (for example, was it truly a 3 or a shot at the rim). Be honest about what the fixed camera cannot show.
 
+MADE vs MISSED: "Missed" is NOT the default. Confirm the shot result from the SCOREBOARD first — the score only ticks up on a make (up 2/3 = made field goal, up 1 = made free throw; unchanged + a rebound to the other team = missed). If the score bug is not legible, use the after-play reaction (inbound + retreat = made; rebound battle = missed). If neither is readable, set result to null — do NOT leave or change it to "missed" on a guess.
+
 Return ONLY JSON with the fields you are confident about plus a judgment:
 {"side":null,"event_type":null,"result":null,"play_action":null,"shot_zone":null,"shot_type":null,"screen_type":null,"defensive_scheme":null,"confidence":0.0,"verdict":"confirmed","note":"one short sentence"}
 verdict is "confirmed" | "corrected" | "unreadable". Use null for anything the film cannot support."""
@@ -473,10 +475,14 @@ WHO HAS THE BALL decides side, NOTHING ELSE. side="offense" ONLY when the SCOUTE
 - A quick check: if the scouted team just shot, the very next possession is almost always the OTHER team's (side flips). Alternating offense/defense is the normal pattern; a long run of the same side is a red flag that you have lost the thread — re-read the jerseys.
 
 ━━━ MADE vs MISSED DISCIPLINE ━━━
-Do NOT judge a make from the shot arc alone. Read what happens AFTER the ball reaches the rim:
-- MADE: the ball drops DOWN THROUGH the net (the net kicks/flips up), there is NO rebound scramble, and the other team takes the ball out of bounds or pushes it the other way. Retreating defense + an inbound = a make.
-- MISSED: the ball hits rim or backboard and caroms out, players crash the glass, and a REBOUND battle follows. A rebound happening = the shot missed.
-When the ball itself is obscured (traffic, angle, far basket), decide from that after-play reaction (inbound vs rebound), and if you still cannot tell, set result null and note it in blind_spot — never guess made/missed 50/50.
+"Missed" is NOT the default and NOT the same as "unknown". Both "Made" and "Missed" require POSITIVE evidence. If you cannot find that evidence, set result to null — NEVER label a shot "Missed" just because you did not clearly see it go in. Defaulting to "missed" is the single worst error you can make here.
+STRONGEST SIGNAL — THE SCOREBOARD. The score bug only ticks UP on a make. Read the score before the shot and on the next possession's frames:
+  - the shooting team's score went UP by 2 -> MADE two; up by 3 -> MADE three; up by 1 (or 1 then 1) -> free throws MADE.
+  - the score did NOT change and the other team gains the ball off a rebound -> MISSED.
+  Whenever the scoreboard is legible, the score change is the TRUTH — trust it over the blurry ball.
+AFTER-PLAY REACTION (use when the score bug is not legible on these frames): MADE = no rebound scramble, the other team inbounds under the basket or pushes the ball the other way, defenders retreat. MISSED = the ball caroms off rim/backboard and a REBOUND battle follows.
+BALL THROUGH NET: a make drops straight down through the net and the net kicks up.
+If NONE of these are readable (far basket, traffic, score not legible this frame), result = null and say so in blind_spot. Never guess made/missed 50/50, and never fall back to "missed".
 
 ━━━ EVENT-TYPE DISCIPLINE (read before labeling) ━━━
 TIMEOUT — tag event_type "timeout" ONLY when you can SEE a real timeout: the team walking to and huddling at the bench with coaches, a referee's raised-T signal, or a "TIMEOUT"/"TO" scoreboard graphic. A generic stoppage is NOT a timeout. Do NOT tag as "timeout": a whistle, a dead ball, a substitution, an inbound, a foul shot, the gap between possessions, an end-of-quarter break, or any clip where you simply cannot tell what is happening. When in doubt, it is NOT a timeout — emit no event for that clip rather than guess. A full game has only a handful of real timeouts; if you find yourself tagging many, you are mislabeling stoppages.
