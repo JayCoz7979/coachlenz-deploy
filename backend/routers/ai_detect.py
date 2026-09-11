@@ -762,3 +762,158 @@ async def agent_log(
             for r in rows
         ],
     }
+
+
+# ── Analysis run preservation ──────────────────────────────────────────────
+# A coach pays for every AI run and may want several takes (a Quick Test, then a
+# Deep pass). A re-run snapshots the prior run into an archive instead of deleting
+# it, so nothing a coach paid for is ever lost. These endpoints let the coach see
+# the preserved takes, bring one back as the active run, or delete one on purpose.
+
+async def _require_game(game_id: str, user: User, db: AsyncSession) -> Game:
+    game = (await db.execute(
+        select(Game).where(Game.id == game_id, Game.organization_id == user.organization_id)
+    )).scalar_one_or_none()
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+    return game
+
+
+@router.get("/{game_id}/runs")
+async def list_runs(
+    game_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """The current AI run plus every preserved prior take (newest first)."""
+    from backend.models.analysis_run import AnalysisRunArchive
+
+    await _require_game(game_id, user, db)
+
+    current = (await db.execute(
+        select(func.count()).select_from(Event).where(
+            Event.game_id == game_id,
+            Event.organization_id == user.organization_id,
+            Event.extra_data["auto_detected"].as_boolean() == True,
+        )
+    )).scalar() or 0
+
+    res = await db.execute(
+        select(AnalysisRunArchive)
+        .where(AnalysisRunArchive.game_id == game_id,
+               AnalysisRunArchive.organization_id == user.organization_id)
+        .order_by(AnalysisRunArchive.archived_at.desc())
+    )
+    archives = list(res.scalars().all())
+    return {
+        "game_id": game_id,
+        "current_play_count": int(current),
+        "archived_runs": [
+            {
+                "id": str(a.id),
+                "label": a.label,
+                "play_count": a.play_count,
+                "archived_at": a.archived_at.isoformat() if a.archived_at else None,
+            }
+            for a in archives
+        ],
+    }
+
+
+@router.post("/{game_id}/runs/{archive_id}/restore")
+async def restore_run(
+    game_id: str,
+    archive_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bring a preserved take back as the active run.
+
+    The current AI run is first snapshotted into its own archive (so the coach
+    never loses it either), then the chosen take's plays are re-inserted as fresh
+    events and its archive row is consumed. Manual tags are untouched throughout.
+    """
+    from sqlalchemy import delete as sa_delete
+    from backend.models.analysis_run import AnalysisRunArchive, ARCHIVE_EVENT_COLUMNS
+
+    game = await _require_game(game_id, user, db)
+    org_id = user.organization_id
+
+    target = (await db.execute(
+        select(AnalysisRunArchive).where(
+            AnalysisRunArchive.id == archive_id,
+            AnalysisRunArchive.game_id == game_id,
+            AnalysisRunArchive.organization_id == org_id,
+        )
+    )).scalar_one_or_none()
+    if not target:
+        raise HTTPException(status_code=404, detail="Saved run not found")
+
+    # Snapshot the current run so restoring never discards it.
+    current = (await db.execute(
+        select(Event).where(
+            Event.game_id == game_id,
+            Event.organization_id == org_id,
+            Event.extra_data["auto_detected"].as_boolean() == True,
+        )
+    )).scalars().all()
+    if current:
+        when = datetime.utcnow().strftime("%b %d, %I:%M %p").replace(" 0", " ")
+        db.add(AnalysisRunArchive(
+            game_id=game_id,
+            organization_id=org_id,
+            label=f"{len(current)} plays · saved {when}",
+            play_count=len(current),
+            plays=[{c: getattr(e, c) for c in ARCHIVE_EVENT_COLUMNS} for e in current],
+        ))
+        await db.flush()
+        await db.execute(
+            sa_delete(Event).where(
+                Event.game_id == game_id,
+                Event.organization_id == org_id,
+                Event.extra_data["auto_detected"].as_boolean() == True,
+            )
+        )
+
+    # Re-insert the chosen take as fresh events.
+    restored = [
+        Event(
+            game_id=game_id,
+            organization_id=org_id,
+            **{c: p.get(c) for c in ARCHIVE_EVENT_COLUMNS},
+        )
+        for p in (target.plays or [])
+    ]
+    db.add_all(restored)
+    # The take is now live, so consume its archive row.
+    await db.execute(
+        sa_delete(AnalysisRunArchive).where(AnalysisRunArchive.id == target.id)
+    )
+    await db.commit()
+    return {"ok": True, "restored_play_count": len(restored)}
+
+
+@router.delete("/{game_id}/runs/{archive_id}")
+async def delete_run(
+    game_id: str,
+    archive_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Permanently delete a preserved take (coach's explicit choice)."""
+    from sqlalchemy import delete as sa_delete
+    from backend.models.analysis_run import AnalysisRunArchive
+
+    await _require_game(game_id, user, db)
+    target = (await db.execute(
+        select(AnalysisRunArchive).where(
+            AnalysisRunArchive.id == archive_id,
+            AnalysisRunArchive.game_id == game_id,
+            AnalysisRunArchive.organization_id == user.organization_id,
+        )
+    )).scalar_one_or_none()
+    if not target:
+        raise HTTPException(status_code=404, detail="Saved run not found")
+    await db.execute(sa_delete(AnalysisRunArchive).where(AnalysisRunArchive.id == target.id))
+    await db.commit()
+    return {"ok": True}

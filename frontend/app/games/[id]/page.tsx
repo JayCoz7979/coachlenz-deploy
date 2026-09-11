@@ -602,6 +602,55 @@ function BasketballTagForm({ currentTime, onSave, saving, opponent }: {
 }
 
 // ── Play Log ──────────────────────────────────────────────────────────────
+// Preserved AI runs. Every re-run keeps the prior take instead of wiping it, so a
+// coach can run a Quick Test then a Deep pass without losing what they paid for.
+// The current take is live in the Play Log below; these are the saved earlier takes.
+function SavedRuns({
+  runs,
+  busy,
+  onRestore,
+  onDelete,
+}: {
+  runs: { current_play_count: number; archived_runs: { id: string; label: string; play_count: number; archived_at: string | null }[] }
+  busy: string | null
+  onRestore: (id: string) => void
+  onDelete: (id: string) => void
+}) {
+  return (
+    <div style={{ border: '1px solid #44443c', borderRadius: 8, padding: '12px 14px', marginBottom: 14, background: '#26261f' }}>
+      <div style={{ fontSize: 12, fontWeight: 800, color: '#C9A84C', letterSpacing: '0.04em', marginBottom: 4 }}>
+        SAVED RUNS
+      </div>
+      <div style={{ fontSize: 11.5, color: '#a8a89c', marginBottom: 10 }}>
+        The play log below is your current take ({runs.current_play_count} plays). Every earlier take is kept here — nothing you paid for is lost. Restore one to make it live, or delete a take you do not want.
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {runs.archived_runs.map(a => (
+          <div key={a.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '7px 10px', border: '1px solid #3a3a32', borderRadius: 6, background: '#1f1f19' }}>
+            <span style={{ fontSize: 12.5, color: '#f0eee6', fontWeight: 600 }}>{a.label || `${a.play_count} plays`}</span>
+            <span style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={() => onRestore(a.id)}
+                disabled={busy === a.id}
+                title="Bring this take back as the active run (your current take is saved first, so it is never lost)."
+                style={{ background: '#2e6b3e', color: '#f0eee6', border: 'none', borderRadius: 5, padding: '5px 12px', fontSize: 11, fontWeight: 700, cursor: busy === a.id ? 'default' : 'pointer', opacity: busy === a.id ? 0.6 : 1 }}>
+                {busy === a.id ? '…' : 'Restore'}
+              </button>
+              <button
+                onClick={() => onDelete(a.id)}
+                disabled={busy === a.id}
+                title="Delete this saved take for good."
+                style={{ background: 'none', color: '#c07a7a', border: '1px solid #5a3a3a', borderRadius: 5, padding: '5px 10px', fontSize: 11, fontWeight: 700, cursor: busy === a.id ? 'default' : 'pointer', opacity: busy === a.id ? 0.6 : 1 }}>
+                Delete
+              </button>
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function PlayLog({
   events,
   onDelete,
@@ -1514,6 +1563,8 @@ export default function GamePage() {
     error: string | null
   }>(null)
   const [agentLog, setAgentLog] = useState<AgentLogEntry[]>([])
+  const [runs, setRuns] = useState<{ current_play_count: number; archived_runs: { id: string; label: string; play_count: number; archived_at: string | null }[] } | null>(null)
+  const [runBusy, setRunBusy] = useState<string | null>(null)
   const [scorecard, setScorecard] = useState<any>(null)
   const [accuracy, setAccuracy] = useState<any>(null)
   const [scoutJersey, setScoutJersey] = useState('')
@@ -1538,6 +1589,7 @@ export default function GamePage() {
     }).catch(() => {})
     fetchAgentLog()
     fetchScorecard()
+    fetchRuns()
   }, [user, id])
 
   const fetchAgentLog = async () => {
@@ -1550,6 +1602,35 @@ export default function GamePage() {
   const fetchScorecard = async () => {
     try { const r = await api.get(`/games/${id}/coverage`); setScorecard(r.data) } catch {}
     try { const r = await api.get(`/games/${id}/accuracy`); setAccuracy(r.data) } catch {}
+  }
+
+  const fetchRuns = async () => {
+    try { const r = await api.get(`/games/${id}/runs`); setRuns(r.data) } catch {}
+  }
+
+  const restoreRun = async (archiveId: string) => {
+    setRunBusy(archiveId)
+    try {
+      const r = await api.post(`/games/${id}/runs/${archiveId}/restore`)
+      const ev = await api.get(`/events?game_id=${id}`); setEvents(ev.data)
+      await fetchRuns(); fetchScorecard()
+      showToast(`Restored ${r.data.restored_play_count} plays — this take is now live`)
+      setTab('log')
+    } catch (e: any) {
+      showToast(e?.response?.data?.detail ?? 'Could not restore that run')
+    } finally { setRunBusy(null) }
+  }
+
+  const deleteRun = async (archiveId: string) => {
+    if (!confirm('Delete this saved run for good? This cannot be undone.')) return
+    setRunBusy(archiveId)
+    try {
+      await api.delete(`/games/${id}/runs/${archiveId}`)
+      await fetchRuns()
+      showToast('Saved run deleted')
+    } catch (e: any) {
+      showToast(e?.response?.data?.detail ?? 'Could not delete that run')
+    } finally { setRunBusy(null) }
   }
 
   const saveJerseys = async () => {
@@ -1589,6 +1670,7 @@ export default function GamePage() {
           const evRes = await api.get(`/events?game_id=${id}`)
           setEvents(evRes.data)
           fetchScorecard()
+          fetchRuns()
           if (r.data.dry_run) {
             showToast('Preview complete — nothing was saved')
           } else if (r.data.plays_detected > 0) {
@@ -2205,7 +2287,12 @@ export default function GamePage() {
                     ? <BasketballTagForm currentTime={currentTime} onSave={handleSaveTag} saving={saving} opponent={game.opponent} />
                     : <TagForm currentTime={currentTime} onSave={handleSaveTag} saving={saving} side={side} setSide={setSide} opponent={game.opponent} />)
                 : tab === 'log'
-                ? <PlayLog events={events} onDelete={handleDelete} onSeek={handleSeek} onUpdate={handleUpdate} sport={game.sport} />
+                ? <>
+                    {runs && runs.archived_runs.length > 0 && (
+                      <SavedRuns runs={runs} busy={runBusy} onRestore={restoreRun} onDelete={deleteRun} />
+                    )}
+                    <PlayLog events={events} onDelete={handleDelete} onSeek={handleSeek} onUpdate={handleUpdate} sport={game.sport} />
+                  </>
                 : tab === 'cutups'
                 ? <CutUps events={events} videoRef={videoRef} sport={game.sport} />
                 : tab === 'tendencies'
