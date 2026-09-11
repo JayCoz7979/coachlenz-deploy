@@ -1518,6 +1518,7 @@ export default function GamePage() {
   const [accuracy, setAccuracy] = useState<any>(null)
   const [scoutJersey, setScoutJersey] = useState('')
   const [oppJersey, setOppJersey] = useState('')
+  const [attackDir, setAttackDir] = useState('')  // basketball: scouted team's H1 attacking basket
   const [jerseySaved, setJerseySaved] = useState(false)
   const detectPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -1526,7 +1527,7 @@ export default function GamePage() {
 
   useEffect(() => {
     if (!user || !id) return
-    api.get(`/games/${id}`).then(r => { setGame(r.data); setScoutJersey(r.data.scout_jersey || ''); setOppJersey(r.data.opponent_jersey || '') })
+    api.get(`/games/${id}`).then(r => { setGame(r.data); setScoutJersey(r.data.scout_jersey || ''); setOppJersey(r.data.opponent_jersey || ''); setAttackDir(r.data.scout_attack_dir_h1 || '') })
     api.get(`/events?game_id=${id}`).then(r => setEvents(r.data)).catch(() => {})
     // Check if there's a running detect job
     api.get(`/games/${id}/auto-detect/status`).then(r => {
@@ -1553,7 +1554,7 @@ export default function GamePage() {
 
   const saveJerseys = async () => {
     try {
-      await api.patch(`/games/${id}`, { scout_jersey: scoutJersey, opponent_jersey: oppJersey })
+      await api.patch(`/games/${id}`, { scout_jersey: scoutJersey, opponent_jersey: oppJersey, scout_attack_dir_h1: attackDir || null })
       setJerseySaved(true)
       setTimeout(() => setJerseySaved(false), 2500)
       showToast('Saved. Break down the film (or Quick Test) and the report will be on that team.')
@@ -2025,6 +2026,18 @@ export default function GamePage() {
                   {jerseySaved ? 'Saved ✓' : 'Save'}
                 </button>
               </div>
+              {game?.sport === 'basketball' && (
+                <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.07)' }}>
+                  <div style={{ fontSize: 11, color: '#C9A84C', fontWeight: 700, marginBottom: 3 }}>Which basket does {scoutJersey || 'your team'} attack in the 1st half?</div>
+                  <div style={{ fontSize: 10, color: '#a8a89a', marginBottom: 6 }}>As you see it on the film. This locks possession (offense vs defense) for the whole game and flips at halftime — the reliable way to track it on single-cam film. Then hit Save above.</div>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    {([['left', '◄ Left basket'], ['right', 'Right basket ►']] as [string, string][]).map(([v, label]) => (
+                      <button key={v} onClick={() => setAttackDir(v)} style={{ flex: 1, padding: '7px 0', fontSize: 12, fontWeight: 700, cursor: 'pointer', borderRadius: 4, border: attackDir === v ? 'none' : '1px solid #44443c', background: attackDir === v ? '#1a5c2a' : 'transparent', color: attackDir === v ? '#f8f6f0' : '#a8a89a' }}>{label}</button>
+                    ))}
+                    {attackDir && <button onClick={() => setAttackDir('')} title="Clear — let the AI auto-detect the direction" style={{ padding: '7px 10px', fontSize: 11, background: 'none', border: '1px solid #44443c', borderRadius: 4, color: '#7a7a6e', cursor: 'pointer' }}>Auto</button>}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Detection scorecard — how complete and confident the read is (+ accuracy vs tagged plays) */}

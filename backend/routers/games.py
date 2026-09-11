@@ -26,6 +26,7 @@ class GameCreate(BaseModel):
     is_home: Optional[bool] = None
     scout_jersey: Optional[str] = None
     opponent_jersey: Optional[str] = None
+    scout_attack_dir_h1: Optional[str] = None
     file_name: str
     file_size_bytes: Optional[int] = None
 
@@ -62,6 +63,7 @@ async def create_game(body: GameCreate, user: User = Depends(get_current_user), 
         is_home=body.is_home,
         scout_jersey=body.scout_jersey,
         opponent_jersey=body.opponent_jersey,
+        scout_attack_dir_h1=body.scout_attack_dir_h1,
         r2_key=key,
         file_size_bytes=body.file_size_bytes,
         status="pending",
@@ -82,13 +84,14 @@ async def get_game(game_id: str, user: User = Depends(get_current_user), db: Asy
         raise HTTPException(status_code=404, detail="Game not found")
     from backend.services.r2 import generate_presigned_download_url
     download_url = generate_presigned_download_url(game.r2_key) if game.r2_key and game.status == "ready" else None
-    return {"id": str(game.id), "title": game.title, "sport": game.sport, "opponent": game.opponent, "status": game.status, "download_url": download_url, "duration_seconds": game.duration_seconds, "is_trial_game": game.is_trial_game, "scout_jersey": game.scout_jersey, "opponent_jersey": game.opponent_jersey}
+    return {"id": str(game.id), "title": game.title, "sport": game.sport, "opponent": game.opponent, "status": game.status, "download_url": download_url, "duration_seconds": game.duration_seconds, "is_trial_game": game.is_trial_game, "scout_jersey": game.scout_jersey, "opponent_jersey": game.opponent_jersey, "scout_attack_dir_h1": game.scout_attack_dir_h1}
 
 class GameUpdate(BaseModel):
     title: Optional[str] = None
     opponent: Optional[str] = None
     scout_jersey: Optional[str] = None
     opponent_jersey: Optional[str] = None
+    scout_attack_dir_h1: Optional[str] = None
 
 
 @router.patch("/{game_id}")

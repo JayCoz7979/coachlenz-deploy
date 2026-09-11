@@ -52,7 +52,7 @@ CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "multipass-v21-bball-fullgame-cap"
+CODE_VERSION = "multipass-v22-possession-anchor"
 
 # Parallel ranged extraction: one long fps=0.5 pass over a 2.75h stream times out
 # silently. Instead decode many short windows concurrently, each its own ffmpeg.
@@ -474,11 +474,10 @@ FILM SOURCE — READ FIRST. This is almost always single-camera coaches' or broa
 
 CATCH EVERY REAL EVENT. For a coach, a MISSED shot or possession is the worst error: it breaks their count and their trust. So when you can SEE a real basketball event — a shot, a turnover, a steal, a block, a rebound, a scored possession — ALWAYS emit it, even at lower confidence; the low confidence flags it for the coach's eyes. This recall bias applies ONLY to events you can actually see happen. It does NOT loosen the EVENT-TYPE DISCIPLINE below: a whistle, a dead ball, a substitution, or a clip where you cannot tell what happened still gets NO event, and an uncertain stoppage is never a timeout. Better to catch a real shot you are unsure about than to drop it; never fabricate an event you cannot see.
 
-━━━ TEAM & SIDE DISCIPLINE (the #1 error to avoid) ━━━
-WHO HAS THE BALL decides side, NOTHING ELSE. side="offense" ONLY when the SCOUTED team (the jersey color named in the team attribution above) has the ball and is trying to score. side="defense" when the OTHER team has the ball. Read this off the JERSEY COLOR of whoever is holding/dribbling/shooting the ball, on EVERY possession, fresh.
-- Basketball teams SWITCH ENDS after each made basket and every stoppage, and the camera FOLLOWS THE BALL. So court direction, which basket, and left/right tell you NOTHING about whose possession it is. Do NOT infer side from the direction of play or which end of the floor the action is on.
-- Re-identify the ball-handler's jersey color EVERY possession. Never carry the previous possession's side forward — possession flips constantly. If you are not certain of the color on a possession, say so in blind_spot and give your best read; do not flip the whole game because one possession was unclear.
-- A quick check: if the scouted team just shot, the very next possession is almost always the OTHER team's (side flips). Alternating offense/defense is the normal pattern; a long run of the same side is a red flag that you have lost the thread — re-read the jerseys.
+━━━ TEAM & SIDE via DIRECTION OF ATTACK (the #1 error to avoid) ━━━
+For EVERY play, report attack_direction: which basket the OFFENSE is attacking AS SEEN ON SCREEN — "left" (the left-hand hoop in the frame) or "right" (the right-hand hoop), or null only if you truly cannot tell. This is the MOST reliable possession signal on wide single-cam film: which hoop a shot goes up at, or which way the ball is being driven, is obvious even when the jerseys are tiny. Read it carefully on every play.
+WHY THIS IS THE KEY: within one half, each team attacks ONE basket and only switches at halftime. So the DIRECTION of attack — not the jersey you can barely read — is what actually tracks possession. Get attack_direction right and possession is solved; the software locks offense/defense to it per half.
+side: still give your best offense/defense read (offense = the SCOUTED team, the jersey color named above, has the ball). Read the ball-handler's jersey color when you can; when you cannot, infer side from attack_direction plus who just scored. Do NOT agonize over the jersey every possession — nail attack_direction and the software makes side consistent across the half.
 
 ━━━ MADE vs MISSED DISCIPLINE ━━━
 "Missed" is NOT the default and NOT the same as "unknown". Both "Made" and "Missed" require POSITIVE evidence. If you cannot find that evidence, set result to null — NEVER label a shot "Missed" just because you did not clearly see it go in. Defaulting to "missed" is the single worst error you can make here.
@@ -509,6 +508,7 @@ Use null ONLY if genuinely not determinable.
 
 ── CORE (every event) ──
 - side: "offense" | "defense" | "transition"
+- attack_direction: "left" | "right" | null — which basket the OFFENSE is attacking as seen on screen. REQUIRED whenever there is live action; this is what locks possession (see TEAM & SIDE above).
 - frame: Frame NUMBER — REQUIRED
 - event_type: "shot" | "turnover" | "foul" | "rebound" | "assist" | "steal" | "block" | "timeout" | "possession"
 - result: "Made" | "Missed" | "Blocked" | "And-1" | "Fouled" | "Stolen" | "Out of Bounds" | "Offensive Foul" | "Good" | null
@@ -560,7 +560,7 @@ These fields are CRITICAL for coaching — extract as precisely as possible from
 - inbound_result_zone: where the actual shot or scoring attempt ended up — same values as shot_zone | null
 
 ── DEFENSE (side=defense) ──
-- defensive_scheme: "Man" | "Zone 2-3" | "Zone 3-2" | "Zone 1-3-1" | "Match-Up Zone" | "Full Court Press Man" | "Full Court Press Zone" | "Half Court Trap" | null
+- defensive_scheme: "Man" | "Zone" | "Zone 2-3" | "Zone 3-2" | "Zone 1-3-1" | "Match-Up Zone" | "Full Court Press Man" | "Full Court Press Zone" | "Half Court Trap" | null. Man vs zone is usually clear (are defenders guarding a player or an area?). If you can tell it is a zone but NOT which shape, output the generic "Zone" — the coach will specify the exact zone. Only name a specific zone (2-3, 3-2, 1-3-1) when the alignment is clearly visible. Never guess a specific shape.
 - hedge_style: how they cover ball screens — "Hard Hedge" | "Drop Coverage" | "Switch" | "ICE/Push" | "Blitz/Double" | "Hedge and Recover" | null
 - help_defense: "Collapsing" | "Weak Side Help" | "No Help" | "Sagging" | null
 - deny_style: "Full Denial" | "Open/Sag" | "Body-Up" | null
@@ -579,7 +579,7 @@ These fields are CRITICAL for coaching — extract as precisely as possible from
 
 ━━━ JSON FORMAT ━━━
 Return ONLY this JSON:
-{"plays": [{"side": "offense", "frame": 1, "event_type": "shot", "result": null, "score_margin": null, "quarter": null, "shot_clock_range": null, "confidence": 0.85, "blind_spot": null, "play_action": null, "shot_zone": null, "shot_type": null, "shot_distance_ft": null, "screen_type": null, "ball_screen_position": null, "transition_type": null, "paint_touch": false, "kick_out": false, "assist_type": null, "motion": false, "vs_zone": false, "zone_offense_action": null, "press_break_action": null, "clutch_situation": false, "foul_drawn_action": null, "inbound_type": null, "inbound_side": null, "inbound_set": null, "inbound_primary_action": null, "inbound_scorer_position": null, "inbound_defense_coverage": null, "inbound_situation": null, "inbound_result_zone": null, "defensive_scheme": null, "hedge_style": null, "help_defense": null, "deny_style": null, "press_trigger": null, "oob_defense_coverage": null, "players": [], "primary_player_jersey": null, "play_description": null}]}
+{"plays": [{"side": "offense", "attack_direction": null, "frame": 1, "event_type": "shot", "result": null, "score_margin": null, "quarter": null, "shot_clock_range": null, "confidence": 0.85, "blind_spot": null, "play_action": null, "shot_zone": null, "shot_type": null, "shot_distance_ft": null, "screen_type": null, "ball_screen_position": null, "transition_type": null, "paint_touch": false, "kick_out": false, "assist_type": null, "motion": false, "vs_zone": false, "zone_offense_action": null, "press_break_action": null, "clutch_situation": false, "foul_drawn_action": null, "inbound_type": null, "inbound_side": null, "inbound_set": null, "inbound_primary_action": null, "inbound_scorer_position": null, "inbound_defense_coverage": null, "inbound_situation": null, "inbound_result_zone": null, "defensive_scheme": null, "hedge_style": null, "help_defense": null, "deny_style": null, "press_trigger": null, "oob_defense_coverage": null, "players": [], "primary_player_jersey": null, "play_description": null}]}
 
 Zero events: {"plays": []}"""
 
@@ -664,6 +664,8 @@ class AiDetectWorker(BaseWorker):
             self._film_height = game.film_height  # gates the EAGLE EYE jersey pass
             # Team attribution context for the vision prompts (which jerseys = scouted team).
             self._team_context = _build_team_context(game.scout_jersey, game.opponent_jersey)
+            # Basketball possession anchor (which basket the scouted team attacks in H1).
+            self._scout_attack_dir_h1 = getattr(game, "scout_attack_dir_h1", None)
 
         # UATP identity disclosure — the agent says who it is and what it will do
         # BEFORE it acts, every run.
@@ -909,6 +911,28 @@ class AiDetectWorker(BaseWorker):
                             f"[ai_detect] basketball sanity: dropped {dropped_to} "
                             f"implausible timeout event(s)"
                         )
+                    # POSSESSION ANCHOR: make offense/defense consistent with the
+                    # direction of attack, per half — the reliable way to track
+                    # possession on wide single-cam film. Deterministic when the coach
+                    # set the scouted team's first-half attacking basket; else auto.
+                    from backend.services.possession_anchor import anchor_sides
+                    deduped, side_fixed = anchor_sides(
+                        deduped, getattr(self, "_scout_attack_dir_h1", None))
+                    if side_fixed:
+                        _anchored = getattr(self, "_scout_attack_dir_h1", None)
+                        await log_agent_action(
+                            game_id=game_id, organization_id=str(org_id), job_id=job_id,
+                            phase="possession_anchor", level="info",
+                            action=f"Locked possession by direction of attack — corrected {side_fixed} play(s)",
+                            reason=("Using the first-half attacking basket you set, offense/defense "
+                                    "is derived from which basket the ball attacks (flipping at the "
+                                    "half), so possession can't drift."
+                                    if _anchored else
+                                    "No attacking direction set, so I anchored each half to the "
+                                    "direction that matched most reads and made the rest consistent. "
+                                    "Set the scouted team's first-half basket for a locked result."),
+                            detail={"corrected": side_fixed, "coach_direction": _anchored},
+                        )
 
                 # EAGLE EYE jersey pass (football): re-read jersey numbers off high-res
                 # player crops so personnel is actually usable. Skipped on dry runs.
@@ -1020,6 +1044,7 @@ class AiDetectWorker(BaseWorker):
                             "corner_technique", "safety_rotation", "pressure_gap",
                             "linebacker_alignment", "tempo", "score_situation",
                             # Basketball
+                            "attack_direction", "side_source",
                             "play_action", "shot_zone", "shot_type", "shot_distance_ft",
                             "screen_type", "ball_screen_position", "transition_type",
                             "paint_touch", "kick_out", "assist_type",
