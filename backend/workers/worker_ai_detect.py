@@ -52,7 +52,7 @@ CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "multipass-v20-skip-warmup"
+CODE_VERSION = "multipass-v21-bball-fullgame-cap"
 
 # Parallel ranged extraction: one long fps=0.5 pass over a 2.75h stream times out
 # silently. Instead decode many short windows concurrently, each its own ffmpeg.
@@ -111,6 +111,12 @@ PARALLEL_VISION_DEEP = 4
 # start-to-finish coverage, just lower density) rather than truncated. A coach can
 # pass full=true to bypass it for a game that matters.
 MAX_SEGMENTS_PER_RUN = 150
+# Basketball fast full-game gets a higher cap so it isn't thinned to a shot-missing
+# draft. 250 looks lands ~$13 and ~50% margin at typical bundle pricing (dipping to
+# ~30% only at the rock-bottom Department bundle) — the recall-over-margin trade Jay
+# chose. Deep is NOT raised (deep full-game is discouraged; deep-on-segment is denser
+# and priced pro-rata for it).
+MAX_SEGMENTS_PER_RUN_BB_FAST = 250
 TEST_CLIP_SECONDS = 180   # quick-test mode analyzes only the opening 3 minutes
 
 # ── EAGLE EYE jersey reader ─────────────────────────────────────────────────
@@ -818,9 +824,14 @@ class AiDetectWorker(BaseWorker):
                 # the whole film (start-to-finish coverage, lower density) so one long
                 # game can't surprise the budget. Coach opts into full=true to bypass.
                 total_segments = len(batches)
-                if not getattr(self, "_full_coverage", False) and total_segments > MAX_SEGMENTS_PER_RUN:
-                    step = total_segments / MAX_SEGMENTS_PER_RUN
-                    batches = [batches[int(i * step)] for i in range(MAX_SEGMENTS_PER_RUN)]
+                # Basketball fast gets a higher cap (more shots caught on a full game);
+                # everything else keeps the standard cap.
+                seg_cap = (MAX_SEGMENTS_PER_RUN_BB_FAST
+                           if (_is_bb_sport and not getattr(self, "_multipass", False))
+                           else MAX_SEGMENTS_PER_RUN)
+                if not getattr(self, "_full_coverage", False) and total_segments > seg_cap:
+                    step = total_segments / seg_cap
+                    batches = [batches[int(i * step)] for i in range(seg_cap)]
                     calls_per_seg = 3 if getattr(self, "_multipass", False) else 1
                     await log_agent_action(
                         game_id=game_id, organization_id=str(org_id), job_id=job_id,
