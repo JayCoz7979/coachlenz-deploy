@@ -1608,13 +1608,27 @@ export default function GamePage() {
   const [startAtMin, setStartAtMin] = useState('')  // skip warmup: start a full run here
   // Start offset for the full-game runs: {start} in seconds, or undefined if unset.
   const startOffset = (): { start: number } | undefined => {
-    const m = parseFloat(startAtMin)
-    return (!isNaN(m) && m > 0) ? { start: m * 60 } : undefined
+    const sec = parseFilmTime(startAtMin)
+    return (sec !== null && sec > 0) ? { start: sec } : undefined
+  }
+  // Parse a film time the coach typed, as SECONDS. Accepts "12:45" (mm:ss) or a
+  // plain/decimal minute ("12", "12.75"). Returns null if unparseable.
+  const parseFilmTime = (raw: string): number | null => {
+    const t = (raw || '').trim()
+    if (!t) return null
+    if (t.includes(':')) {
+      const [mm, ss] = t.split(':')
+      const m = parseInt(mm, 10), s = parseInt(ss, 10)
+      if (isNaN(m) || isNaN(s) || m < 0 || s < 0 || s >= 60) return null
+      return m * 60 + s
+    }
+    const dec = parseFloat(t)
+    return (!isNaN(dec) && dec >= 0) ? Math.round(dec * 60) : null
   }
   const runDeepSegment = () => {
-    const s = parseFloat(segStartMin), e = parseFloat(segEndMin)
-    if (isNaN(s) || isNaN(e) || s < 0 || e <= s) { showToast('Enter a start and end in minutes (end after start).'); return }
-    handleAutoDetect(false, 'deep', false, false, { start: s * 60, end: e * 60 })
+    const s = parseFilmTime(segStartMin), e = parseFilmTime(segEndMin)
+    if (s === null || e === null || s < 0 || e <= s) { showToast('Enter a start and end (mm:ss like 12:45, or minutes) — end after start.'); return }
+    handleAutoDetect(false, 'deep', false, false, { start: s, end: e })
   }
   const handleAutoDetect = async (dryRun = false, mode: 'fast' | 'deep' = 'fast', test = false, confirmRerun = false, segment?: { start: number; end?: number }) => {
     try {
@@ -1870,27 +1884,27 @@ export default function GamePage() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
                     <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: '#8a8a7e', width: 90 }}>SKIP WARMUP</span>
                     <span style={{ fontSize: 11, color: '#7a7a6e' }}>start the full game at</span>
-                    <input value={startAtMin} onChange={e => setStartAtMin(e.target.value)} placeholder="min" inputMode="decimal"
-                      style={{ width: 56, background: '#2e2e28', border: '1px solid #44443c', borderRadius: 5, color: '#f0eee6', fontSize: 11, padding: '6px 8px', textAlign: 'center' }} />
-                    <span style={{ fontSize: 11, color: '#7a7a6e' }}>min of film</span>
-                    {(() => { const m = parseFloat(startAtMin); return (!isNaN(m) && m > 0) ? <span style={{ fontSize: 11, color: '#C9A84C', fontWeight: 700 }}>Fast / Deep above will skip to {fmtTime(m * 60)}</span> : <span style={{ fontSize: 10, color: '#6f6f64' }}>e.g. 12.75 for 12:45 — skips warmup/pregame so you don't pay to analyze it</span> })()}
+                    <input value={startAtMin} onChange={e => setStartAtMin(e.target.value)} placeholder="12:45"
+                      style={{ width: 64, background: '#2e2e28', border: '1px solid #44443c', borderRadius: 5, color: '#f0eee6', fontSize: 11, padding: '6px 8px', textAlign: 'center' }} />
+                    <span style={{ fontSize: 11, color: '#7a7a6e' }}>film time (mm:ss)</span>
+                    {(() => { const sec = parseFilmTime(startAtMin); return (sec !== null && sec > 0) ? <span style={{ fontSize: 11, color: '#C9A84C', fontWeight: 700 }}>Fast / Deep above will skip to {fmtTime(sec)}</span> : <span style={{ fontSize: 10, color: '#6f6f64' }}>type 12:45 (or 12.75) — skips warmup/pregame so you don't pay to analyze it</span> })()}
                   </div>
 
                   {/* Deep on just a segment (cheaper) */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
                     <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: '#C9A84C', width: 90 }}>DEEP · SEGMENT</span>
                     <span style={{ fontSize: 11, color: '#7a7a6e' }}>film time</span>
-                    <input value={segStartMin} onChange={e => setSegStartMin(e.target.value)} placeholder="start" inputMode="decimal"
-                      style={{ width: 52, background: '#2e2e28', border: '1px solid #44443c', borderRadius: 5, color: '#f0eee6', fontSize: 11, padding: '6px 8px', textAlign: 'center' }} />
+                    <input value={segStartMin} onChange={e => setSegStartMin(e.target.value)} placeholder="20:00"
+                      style={{ width: 58, background: '#2e2e28', border: '1px solid #44443c', borderRadius: 5, color: '#f0eee6', fontSize: 11, padding: '6px 8px', textAlign: 'center' }} />
                     <span style={{ fontSize: 11, color: '#7a7a6e' }}>to</span>
-                    <input value={segEndMin} onChange={e => setSegEndMin(e.target.value)} placeholder="end" inputMode="decimal"
-                      style={{ width: 52, background: '#2e2e28', border: '1px solid #44443c', borderRadius: 5, color: '#f0eee6', fontSize: 11, padding: '6px 8px', textAlign: 'center' }} />
-                    <span style={{ fontSize: 11, color: '#7a7a6e' }}>min</span>
-                    {(() => { const s = parseFloat(segStartMin), e = parseFloat(segEndMin); return (!isNaN(s) && !isNaN(e) && e > s) ? <span style={{ fontSize: 11, color: '#C9A84C', fontWeight: 700 }}>= {+(e - s).toFixed(1)} min of film</span> : null })()}
+                    <input value={segEndMin} onChange={e => setSegEndMin(e.target.value)} placeholder="25:00"
+                      style={{ width: 58, background: '#2e2e28', border: '1px solid #44443c', borderRadius: 5, color: '#f0eee6', fontSize: 11, padding: '6px 8px', textAlign: 'center' }} />
+                    <span style={{ fontSize: 11, color: '#7a7a6e' }}>(mm:ss)</span>
+                    {(() => { const s = parseFilmTime(segStartMin), e = parseFilmTime(segEndMin); return (s !== null && e !== null && e > s) ? <span style={{ fontSize: 11, color: '#C9A84C', fontWeight: 700 }}>= {+((e - s) / 60).toFixed(1)} min of film</span> : null })()}
                     <button onClick={runDeepSegment} title="Run the deep 3-pass engine on ONLY the stretch of the VIDEO you pick (film time on the player, not the game clock). Priced pro-rata — a fraction of a full-game deep run." style={{ background: 'none', border: '1px solid #C9A84C', borderRadius: 5, color: '#C9A84C', fontSize: 11, cursor: 'pointer', padding: '6px 12px', fontWeight: 700, letterSpacing: '0.04em' }}>
                       Run Deep Segment
                     </button>
-                    <span style={{ fontSize: 10, color: '#6f6f64', width: '100%' }}>These are timestamps on the video (the time shown in the player), NOT the game clock. 20 to 25 = 5 minutes of film. Priced by length, far cheaper than a full game.</span>
+                    <span style={{ fontSize: 10, color: '#6f6f64', width: '100%' }}>These are timestamps on the video (the time shown in the player), NOT the game clock. 20:00 to 25:00 = 5 minutes of film. Priced by length, far cheaper than a full game.</span>
                   </div>
                 </div>
               )
@@ -1965,25 +1979,25 @@ export default function GamePage() {
                     </div>
                     <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 2 }} title="Skip the warmup: FAST/DEEP above will start at this film time and run to the end, so you don't pay to analyze pregame. e.g. 12.75 = 12:45.">
                       <span style={{ fontSize: 10, color: '#7a7a6e', fontWeight: 700, letterSpacing: '0.04em' }}>SKIP WARMUP · START AT</span>
-                      <input value={startAtMin} onChange={e => setStartAtMin(e.target.value)} placeholder="min" inputMode="decimal"
-                        style={{ width: 52, background: '#2e2e28', border: '1px solid #44443c', borderRadius: 4, color: '#f0eee6', fontSize: 11, padding: '4px 6px', textAlign: 'center' }} />
-                      <span style={{ fontSize: 10, color: '#7a7a6e' }}>min of film</span>
-                      {(() => { const m = parseFloat(startAtMin); return (!isNaN(m) && m > 0) ? <span style={{ fontSize: 10, color: '#C9A84C', fontWeight: 700 }}>FAST / DEEP will skip to {fmtTime(m * 60)}</span> : <span style={{ fontSize: 10, color: '#6f6f64' }}>FAST / DEEP above start here and run to the end (skips pregame)</span> })()}
+                      <input value={startAtMin} onChange={e => setStartAtMin(e.target.value)} placeholder="12:45"
+                        style={{ width: 60, background: '#2e2e28', border: '1px solid #44443c', borderRadius: 4, color: '#f0eee6', fontSize: 11, padding: '4px 6px', textAlign: 'center' }} />
+                      <span style={{ fontSize: 10, color: '#7a7a6e' }}>film time (mm:ss)</span>
+                      {(() => { const sec = parseFilmTime(startAtMin); return (sec !== null && sec > 0) ? <span style={{ fontSize: 10, color: '#C9A84C', fontWeight: 700 }}>FAST / DEEP will skip to {fmtTime(sec)}</span> : <span style={{ fontSize: 10, color: '#6f6f64' }}>FAST / DEEP above start here and run to the end (skips pregame)</span> })()}
                     </div>
                     <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 2 }} title="Deep 3-pass on just a stretch of the VIDEO (film time on the player, not the game clock). Cost scales with the length you pick, so a 12-minute segment is a fraction of a full-game deep run.">
                       <span style={{ fontSize: 10, color: '#7a7a6e', fontWeight: 700, letterSpacing: '0.04em' }}>DEEP ON A SEGMENT · FILM TIME</span>
-                      <input value={segStartMin} onChange={e => setSegStartMin(e.target.value)} placeholder="start" inputMode="decimal"
-                        style={{ width: 46, background: '#2e2e28', border: '1px solid #44443c', borderRadius: 4, color: '#f0eee6', fontSize: 11, padding: '4px 6px', textAlign: 'center' }} />
+                      <input value={segStartMin} onChange={e => setSegStartMin(e.target.value)} placeholder="20:00"
+                        style={{ width: 54, background: '#2e2e28', border: '1px solid #44443c', borderRadius: 4, color: '#f0eee6', fontSize: 11, padding: '4px 6px', textAlign: 'center' }} />
                       <span style={{ fontSize: 10, color: '#7a7a6e' }}>to</span>
-                      <input value={segEndMin} onChange={e => setSegEndMin(e.target.value)} placeholder="end" inputMode="decimal"
-                        style={{ width: 46, background: '#2e2e28', border: '1px solid #44443c', borderRadius: 4, color: '#f0eee6', fontSize: 11, padding: '4px 6px', textAlign: 'center' }} />
-                      <span style={{ fontSize: 10, color: '#7a7a6e' }}>min</span>
-                      {(() => { const s = parseFloat(segStartMin), e = parseFloat(segEndMin); return (!isNaN(s) && !isNaN(e) && e > s) ? <span style={{ fontSize: 10, color: '#C9A84C', fontWeight: 700 }}>= {+(e - s).toFixed(1)} min of film</span> : null })()}
+                      <input value={segEndMin} onChange={e => setSegEndMin(e.target.value)} placeholder="25:00"
+                        style={{ width: 54, background: '#2e2e28', border: '1px solid #44443c', borderRadius: 4, color: '#f0eee6', fontSize: 11, padding: '4px 6px', textAlign: 'center' }} />
+                      <span style={{ fontSize: 10, color: '#7a7a6e' }}>(mm:ss)</span>
+                      {(() => { const s = parseFilmTime(segStartMin), e = parseFilmTime(segEndMin); return (s !== null && e !== null && e > s) ? <span style={{ fontSize: 10, color: '#C9A84C', fontWeight: 700 }}>= {+((e - s) / 60).toFixed(1)} min of film</span> : null })()}
                       <button onClick={runDeepSegment}
                         style={{ background: 'none', border: '1px solid #C9A84C', borderRadius: 4, color: '#C9A84C', fontSize: 10, cursor: 'pointer', padding: '4px 10px', fontWeight: 700, letterSpacing: '0.05em' }}>
                         RUN DEEP SEGMENT
                       </button>
-                      <span style={{ fontSize: 10, color: '#6f6f64', width: '100%' }}>Timestamps on the video (the time in the player), not the game clock. 20 to 25 = 5 minutes of film.</span>
+                      <span style={{ fontSize: 10, color: '#6f6f64', width: '100%' }}>Timestamps on the video (the time in the player), not the game clock. 20:00 to 25:00 = 5 minutes of film.</span>
                     </div>
                   </div>
                 </div>
