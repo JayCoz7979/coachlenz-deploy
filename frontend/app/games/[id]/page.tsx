@@ -1605,12 +1605,18 @@ export default function GamePage() {
   const [confirmReq, setConfirmReq] = useState<{ title: string; message: string; confirmLabel?: string; danger?: boolean; onConfirm: () => void } | null>(null)
   const [segStartMin, setSegStartMin] = useState('')
   const [segEndMin, setSegEndMin] = useState('')
+  const [startAtMin, setStartAtMin] = useState('')  // skip warmup: start a full run here
+  // Start offset for the full-game runs: {start} in seconds, or undefined if unset.
+  const startOffset = (): { start: number } | undefined => {
+    const m = parseFloat(startAtMin)
+    return (!isNaN(m) && m > 0) ? { start: m * 60 } : undefined
+  }
   const runDeepSegment = () => {
     const s = parseFloat(segStartMin), e = parseFloat(segEndMin)
     if (isNaN(s) || isNaN(e) || s < 0 || e <= s) { showToast('Enter a start and end in minutes (end after start).'); return }
     handleAutoDetect(false, 'deep', false, false, { start: s * 60, end: e * 60 })
   }
-  const handleAutoDetect = async (dryRun = false, mode: 'fast' | 'deep' = 'fast', test = false, confirmRerun = false, segment?: { start: number; end: number }) => {
+  const handleAutoDetect = async (dryRun = false, mode: 'fast' | 'deep' = 'fast', test = false, confirmRerun = false, segment?: { start: number; end?: number }) => {
     try {
       setAgentLog([])
       const qs = new URLSearchParams()
@@ -1618,7 +1624,12 @@ export default function GamePage() {
       qs.set('mode', mode)
       if (test) qs.set('test', 'true')
       if (confirmRerun) qs.set('confirm_rerun', 'true')
-      if (segment) { qs.set('segment_start', String(Math.round(segment.start))); qs.set('segment_end', String(Math.round(segment.end))) }
+      // A segment can be a window (start+end) OR a start-only offset (skip the warmup,
+      // run to the end of the film).
+      if (segment) {
+        qs.set('segment_start', String(Math.round(segment.start)))
+        if (segment.end !== undefined) qs.set('segment_end', String(Math.round(segment.end)))
+      }
       const res = await api.post(`/games/${id}/auto-detect?${qs.toString()}`)
       // Duplicate-run financial control (#4b): the backend asks the coach to confirm
       // a 2nd analysis on already-analyzed film before charging + notifying the team.
@@ -1635,7 +1646,10 @@ export default function GamePage() {
       const r = await api.get(`/games/${id}/auto-detect/status`)
       setDetectStatus(r.data)
       startDetectPoll()
-      showToast(segment ? `Deep 3-pass started on ${+((segment.end - segment.start) / 60).toFixed(1)} min of film (video ${fmtTime(segment.start)}–${fmtTime(segment.end)}, not game clock)…`
+      showToast(segment && segment.end !== undefined
+          ? `${mode === 'deep' ? 'Deep 3-pass' : 'Analysis'} started on ${+((segment.end - segment.start) / 60).toFixed(1)} min of film (video ${fmtTime(segment.start)}–${fmtTime(segment.end)}, not game clock)…`
+        : segment
+          ? `Started from ${fmtTime(segment.start)} to the end, skipping the warmup (video time, not game clock)…`
         : test ? 'Quick test started (first few minutes, pennies)…'
         : dryRun ? 'Preview started (nothing will be saved)…'
         : mode === 'deep' ? 'Deep 3-pass breakdown started…' : 'Film breakdown started…')
@@ -1844,12 +1858,22 @@ export default function GamePage() {
                     <button onClick={() => handleAutoDetect(false, 'fast', true)} title="Quick test: first few minutes only, costs pennies. Confirms the breakdown and team colors cheaply." style={{ background: 'none', border: '1px solid #44443c', borderRadius: 5, color: '#a8d8b0', fontSize: 11, cursor: 'pointer', padding: '6px 12px', fontWeight: 700 }}>
                       Quick Test
                     </button>
-                    <button onClick={() => handleAutoDetect(false, 'fast')} title="Single-pass re-run of the whole film — quick and economical." style={{ background: '#2e2e28', border: '1px solid #44443c', borderRadius: 5, color: '#f0eee6', fontSize: 11, cursor: 'pointer', padding: '6px 12px', fontWeight: 700 }}>
+                    <button onClick={() => handleAutoDetect(false, 'fast', false, false, startOffset())} title="Single-pass re-run of the whole film — quick and economical. Respects the skip-warmup start time if set." style={{ background: '#2e2e28', border: '1px solid #44443c', borderRadius: 5, color: '#f0eee6', fontSize: 11, cursor: 'pointer', padding: '6px 12px', fontWeight: 700 }}>
                       Fast (full game)
                     </button>
-                    <button onClick={() => handleAutoDetect(false, 'deep')} title="Three-pass engine on the whole film: two detection passes plus a verification pass. Richest read, ~3x the cost." style={{ background: '#C9A84C', color: '#1c1c1c', border: 'none', borderRadius: 5, padding: '6px 14px', fontSize: 11, fontWeight: 700, cursor: 'pointer', letterSpacing: '0.04em' }}>
+                    <button onClick={() => handleAutoDetect(false, 'deep', false, false, startOffset())} title="Three-pass engine on the whole film: two detection passes plus a verification pass. Richest read, ~3x the cost. Respects the skip-warmup start time if set." style={{ background: '#C9A84C', color: '#1c1c1c', border: 'none', borderRadius: 5, padding: '6px 14px', fontSize: 11, fontWeight: 700, cursor: 'pointer', letterSpacing: '0.04em' }}>
                       DEEP · 3-PASS (full game)
                     </button>
+                  </div>
+
+                  {/* Skip the warmup: start the full run at a chosen film time, run to the end */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', color: '#8a8a7e', width: 90 }}>SKIP WARMUP</span>
+                    <span style={{ fontSize: 11, color: '#7a7a6e' }}>start the full game at</span>
+                    <input value={startAtMin} onChange={e => setStartAtMin(e.target.value)} placeholder="min" inputMode="decimal"
+                      style={{ width: 56, background: '#2e2e28', border: '1px solid #44443c', borderRadius: 5, color: '#f0eee6', fontSize: 11, padding: '6px 8px', textAlign: 'center' }} />
+                    <span style={{ fontSize: 11, color: '#7a7a6e' }}>min of film</span>
+                    {(() => { const m = parseFloat(startAtMin); return (!isNaN(m) && m > 0) ? <span style={{ fontSize: 11, color: '#C9A84C', fontWeight: 700 }}>Fast / Deep above will skip to {fmtTime(m * 60)}</span> : <span style={{ fontSize: 10, color: '#6f6f64' }}>e.g. 12.75 for 12:45 — skips warmup/pregame so you don't pay to analyze it</span> })()}
                   </div>
 
                   {/* Deep on just a segment (cheaper) */}
@@ -1903,8 +1927,8 @@ export default function GamePage() {
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
                     <div style={{ display: 'flex', gap: 6 }}>
                       <button
-                        onClick={() => handleAutoDetect(false, 'fast')}
-                        title="Single-pass breakdown — quick and economical."
+                        onClick={() => handleAutoDetect(false, 'fast', false, false, startOffset())}
+                        title="Single-pass breakdown — quick and economical. Respects the skip-warmup start time if set."
                         style={{
                           background: '#2e2e28', color: '#f0eee6', border: '1px solid #44443c', borderRadius: 4,
                           padding: '8px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer', letterSpacing: '0.06em',
@@ -1913,8 +1937,8 @@ export default function GamePage() {
                         FAST
                       </button>
                       <button
-                        onClick={() => handleAutoDetect(false, 'deep')}
-                        title="Three-pass engine: two detection passes plus a final verification pass. Richest breakdown, ~3x cost."
+                        onClick={() => handleAutoDetect(false, 'deep', false, false, startOffset())}
+                        title="Three-pass engine: two detection passes plus a final verification pass. Richest breakdown, ~3x cost. Respects the skip-warmup start time if set."
                         style={{
                           background: '#C9A84C', color: '#1c1c1c', border: 'none', borderRadius: 4,
                           padding: '8px 16px', fontSize: 12, fontWeight: 700, cursor: 'pointer', letterSpacing: '0.06em',
@@ -1938,6 +1962,13 @@ export default function GamePage() {
                       >
                         or preview (nothing saved)
                       </button>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 2 }} title="Skip the warmup: FAST/DEEP above will start at this film time and run to the end, so you don't pay to analyze pregame. e.g. 12.75 = 12:45.">
+                      <span style={{ fontSize: 10, color: '#7a7a6e', fontWeight: 700, letterSpacing: '0.04em' }}>SKIP WARMUP · START AT</span>
+                      <input value={startAtMin} onChange={e => setStartAtMin(e.target.value)} placeholder="min" inputMode="decimal"
+                        style={{ width: 52, background: '#2e2e28', border: '1px solid #44443c', borderRadius: 4, color: '#f0eee6', fontSize: 11, padding: '4px 6px', textAlign: 'center' }} />
+                      <span style={{ fontSize: 10, color: '#7a7a6e' }}>min of film</span>
+                      {(() => { const m = parseFloat(startAtMin); return (!isNaN(m) && m > 0) ? <span style={{ fontSize: 10, color: '#C9A84C', fontWeight: 700 }}>FAST / DEEP will skip to {fmtTime(m * 60)}</span> : <span style={{ fontSize: 10, color: '#6f6f64' }}>FAST / DEEP above start here and run to the end (skips pregame)</span> })()}
                     </div>
                     <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 2 }} title="Deep 3-pass on just a stretch of the VIDEO (film time on the player, not the game clock). Cost scales with the length you pick, so a 12-minute segment is a fraction of a full-game deep run.">
                       <span style={{ fontSize: 10, color: '#7a7a6e', fontWeight: 700, letterSpacing: '0.04em' }}>DEEP ON A SEGMENT · FILM TIME</span>

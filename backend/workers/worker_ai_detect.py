@@ -52,7 +52,7 @@ CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "multipass-v19-bball-made-miss-scoreboard"
+CODE_VERSION = "multipass-v20-skip-warmup"
 
 # Parallel ranged extraction: one long fps=0.5 pass over a 2.75h stream times out
 # silently. Instead decode many short windows concurrently, each its own ffmpeg.
@@ -707,23 +707,32 @@ class AiDetectWorker(BaseWorker):
                 # the quick test. Falls back to a full-film run if the bounds are unusable.
                 seg_start = seg_end = None
                 ss, se = getattr(self, "_segment_start", None), getattr(self, "_segment_end", None)
-                if ss is not None and se is not None:
+                if ss is not None or se is not None:
+                    # Either bound may be given alone. Start-only = "skip the warmup, run
+                    # to the end of the film" (the common Hudl case). End-only = 0..end.
                     try:
-                        seg_start = max(0.0, float(ss))
-                        seg_end = min(float(duration), float(se))
+                        seg_start = max(0.0, float(ss)) if ss is not None else 0.0
+                        seg_end = min(float(duration), float(se)) if se is not None else float(duration)
                         if seg_end - seg_start < 5.0:   # too short / inverted -> ignore
                             seg_start = seg_end = None
                     except (TypeError, ValueError):
                         seg_start = seg_end = None
                 if seg_start is not None:
+                    _to_end = (se is None)
                     await log_agent_action(
                         game_id=game_id, organization_id=str(org_id), job_id=job_id,
                         phase="segment", level="info",
-                        action=(f"Breaking down only {int(seg_start//60)}:{int(seg_start%60):02d}"
+                        action=(f"Skipping the warmup — breaking down from {int(seg_start//60)}:{int(seg_start%60):02d} to the end of the film"
+                                if _to_end else
+                                f"Breaking down only {int(seg_start//60)}:{int(seg_start%60):02d}"
                                 f"–{int(seg_end//60)}:{int(seg_end%60):02d} of the film"),
-                        reason="You chose a segment, so I analyze just that window. Deep analysis on "
-                               "one part of the game costs a fraction of a full-game run.",
-                        detail={"segment_start": int(seg_start), "segment_end": int(seg_end)},
+                        reason=("You set a start time, so I skip everything before it (warmups, "
+                                "pregame) and analyze the rest. No cost wasted on dead footage."
+                                if _to_end else
+                                "You chose a segment, so I analyze just that window. Deep analysis "
+                                "on one part of the game costs a fraction of a full-game run."),
+                        detail={"segment_start": int(seg_start), "segment_end": int(seg_end),
+                                "to_end": _to_end},
                     )
                 # Quick test: only analyze the opening slice so it costs pennies — enough
                 # to confirm detection + team attribution work before a full run. Skipped

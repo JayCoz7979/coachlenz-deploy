@@ -399,12 +399,16 @@ async def trigger_auto_detect(
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
 
-    # Segment: analyze only [segment_start, segment_end] (e.g. one quarter) so deep
-    # analysis on a long game costs a fraction of a full run. Both or neither, end
-    # after start. The worker clamps to the real film length.
-    if (segment_start is None) != (segment_end is None):
-        raise HTTPException(status_code=400, detail="Give both segment_start and segment_end, or neither.")
-    if segment_start is not None and (segment_start < 0 or segment_end <= segment_start):
+    # Segment / start-offset. Either bound may be given alone:
+    #   start only  -> "skip the warmup, analyze from here to the end" (common Hudl case)
+    #   start+end   -> analyze just that window (e.g. one quarter)
+    #   end only    -> analyze from the start up to end
+    # The worker clamps to the real film length.
+    if segment_start is not None and segment_start < 0:
+        raise HTTPException(status_code=400, detail="segment_start cannot be negative.")
+    if segment_end is not None and segment_end < 0:
+        raise HTTPException(status_code=400, detail="segment_end cannot be negative.")
+    if segment_start is not None and segment_end is not None and segment_end <= segment_start:
         raise HTTPException(status_code=400, detail="segment_end must be greater than segment_start (seconds).")
 
     # Sport lock on the EXPENSIVE path. Film import is already guarded, but the
@@ -515,8 +519,8 @@ async def trigger_auto_detect(
         payload={"game_id": game_id, "dry_run": dry_run,
                  "detection_mode": ("deep" if mode == "deep" else "fast"),
                  "full": bool(full), "test": bool(test), "grade": bool(grade),
-                 **({"segment_start": float(segment_start), "segment_end": float(segment_end)}
-                    if segment_start is not None else {})},
+                 **({"segment_start": float(segment_start)} if segment_start is not None else {}),
+                 **({"segment_end": float(segment_end)} if segment_end is not None else {})},
     )
     db.add(job)
     await db.flush()  # assign job.id so the usage row can be linked to it for refunds
@@ -539,13 +543,16 @@ async def trigger_auto_detect(
         from backend.services import credits
         if await credits.has_account(db, user.organization_id):
             deep_run = (mode == "deep" or bool(grade))
-            # A segment run is charged pro-rata to the slice analyzed (margin-neutral);
-            # a re-analysis stays flat (already discounted).
-            if segment_start is not None and not is_rerun:
+            # A segment / start-offset run is charged pro-rata to the slice analyzed
+            # (margin-neutral); a re-analysis stays flat (already discounted). Either
+            # bound may be absent: missing start = 0, missing end = film length.
+            if (segment_start is not None or segment_end is not None) and not is_rerun:
+                _s = segment_start or 0.0
+                _e = segment_end if segment_end is not None else (game.duration_seconds or 0)
                 cost = credits.segment_credits(
                     sport=game.sport, deep=deep_run,
                     full_seconds=game.duration_seconds,
-                    segment_seconds=(segment_end - segment_start))
+                    segment_seconds=((_e - _s) if _e > _s else None))
             else:
                 cost = credits.credits_for(sport=game.sport, deep=deep_run, is_rerun=is_rerun)
             ok = await credits.spend(db, user.organization_id, cost, ref=str(job.id))
