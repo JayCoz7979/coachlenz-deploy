@@ -52,7 +52,7 @@ CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "multipass-v22-possession-anchor"
+CODE_VERSION = "multipass-v23-foul-turnover-discipline"
 
 # Parallel ranged extraction: one long fps=0.5 pass over a 2.75h stream times out
 # silently. Instead decode many short windows concurrently, each its own ffmpeg.
@@ -493,6 +493,8 @@ If NONE of these are readable (far basket, traffic, score not legible this frame
 TIMEOUT — tag event_type "timeout" ONLY when you can SEE a real timeout: the team walking to and huddling at the bench with coaches, a referee's raised-T signal, or a "TIMEOUT"/"TO" scoreboard graphic. A generic stoppage is NOT a timeout. Do NOT tag as "timeout": a whistle, a dead ball, a substitution, an inbound, a foul shot, the gap between possessions, an end-of-quarter break, or any clip where you simply cannot tell what is happening. When in doubt, it is NOT a timeout — emit no event for that clip rather than guess. A full game has only a handful of real timeouts; if you find yourself tagging many, you are mislabeling stoppages.
 STEAL — actively look for it: a defender deflecting, poking, or intercepting the ball and gaining possession is a "steal" (side "defense", the taker's role "stealer"). Steals are fast and easy to miss on a wide single-camera angle, so watch the defender's hands, not just the ball. If an offensive possession ends because the defense took the ball, record the defensive steal, not only the offensive turnover.
 BLOCK — a shot that is swatted, pinned, or clearly altered at the rim by a defender is a "block" (side "defense", the defender's role "blocker"). Like steals, blocks happen in a single frame — do not overlook them.
+FOUL — tag event_type "foul" ONLY when there is a CLEAR foul signal: a referee blowing the whistle AND giving a foul signal (arm raised, fist up, hand behind the head/on the hip), a player at or going to the FREE-THROW LINE, or the team-foul count / bonus ticking up on the scoreboard. Ordinary contact, a scramble, a rebound battle, a substitution, or a whistle you cannot attribute is NOT a foul. When in doubt, it is NOT a foul — emit no event rather than tag a phantom foul.
+TURNOVER — tag "turnover" ONLY for a real live-ball giveaway: a steal (also record the defensive steal), a travel/carry/double-dribble, a pass thrown out of bounds, an offensive foul, or a shot-clock/backcourt/3-second violation. A possession that ends in a SHOT (made OR missed) is NOT a turnover, and a normal change of possession after a made basket is NOT a turnover. Never invent a turnover just because a possession ended.
 
 IMAGE SET PER FRAME: For each frame you receive the full image PLUS two zoomed crops — the "lower" and "upper" score/overlay zones (magnified 2x). The broadcast score graphic usually shows SCORE, QUARTER, and GAME/SHOT CLOCK. Read those digits from the zoomed crops; use them as the source of truth for score_margin, quarter, and shot_clock_range. If no graphic is present, set them null and note it in blind_spot — do not guess.
 
