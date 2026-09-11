@@ -52,7 +52,7 @@ CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "multipass-v26-skip-overlap-guard"
+CODE_VERSION = "multipass-v27-free-throws"
 
 # Parallel ranged extraction: one long fps=0.5 pass over a 2.75h stream times out
 # silently. Instead decode many short windows concurrently, each its own ffmpeg.
@@ -522,8 +522,9 @@ Use null ONLY if genuinely not determinable.
 
 ── OFFENSE (side=offense or transition) ──
 - play_action: primary offensive action — "Pick and Roll" | "Pick and Pop" | "Isolation" | "Post Up" | "Drive and Kick" | "DHO (Dribble Handoff)" | "Off-Ball Screen" | "Catch and Shoot" | "Transition Layup" | "Putback" | "BLOB" | "SLOB" | "Horns" | "Elbow Set" | "Curl" | "Backdoor Cut" | "Lob" | "Other" | null
-- shot_zone: where the shot came from — "Restricted Area" | "Paint Non-RA" | "Left Corner 3" | "Right Corner 3" | "Left Wing 3" | "Right Wing 3" | "Top of Key 3" | "Left Elbow Mid" | "Right Elbow Mid" | "Left Mid-Range" | "Right Mid-Range" | "Mid-Range Center" | "Half Court" | null
-- shot_type: "Layup" | "Dunk" | "Floater" | "Pull-Up Jumper" | "Catch and Shoot" | "Step-Back" | "Post Fade" | "Hook Shot" | "Tip-In" | "Bank Shot" | "3-Pointer" | null
+- shot_zone: where the shot came from — "Free Throw Line" | "Restricted Area" | "Paint Non-RA" | "Left Corner 3" | "Right Corner 3" | "Left Wing 3" | "Right Wing 3" | "Top of Key 3" | "Left Elbow Mid" | "Right Elbow Mid" | "Left Mid-Range" | "Right Mid-Range" | "Mid-Range Center" | "Half Court" | null
+- shot_type: "Free Throw" | "Layup" | "Dunk" | "Floater" | "Pull-Up Jumper" | "Catch and Shoot" | "Step-Back" | "Post Fade" | "Hook Shot" | "Tip-In" | "Bank Shot" | "3-Pointer" | null
+- FREE THROW (read this before tagging any shot): a free throw is a shooter ALONE at the foul line taking an uncontested set shot with BOTH teams lined up along the lane spaces (or the shooter isolated at the line), after a foul/whistle, with no dribble or drive. Tag it shot_zone "Free Throw Line" AND shot_type "Free Throw" (result made/missed). A free throw is NOT a layup, jumper, or field goal — NEVER give it a field-goal zone like "Paint Non-RA" or "Mid-Range Center". The team shooting the free throw is the side=offense team.
 - shot_distance_ft: estimated feet from basket as integer | null
 - screen_type: "Ball Screen" | "Off-Ball Screen" | "Double Screen" | "Flare Screen" | "Back Screen" | "Cross Screen" | "Stagger" | null
 - ball_screen_position: "Top" | "Wing Left" | "Wing Right" | "Elbow" | "Drag" | null
