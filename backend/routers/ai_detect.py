@@ -562,7 +562,10 @@ async def trigger_auto_detect(
                 analyzed = (_e - _s) if _e > _s else None
                 if analyzed and skip_start is not None:
                     overlap = max(0.0, min(_e, skip_end) - max(_s, skip_start))
-                    analyzed = max(0.0, analyzed - overlap)
+                    remaining = analyzed - overlap
+                    # Mirror the worker guard: if the skip would gut the whole span, the
+                    # worker ignores it and analyzes the full window, so bill the full span.
+                    analyzed = analyzed if remaining < 30.0 else remaining
                 cost = credits.segment_credits(
                     sport=game.sport, deep=deep_run,
                     full_seconds=game.duration_seconds,

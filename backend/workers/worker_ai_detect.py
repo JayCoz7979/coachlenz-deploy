@@ -52,7 +52,7 @@ CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "multipass-v25-real-frame-timestamps"
+CODE_VERSION = "multipass-v26-skip-overlap-guard"
 
 # Parallel ranged extraction: one long fps=0.5 pass over a 2.75h stream times out
 # silently. Instead decode many short windows concurrently, each its own ffmpeg.
@@ -769,6 +769,25 @@ class AiDetectWorker(BaseWorker):
                         if _ee - _es >= 5.0:
                             exclude = (_es, _ee)
                     except (TypeError, ValueError):
+                        exclude = None
+                # GUARD: if the skip range overlaps the analyzed span so much that almost
+                # nothing would be left (e.g. a coach set the halftime range equal to the
+                # segment), ignore the skip rather than silently gut the run.
+                if exclude:
+                    _lo = seg_start if seg_start is not None else float(SKIP_START_SECONDS)
+                    _hi = seg_end if seg_end is not None else float(duration)
+                    _overlap = max(0.0, min(_hi, exclude[1]) - max(_lo, exclude[0]))
+                    if (_hi - _lo) - _overlap < 30.0:
+                        await log_agent_action(
+                            game_id=game_id, organization_id=str(org_id), job_id=job_id,
+                            phase="skip_halftime", level="warn",
+                            action="Ignoring the halftime skip — it overlapped the whole segment",
+                            reason="The halftime range you set covers almost all of what you asked to "
+                                   "analyze, so skipping it would leave nothing. I analyzed the full "
+                                   "window instead. Clear or narrow the Skip Halftime range.",
+                            detail={"skip_start": int(exclude[0]), "skip_end": int(exclude[1]),
+                                    "analyzed_start": int(_lo), "analyzed_end": int(_hi)},
+                        )
                         exclude = None
                 if exclude:
                     await log_agent_action(

@@ -1636,7 +1636,17 @@ export default function GamePage() {
   const runDeepSegment = () => {
     const s = parseFilmTime(segStartMin), e = parseFilmTime(segEndMin)
     if (s === null || e === null || s < 0 || e <= s) { showToast('Enter a start and end (mm:ss like 12:45, or minutes) — end after start.'); return }
-    handleAutoDetect(false, 'deep', false, false, { start: s, end: e }, skipRange())
+    // Guard: if the Skip Halftime range overlaps this segment enough to leave almost
+    // nothing, drop it for this run so the segment isn't silently gutted.
+    let skip = skipRange()
+    if (skip) {
+      const overlap = Math.max(0, Math.min(e, skip.end) - Math.max(s, skip.start))
+      if ((e - s) - overlap < 30) {
+        showToast('Your Skip Halftime range overlaps this segment — ignoring it so the segment isn’t gutted.')
+        skip = undefined
+      }
+    }
+    handleAutoDetect(false, 'deep', false, false, { start: s, end: e }, skip)
   }
   const handleAutoDetect = async (dryRun = false, mode: 'fast' | 'deep' = 'fast', test = false, confirmRerun = false, segment?: { start: number; end?: number }, skip?: { start: number; end: number }) => {
     try {
