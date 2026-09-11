@@ -52,7 +52,7 @@ CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "multipass-v24-skip-halftime"
+CODE_VERSION = "multipass-v25-real-frame-timestamps"
 
 # Parallel ranged extraction: one long fps=0.5 pass over a 2.75h stream times out
 # silently. Instead decode many short windows concurrently, each its own ffmpeg.
@@ -1281,23 +1281,33 @@ class AiDetectWorker(BaseWorker):
 
     async def _extract_window(self, url: str, start: float, dur: float, win_dir: str, idx: int,
                               frames_per_window: int = FRAMES_PER_WINDOW):
-        """Decode ONE short window into frames_per_window evenly-spaced frames."""
+        """Decode ONE short window into frames_per_window evenly-spaced frames.
+
+        Returns (returncode, err_tail, pts_times) where pts_times are the REAL container
+        timestamps of the emitted frames (from -copyts + showinfo). Those are the times
+        the browser player seeks by, so using them keeps a click on a play landing on the
+        right moment even on variable-frame-rate (Hudl) film. Falls back to the assumed
+        even spacing upstream when the real times can't be trusted."""
         rate = frames_per_window / WINDOW_SIZE  # fps that spreads the frames across the whole window
         pattern = os.path.join(win_dir, f"w{idx:04d}_%06d.jpg")
         cmd = [
-            "ffmpeg", "-y", "-ss", str(start), "-t", str(dur), "-i", url,
+            "ffmpeg", "-y", "-ss", str(start), "-t", str(dur), "-i", url, "-copyts",
+            # showinfo logs each emitted frame's real pts_time; -copyts keeps it absolute
+            # (container time), so it matches the player's timeline on VFR film.
             # scale to 1600 keeps decode fast and the score-bug legible (Vision caps ~1568 anyway)
-            "-vf", f"fps={rate:.5f},scale=1600:-2",
+            "-vf", f"fps={rate:.5f},showinfo,scale=1600:-2",
             "-q:v", "3", "-frames:v", str(frames_per_window), pattern,
         ]
         proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         try:
             _, err = await asyncio.wait_for(proc.communicate(), timeout=JOB_TIMEOUT)
-            return proc.returncode, (err.decode()[-300:] if err else "")
+            err_s = err.decode() if err else ""
+            pts = [float(x) for x in re.findall(r"pts_time:([0-9.]+)", err_s)]
+            return proc.returncode, err_s[-300:], pts
         except asyncio.TimeoutError:
             proc.kill()
             await proc.communicate()
-            return -1, f"TIMEOUT window {idx} start={start}"
+            return -1, f"TIMEOUT window {idx} start={start}", []
 
     async def _extract_windows(self, url: str, total_duration: float, out_base: str,
                                frames_per_window: int = FRAMES_PER_WINDOW,
@@ -1350,31 +1360,39 @@ class AiDetectWorker(BaseWorker):
             async with sem:
                 win_dir = os.path.join(out_base, f"window_{idx:04d}")
                 os.makedirs(win_dir, exist_ok=True)
-                rc, err = await self._extract_window(url, s, d, win_dir, idx, frames_per_window)
+                rc, err, pts = await self._extract_window(url, s, d, win_dir, idx, frames_per_window)
                 files = sorted(f for f in os.listdir(win_dir) if f.endswith(".jpg"))
                 if rc != 0 or not files:
                     logger.error(f"[ai_detect] window {idx} FAILED rc={rc} frames={len(files)} start={s} err={err}")
                 else:
                     logger.info(f"[ai_detect] window {idx} ok: {len(files)} frames @ {s}s")
-                return (win_dir, s, rc, files, err)
+                return (win_dir, s, rc, files, err, pts)
 
         results = await asyncio.gather(*[run(i, s, d) for i, (s, d) in enumerate(windows)], return_exceptions=True)
 
-        frames, ok, failed, first_err = [], 0, 0, None
+        frames, ok, failed, first_err, real_pts_windows = [], 0, 0, None, 0
         gap = WINDOW_SIZE / frames_per_window
         for r in results:
             if isinstance(r, Exception):
                 failed += 1
                 first_err = first_err or str(r)[:200]
                 continue
-            win_dir, wstart, rc, files, err = r
+            win_dir, wstart, rc, files, err, pts = r
             if rc != 0 or not files:
                 failed += 1
                 first_err = first_err or err
                 continue
             ok += 1
+            # Use the REAL container timestamps when they line up with the emitted frames
+            # and are absolute (near this window's start) — this is what the player seeks
+            # by, so it keeps clicks landing on the right moment on VFR film. Guarded so a
+            # misbehaving -copyts silently falls back to the assumed even spacing.
+            use_real = (len(pts) == len(files) and files and abs(pts[0] - wstart) <= 60.0)
+            if use_real:
+                real_pts_windows += 1
             for i, fn in enumerate(files):
-                frames.append((os.path.join(win_dir, fn), wstart + i * gap))
+                t = pts[i] if use_real else (wstart + i * gap)
+                frames.append((os.path.join(win_dir, fn), t))
 
         frames.sort(key=lambda ft: ft[1])
         if len(frames) > MAX_FRAMES:
@@ -1385,6 +1403,7 @@ class AiDetectWorker(BaseWorker):
             "code_version": CODE_VERSION, "method": "parallel_windows",
             "windows_total": len(windows), "windows_ok": ok, "windows_failed": failed,
             "total_frames": len(frames), "ffmpeg_err": first_err,
+            "real_pts_windows": real_pts_windows,  # windows timed by true container PTS
         }
         logger.info(f"[ai_detect] parallel extraction: {ok}/{len(windows)} windows ok, {len(frames)} frames")
         return frames
