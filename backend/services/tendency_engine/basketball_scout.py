@@ -584,7 +584,9 @@ def _category_6_scoring_areas(events) -> Dict[str, Any]:
     def zone_block(shot_list):
         zones: Dict[str, Dict[str, int]] = defaultdict(lambda: {"att": 0, "m2": 0, "m3": 0})
         for e in shot_list:
-            z = _canonical_zone(e)
+            # Prefer the canonical zone; keep any unrecognized label visible under its
+            # raw name rather than dropping the shot (free throws are already filtered).
+            z = _canonical_zone(e) or _x(e, "shot_zone")
             if not z:
                 continue
             zb = zones[z]

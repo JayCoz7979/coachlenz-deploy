@@ -37,6 +37,11 @@ def test_normalizer():
     assert cz.is_three_zone("Restricted Area") is False
     assert cz.is_paint_zone("Restricted Area") is True
     assert cz.is_mid_zone("Right Elbow Mid") is True
+    # legacy / generic labels not in the alias table still classify (substring fallback,
+    # mirrors the historical behavior so shot-zone maps keyed on raw labels don't regress)
+    assert cz.is_three_zone("Corner 3") is True
+    assert cz.is_mid_zone("Corner 3") is False
+    assert cz.is_three_zone("Free Throw Line") is False
     # every label the detector emits is "known" (so the consistency gate stays quiet)
     for z in ("Left Wing 3", "Right Wing 3", "Top of Key 3", "Left Elbow Mid",
               "Right Mid-Range", "Free Throw Line", "Restricted Area", "Half Court"):

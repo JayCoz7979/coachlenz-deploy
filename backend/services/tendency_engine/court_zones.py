@@ -97,14 +97,31 @@ def is_known_zone(raw: Optional[str]) -> bool:
 
 def is_three_zone(raw: Optional[str]) -> bool:
     z = normalize_zone(raw)
-    return z in THREE_CANONICAL
+    if z is not None:
+        return z in THREE_CANONICAL
+    # Fallback for labels not in the alias table (e.g. a generic "Corner 3" with no
+    # side). Mirrors the historical permissive matching so nothing regresses.
+    if not raw or is_free_throw_zone(raw):
+        return False
+    s = raw.strip().lower()
+    return "3" in s or "corner" in s or "wing 3" in s or "top of key" in s
 
 
 def is_paint_zone(raw: Optional[str]) -> bool:
     z = normalize_zone(raw)
-    return z in PAINT_CANONICAL
+    if z is not None:
+        return z in PAINT_CANONICAL
+    if not raw or is_free_throw_zone(raw):
+        return False
+    s = raw.strip().lower()
+    return "restricted" in s or "paint" in s
 
 
 def is_mid_zone(raw: Optional[str]) -> bool:
     z = normalize_zone(raw)
-    return z in MID_CANONICAL
+    if z is not None:
+        return z in MID_CANONICAL
+    if not raw or is_free_throw_zone(raw) or is_three_zone(raw):
+        return False
+    s = raw.strip().lower()
+    return "mid" in s or "elbow" in s
