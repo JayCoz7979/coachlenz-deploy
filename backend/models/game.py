@@ -18,6 +18,11 @@ class Game(Base):
     # On-field appearance so the vision agent can attribute plays to the right team.
     scout_jersey = Column(String)      # the team being scouted, e.g. "white jerseys, navy helmets"
     opponent_jersey = Column(String)   # the opponent, e.g. "red jerseys"
+    # Basketball possession anchor: which basket the scouted team attacks in the 1st
+    # half AS SEEN ON THE FILM ("left"|"right"). Possession is then derived from the
+    # direction of attack (flipping at the half), which is far more reliable on wide
+    # single-cam film than reading the ball-handler's jersey every possession.
+    scout_attack_dir_h1 = Column(String)
     r2_key = Column(String)
     r2_url = Column(String)
     r2_expires_at = Column(DateTime(timezone=True))
