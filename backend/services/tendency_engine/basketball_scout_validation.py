@@ -543,8 +543,11 @@ def _consistency_check(events, six_cat: Dict[str, Any]) -> List[Dict[str, Any]]:
             discrepancies.append({"event_index": i, "issue": f"Quarter out of range: {q}"})
         if et == "shot":
             zone = _x(e, "shot_zone")
-            from .basketball_scout import COURT_ZONES
-            if zone and zone not in COURT_ZONES:
+            # Accept the detector's full shot-zone vocabulary (mapped to the charter
+            # taxonomy elsewhere), plus free throws. Only a truly unrecognized label
+            # is a real discrepancy.
+            from . import court_zones
+            if zone and not court_zones.is_known_zone(zone):
                 discrepancies.append({"event_index": i, "issue": f"Unknown shot zone: {zone}"})
 
     # Turnover total: recomputed vs. stated.

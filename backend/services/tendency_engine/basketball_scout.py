@@ -58,6 +58,8 @@ from typing import List, Dict, Any, Optional
 from collections import Counter, defaultdict
 import statistics
 
+from . import court_zones
+
 # The ten court zones, in the exact taxonomy the charter specifies.
 COURT_ZONES = [
     "Restricted Area", "Paint Non-RA",
@@ -106,7 +108,27 @@ def _shot_is_three(e) -> bool:
         return True
     if st in ("2pt", "2", "two"):
         return False
-    return (_x(e, "shot_zone") or "") in THREE_ZONES
+    # Fall back to the zone, normalized from the detector's vocabulary
+    # ("Left Wing 3" -> "Above-the-Break 3 Left", etc.) so wing/top-of-key
+    # threes are not silently miscounted as twos.
+    return court_zones.is_three_zone(_x(e, "shot_zone"))
+
+
+def _is_free_throw(e) -> bool:
+    """A free throw is not a field-goal attempt and must be excluded from FGA /
+    eFG / 2pt-3pt ratios (it still counts for foul-drawing analysis elsewhere)."""
+    st = (_x(e, "shot_type") or "").strip().lower()
+    return st in ("free throw", "ft", "free-throw") or court_zones.is_free_throw_zone(_x(e, "shot_zone"))
+
+
+def _canonical_zone(e) -> Optional[str]:
+    """The event's shot zone mapped to the canonical charter taxonomy."""
+    return court_zones.normalize_zone(_x(e, "shot_zone"))
+
+
+def _field_goals(events):
+    """Offensive field-goal attempts only (free throws excluded)."""
+    return [e for e in events if e.event_type == "shot" and _is_offense(e) and not _is_free_throw(e)]
 
 
 def _side(e) -> str:
@@ -343,7 +365,9 @@ def _category_3_deflections(events) -> Dict[str, Any]:
 # CATEGORY 4 — TEAM 2PT vs 3PT ATTEMPT RATIO
 # ═══════════════════════════════════════════════════════════════════════════
 def _category_4_shot_ratio(events) -> Dict[str, Any]:
-    shots = [e for e in events if e.event_type == "shot" and _is_offense(e)]
+    # Field-goal attempts only — free throws are not FGA and must not pollute the
+    # 2pt/3pt attempt ratio.
+    shots = _field_goals(events)
 
     # Fold aggregate player_stat attempts into totals + per-player classification.
     stat_rows = [e for e in events if e.event_type == "player_stat"]
@@ -387,7 +411,7 @@ def _category_4_shot_ratio(events) -> Dict[str, Any]:
         j = _jersey(e)
         if not j:
             continue
-        zone = _x(e, "shot_zone") or ""
+        zone = _canonical_zone(e)
         if _shot_is_three(e):
             per_player[j]["3pt"] += 1
         else:
@@ -551,14 +575,16 @@ def _category_5_pace(events) -> Dict[str, Any]:
 # CATEGORY 6 — SCORING AREAS (eFG% by zone, team + player)
 # ═══════════════════════════════════════════════════════════════════════════
 def _category_6_scoring_areas(events) -> Dict[str, Any]:
-    shots = [e for e in events if e.event_type == "shot" and _is_offense(e)]
+    # eFG% is a field-goal metric — free throws are excluded so they don't distort
+    # shooting splits.
+    shots = _field_goals(events)
     if not shots:
         return {"total_shots": 0}
 
     def zone_block(shot_list):
         zones: Dict[str, Dict[str, int]] = defaultdict(lambda: {"att": 0, "m2": 0, "m3": 0})
         for e in shot_list:
-            z = _x(e, "shot_zone")
+            z = _canonical_zone(e)
             if not z:
                 continue
             zb = zones[z]
