@@ -134,6 +134,19 @@ async def detection_quality_gate(user: User = Depends(require_admin), db: AsyncS
     nr_b = Event.extra_data["needs_review"].as_boolean()
     conf_f = Event.extra_data["confidence"].as_float()
 
+    # Shot-recall must be apples-to-apples with the coach's box-score number, which is
+    # FIELD-GOAL attempts (FGA) and never includes free throws. The detector emits a
+    # free throw as event_type "shot" (shot_type "Free Throw" / shot_zone "Free Throw
+    # Line"), so those are excluded from shots_detected or shot-recall would be
+    # inflated. IS DISTINCT FROM keeps rows whose shot_type/zone is NULL or a real FG.
+    shot_type_s = Event.extra_data["shot_type"].as_string()
+    shot_zone_s = Event.extra_data["shot_zone"].as_string()
+    fga_shot = and_(
+        auto_b == True, Event.event_type == "shot",
+        shot_type_s.is_distinct_from("Free Throw"),
+        shot_zone_s.is_distinct_from("Free Throw Line"),
+    )
+
     ev_rows = (await db.execute(
         select(
             Event.game_id,
@@ -141,7 +154,7 @@ async def detection_quality_gate(user: User = Depends(require_admin), db: AsyncS
             func.sum(case((auto_b == True, 1), else_=0)).label("auto"),
             func.sum(case((nr_b == True, 1), else_=0)).label("needs_review"),
             func.avg(case((auto_b == True, conf_f), else_=None)).label("avg_conf"),
-            func.sum(case((and_(auto_b == True, Event.event_type == "shot"), 1), else_=0)).label("shots"),
+            func.sum(case((fga_shot, 1), else_=0)).label("shots"),
         ).group_by(Event.game_id)
     )).all()
 

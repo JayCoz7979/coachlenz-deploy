@@ -83,9 +83,10 @@ def _score_game(g: Dict[str, Any]) -> Dict[str, Any]:
     denom = true_plays if labeled else total
     recall = round(auto / denom, 4) if denom else None
 
-    # Basketball shot-scoped recall: detected 'shot' events vs a true FGA count.
+    # Basketball shot-scoped recall: detected FIELD-GOAL attempts vs a true FGA count.
     # Apples-to-apples for basketball, where the all-event recall above does not
-    # match a scorebook. Only meaningful when a true FGA count is set.
+    # match a scorebook. shots_detected excludes free throws upstream (see admin.py)
+    # so it matches the coach's FGA. Only meaningful when a true FGA count is set.
     shots_detected = int(g.get("shots_detected") or 0)
     true_shots = g.get("true_shots")
     shot_labeled = isinstance(true_shots, int) and true_shots > 0
