@@ -5,6 +5,11 @@ from typing import Optional
 class Settings(BaseSettings):
     # Database
     DATABASE_URL: str
+    # RLS backstop Stage 3 (DRAFT, dormant): DSN for the restricted `app_rls` role that
+    # RLS is enforced against. Empty by default -> the dual-engine falls back to the
+    # single privileged engine (no behavior change). Only set on a DB-branch during
+    # Stage 3 validation, or per-service during the Stage 4 cutover.
+    DATABASE_URL_RESTRICTED: str = ""
     # Connection-pool sizing (Postgres only). The API runs `uvicorn --workers 4`
     # and there are ~7 worker services, so ~11 processes share ONE Postgres
     # (max_connections=100). Each process's ceiling is pool_size + max_overflow;
