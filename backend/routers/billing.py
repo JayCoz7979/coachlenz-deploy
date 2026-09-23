@@ -139,14 +139,19 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None),
         else:
             tier = md.get("tier")
             if org_id and tier:
-                # Subscription = access only; it grants NO credits (those are bought
-                # separately in bundles).
+                # Subscription = cheap access. It grants NO purchased credits (those are
+                # bought in bundles), but it DOES fund a monthly `included` allotment
+                # (F1) so the base fee delivers credits every cycle. Store the Stripe
+                # customer id too, so renewals (invoice.payment_succeeded) can find the
+                # org to reset the allotment.
                 await db.execute(update(Organization).where(Organization.id == org_id).values(
                     subscription_tier=tier,
                     is_trial=False,
                     stripe_subscription_id=data.get("subscription"),
                     stripe_subscription_status="active",
+                    **({"stripe_customer_id": data.get("customer")} if data.get("customer") else {}),
                 ))
+                await credit_svc.grant_monthly_allotment(db, org_id, tier)
 
     elif et == "customer.subscription.updated":
         sub_id = data["id"]
@@ -179,8 +184,15 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None),
             if sub:
                 job = Job(job_type="referral_credit", payload={"customer_id": customer_id, "invoice_id": data["id"]})
                 db.add(job)
-                # No credit grant here: the subscription is access only; credits are
-                # purchased separately in bundles.
+                # Renewal: reset the monthly `included` allotment for the new cycle (F1).
+                # No PURCHASED credits are granted here (those are bought in bundles).
+                # grant_monthly_allotment SETs (not adds), so the first invoice right
+                # after checkout is a harmless no-op.
+                from backend.services import credits as credit_svc
+                org_row = (await db.execute(select(Organization).where(
+                    Organization.stripe_customer_id == customer_id))).scalar_one_or_none()
+                if org_row:
+                    await credit_svc.grant_monthly_allotment(db, org_row.id, org_row.subscription_tier)
 
     elif et == "invoice.payment_failed":
         customer_id = data.get("customer")
