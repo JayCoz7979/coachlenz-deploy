@@ -13,22 +13,23 @@ def test_split_spend_bucket_order_and_insufficient():
 
 
 def test_monthly_included_allotment_config_and_spend_order():
-    # F1: the subscription funds a monthly `included` allotment.
-    assert C.MONTHLY_INCLUDED["coach"] == 5           # Jay's number (2026-09-23)
-    assert "athletic_dept" in C.MONTHLY_INCLUDED
+    # F1: the subscription funds a monthly `included` allotment (Jay, 2026-09-23).
+    assert C.MONTHLY_INCLUDED["coach"] == 9
+    assert C.MONTHLY_INCLUDED["athletic_dept"] == 29
     # The allotment is spent BEFORE purchased credits, so it is used, not stranded.
-    assert C.split_spend(5, 100, 29) == (5, 24)       # 5 included first, then 24 purchased
-    assert C.split_spend(5, 100, 5) == (5, 0)         # a 5-credit draw comes entirely from included
+    assert C.split_spend(9, 100, 29) == (9, 20)       # 9 included first, then 20 purchased
+    assert C.split_spend(9, 100, 9) == (9, 0)         # a 9-credit draw comes entirely from included
 
 
-def test_coach_allotment_of_5_cannot_run_a_billable_analysis():
-    # HONEST FLAG encoded as a test: the cheapest billable run is SEGMENT_MIN_CREDITS
-    # (9) and a standard analysis is 22-29, so a Coach allotment of 5 runs NOTHING on
-    # its own. It is a standing discount, not a free monthly breakdown. If this ever
-    # fails because someone raised the allotment to >= a real run, that is the intended
-    # F1 outcome (Coach ~29 delivers one free analysis) and the test should be updated.
-    assert C.MONTHLY_INCLUDED["coach"] < C.SEGMENT_MIN_CREDITS
+def test_allotment_sizing_matches_intent():
+    # Coach 9 covers exactly the cheapest billable run (re-analysis / segment floor),
+    # a small-but-real breakdown, but NOT a full standard analysis (22-29): margin-safe
+    # on $9.99. The bigger monthly visible-value job is F3 (the recap), not a free
+    # full analysis.
+    assert C.MONTHLY_INCLUDED["coach"] == C.SEGMENT_MIN_CREDITS
     assert C.MONTHLY_INCLUDED["coach"] < min(C.STANDARD_CREDITS.values())
+    # AD 29 covers at least one full standard analysis per cycle (basketball 27 / football 29).
+    assert C.MONTHLY_INCLUDED["athletic_dept"] >= min(C.STANDARD_CREDITS.values())
 
 
 def test_segment_credits_are_prorated_and_margin_neutral():

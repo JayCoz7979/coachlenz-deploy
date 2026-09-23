@@ -95,13 +95,15 @@ WELCOME_CREDITS = 0
 #    `split_spend` already draws `included` before `purchased`, so no spend/refund
 #    change is needed.
 #
-#    FLAG (told Jay 2026-09-23): a standard analysis costs 22-29 credits and the
-#    cheapest billable run (re-analysis / segment floor) is 9 (SEGMENT_MIN_CREDITS),
-#    so a Coach allotment of 5 canNOT run any analysis on its own — it acts as a
-#    standing discount toward the coach's first bundle spend, not a free monthly
-#    breakdown. To deliver one free breakdown per cycle, Coach needs ~29. Value set
-#    per Jay's instruction (Coach 5); athletic_dept awaiting his number.
-MONTHLY_INCLUDED = {"coach": 5, "athletic_dept": 0}  # athletic_dept TBD (pending Jay)
+#    Numbers (Jay, 2026-09-23): Coach 9 covers exactly the cheapest billable run (a
+#    re-analysis or a minimum segment = SEGMENT_MIN_CREDITS), so the base fee delivers
+#    one small-but-real breakdown per cycle while staying margin-safe on $9.99. AD 29
+#    covers one full standard analysis per cycle (basketball 27 / football 29), which
+#    the $29.99 tier has the headroom for. A free FULL analysis on Coach was rejected:
+#    real full-game compute (~$8-13) would break the 65% floor at $9.99. The larger
+#    "visible monthly value" job is carried by the monthly recap (F3), which reuses
+#    analysis already run and costs nothing to produce.
+MONTHLY_INCLUDED = {"coach": 9, "athletic_dept": 29}
 
 
 def max_cogs_at_floor(credits: int) -> float:
