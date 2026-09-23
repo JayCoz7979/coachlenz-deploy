@@ -353,3 +353,75 @@ async def platform_stats(user: User = Depends(require_admin), db: AsyncSession =
         "total_games": games.scalar() or 0,
         "total_reports": reports.scalar() or 0,
     }
+
+
+@router.post("/monthly-recap/{org_id}")
+async def monthly_recap(org_id: str, send: bool = False, days: int = 30,
+                        user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Generate an org's monthly recap (F3) — the forced per-cycle visible win.
+
+    Deterministic, reuses analysis already run (no new vision/LLM cost). Preview by
+    default; `send=true` emails it to the org owner. A monthly cron (or the future
+    recap worker) hits this per active org before the renewal date."""
+    from datetime import timedelta
+    from backend.models.event import Event
+    from backend.models.learning import CoachLabelCorrection
+    from backend.services import monthly_recap as recap_svc
+    from backend.services import email_service
+
+    org = (await db.execute(select(Organization).where(Organization.id == org_id))).scalar_one_or_none()
+    if not org:
+        raise HTTPException(status_code=404, detail="Org not found")
+
+    start = datetime.utcnow() - timedelta(days=max(1, days))
+    auto_b = Event.extra_data["auto_detected"].as_boolean()
+    in_period = and_(Event.organization_id == org_id, auto_b == True, Event.created_at >= start)
+
+    plays_detected = (await db.execute(
+        select(func.count()).select_from(Event).where(in_period))).scalar() or 0
+    films_analyzed = (await db.execute(
+        select(func.count(func.distinct(Event.game_id))).where(in_period))).scalar() or 0
+    corrections_applied = (await db.execute(
+        select(func.count()).select_from(CoachLabelCorrection).where(
+            CoachLabelCorrection.organization_id == org_id,
+            CoachLabelCorrection.was_auto_detected == True,  # noqa: E712
+            CoachLabelCorrection.created_at >= start))).scalar() or 0
+
+    # Top-tagged play labels this cycle (football play_type, else the event_type).
+    label_col = func.coalesce(Event.play_type, Event.event_type)
+    rows = (await db.execute(
+        select(label_col.label("label"), func.count().label("n"))
+        .where(in_period).group_by(label_col).order_by(func.count().desc()).limit(3))).all()
+    top_labels = [{"label": r.label, "count": int(r.n)} for r in rows if r.label]
+
+    credits_remaining = (await credits.balance(db, org_id)).get("balance", 0)
+
+    recap = recap_svc.compute_recap(
+        period_label=start.strftime("the last %d days") if days != 30 else "the last 30 days",
+        films_analyzed=films_analyzed, plays_detected=plays_detected,
+        corrections_applied=corrections_applied, credits_remaining=credits_remaining,
+        top_labels=top_labels,
+    )
+
+    owner = (await db.execute(select(User).where(
+        User.organization_id == org_id, User.role == "owner"))).scalars().first()
+    if owner is None:
+        owner = (await db.execute(select(User).where(
+            User.organization_id == org_id))).scalars().first()
+
+    subject = recap_svc.recap_subject(recap)
+    html = recap_svc.render_recap_html(
+        recap, coach_name=(owner.name if owner else ""), org_name=org.name)
+
+    sent = False
+    if send:
+        if not owner or not owner.email:
+            raise HTTPException(status_code=400, detail="No owner email to send the recap to")
+        try:
+            await email_service.send_monthly_recap_email(owner.email, subject, html)
+            sent = True
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Recap email failed: {e}")
+
+    return {"org_id": org_id, "recap": recap, "subject": subject, "sent": sent,
+            "recipient": (owner.email if owner else None), "html": html}
