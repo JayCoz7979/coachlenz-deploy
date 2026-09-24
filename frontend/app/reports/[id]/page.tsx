@@ -31,6 +31,7 @@ interface Report {
   watermarked: boolean
   sections: Section[]
   summary: any
+  data_quality?: { plays: number; avg_confidence: number; flagged: number; confident: number; confident_pct: number } | null
   film_min_height?: number | null
   low_res_film?: boolean
   generated_at: string | null
@@ -766,6 +767,39 @@ export default function ReportPage() {
           }}>
             🔒 {FERPA_NOTE}
           </div>
+
+          {/* Data-quality trust banner: how much was analyzed and how confident, so a
+              coach can trust the breakdown before game-planning around it. */}
+          {!isProcessing && report.data_quality && report.data_quality.plays > 0 && (
+            <div style={{
+              display: 'flex', flexWrap: 'wrap', gap: 20, alignItems: 'center',
+              background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(45,140,64,0.25)',
+              borderRadius: 8, padding: '14px 20px', marginBottom: 20,
+            }}>
+              <div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: '#f8f6f0', lineHeight: 1 }}>{report.data_quality.plays}</div>
+                <div style={{ fontSize: 10, color: '#7a7a6e', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Plays analyzed</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: '#2d8c40', lineHeight: 1 }}>{report.data_quality.confident_pct}%</div>
+                <div style={{ fontSize: 10, color: '#7a7a6e', textTransform: 'uppercase', letterSpacing: '0.06em' }}>High confidence</div>
+              </div>
+              {report.data_quality.flagged > 0 && (
+                <div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: '#C9A84C', lineHeight: 1 }}>{report.data_quality.flagged}</div>
+                  <div style={{ fontSize: 10, color: '#7a7a6e', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Flagged for your review</div>
+                </div>
+              )}
+              <div style={{ flex: 1, minWidth: 200, fontSize: 12, color: '#9a9a8e' }}>
+                {report.data_quality.flagged > 0
+                  ? `${report.data_quality.confident} plays the AI is confident in, ${report.data_quality.flagged} it flagged for you to verify before you game-plan around them.`
+                  : `Every detected play cleared the confidence bar.`}
+                {report.low_res_film && (
+                  <span style={{ color: '#C9A84C' }}> This film is lower resolution, so jersey and score-bug reads are harder, verify the flagged plays.</span>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Processing state */}
           {isProcessing && (
