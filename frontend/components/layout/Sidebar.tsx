@@ -6,7 +6,7 @@ import { useAuth } from '@/lib/auth'
 import logo from '../../public/coachlenz-logo.png'
 import {
   LayoutDashboard, Users, Film, FileText, Settings,
-  Share2, ShieldCheck, LogOut, Upload, Link2, Target, ClipboardList, Award, UserPlus, BarChart3,
+  Share2, ShieldCheck, LogOut, Upload, Link2, Target, ClipboardList, Award, UserPlus, BarChart3, UserCircle,
 } from 'lucide-react'
 
 const NAV_SECTIONS = [
@@ -39,6 +39,9 @@ const NAV_SECTIONS = [
     items: [
       { href: '/settings/connections', label: 'Connected Accounts', icon: Link2 },
       { href: '/referrals', label: 'Referrals', icon: Share2 },
+      // Coach Tenure is not a customer feature (it's the founder's own profile tool), so
+      // it is admin-only: reachable for admins, never shown to coaches.
+      { href: '/coaches', label: 'Coach Tenure', icon: UserCircle, requiresAdmin: true },
       { href: '/admin', label: 'Admin', icon: ShieldCheck, requiresAdmin: true },
       { href: '/settings', label: 'Settings', icon: Settings },
     ],
