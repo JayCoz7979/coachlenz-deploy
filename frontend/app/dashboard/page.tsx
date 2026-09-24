@@ -50,6 +50,7 @@ export default function DashboardPage() {
   const [loaded, setLoaded] = useState(false)
   const [open, setOpen] = useState<string | null>('games')
   const [sport, setSport] = useState<string>('')
+  const [learning, setLearning] = useState<any>(null)
 
   // Onboarding gate + the org's locked sport (drives sport-aware labels below).
   useEffect(() => {
@@ -58,6 +59,13 @@ export default function DashboardPage() {
       if (!s.data?.onboarding_completed) router.push('/onboarding')
       setSport((s.data?.chosen_sports || [])[0] || '')
     }).catch(() => {})
+  }, [user])
+
+  // Learning-loop visibility: surface that the coach's corrections are training the
+  // model, so the lock-in is felt where they land, not just in Settings.
+  useEffect(() => {
+    if (!user) return
+    api.get('/learning/summary').then(r => setLearning(r.data)).catch(() => {})
   }, [user])
 
   useEffect(() => {
@@ -163,6 +171,23 @@ export default function DashboardPage() {
           )}
         </div>
       ) : null}
+
+      {/* ── LEARNING LOOP (visible lock-in): the AI is trained on THIS coach's corrections ── */}
+      {learning?.score?.total_corrections > 0 && (
+        <Link href="/settings/learning" style={{
+          display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none',
+          background: 'rgba(45,140,64,0.06)', border: '1px solid rgba(45,140,64,0.22)',
+          borderRadius: 10, padding: '12px 16px', marginBottom: 16, color: 'var(--text2)',
+        }}>
+          <span style={{ fontSize: 18 }}>🧠</span>
+          <span style={{ fontSize: 13, flex: 1 }}>
+            CoachLenz has learned from <strong style={{ color: 'var(--green3)' }}>{learning.score.total_corrections}</strong> of your corrections
+            {learning.adjustments?.active > 0 && <>, with <strong style={{ color: 'var(--green3)' }}>{learning.adjustments.active}</strong> adjustments sharpening your reads</>}.
+            Every breakdown fits your eye a little better than the last.
+          </span>
+          <span style={{ fontSize: 12, color: 'var(--green3)', fontWeight: 700, flexShrink: 0 }}>Manage →</span>
+        </Link>
+      )}
 
       {/* ── KPI ROW ── */}
       <div className="sec-hdr"><div className="sec-title">📊 Season Overview</div></div>
