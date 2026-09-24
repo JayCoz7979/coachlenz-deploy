@@ -969,7 +969,7 @@ export default function ReportPage() {
           ) : null}
 
           {/* Ask the Film Assistant — report-scoped chat, only on a finished report */}
-          {report.generated_at && <ReportChat reportId={report.id} />}
+          {report.generated_at && <ReportChat reportId={report.id} sport={report.sport} />}
         </div>
         {confirmModal}
       </main>

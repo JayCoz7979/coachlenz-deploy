@@ -46,12 +46,28 @@ const chip: CSSProperties = {
   color: '#C9A84C', borderRadius: 6, padding: '3px 8px',
 }
 
-export default function ReportChat({ reportId }: { reportId: string }) {
+// Proactive starter questions so the coach engages with one click instead of
+// facing a blank box. Sport-aware; a click sends the question.
+const STARTERS_BB = [
+  "What's their go-to in the half court?",
+  'Who has to be stopped?',
+  'What defense do they play?',
+  'Where do they score the most?',
+]
+const STARTERS_FB = [
+  'What do they run on 3rd and long?',
+  'Who do I have to stop?',
+  "What's their base defense?",
+  'What are their red-zone tendencies?',
+]
+
+export default function ReportChat({ reportId, sport }: { reportId: string; sport?: string }) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const starters = (sport || '').toLowerCase() === 'basketball' ? STARTERS_BB : STARTERS_FB
 
   useEffect(() => {
     api.get(`/reports/${reportId}/chat`)
@@ -63,22 +79,22 @@ export default function ReportChat({ reportId }: { reportId: string }) {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
   }, [messages, sending])
 
-  const send = async () => {
-    const q = input.trim()
+  const send = async (preset?: string) => {
+    const q = (preset ?? input).trim()
     if (!q || sending) return
     setError(null)
     setSending(true)
     // Optimistic: show the question immediately.
     const optimistic: ChatMessage = { id: `tmp-${Date.now()}`, role: 'user', content: q }
     setMessages(m => [...m, optimistic])
-    setInput('')
+    if (!preset) setInput('')
     try {
       const res = await api.post(`/reports/${reportId}/chat`, { question: q })
       setMessages(m => [...m, res.data.answer])
     } catch (e: any) {
       // Drop the optimistic question back into the box so nothing is lost.
       setMessages(m => m.filter(x => x.id !== optimistic.id))
-      setInput(q)
+      if (!preset) setInput(q)
       setError(e?.response?.data?.detail ?? 'The film assistant is unavailable right now. Try again in a moment.')
     } finally {
       setSending(false)
@@ -111,8 +127,17 @@ export default function ReportChat({ reportId }: { reportId: string }) {
         {/* Thread */}
         <div ref={scrollRef} style={{ maxHeight: 420, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
           {messages.length === 0 && !sending && (
-            <div style={{ color: '#7a7a6e', fontSize: 13, textAlign: 'center', padding: '18px 0' }}>
-              Try: &ldquo;What do they run on 3rd and long?&rdquo; or &ldquo;Who do I have to stop?&rdquo;
+            <div style={{ padding: '10px 0 4px' }}>
+              <div style={{ color: '#7a7a6e', fontSize: 12, marginBottom: 10 }}>Start with one of these, or ask your own:</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {starters.map(q => (
+                  <button key={q} onClick={() => send(q)} style={{
+                    fontSize: 12, fontWeight: 600, textAlign: 'left',
+                    background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.25)',
+                    color: '#e6d9a8', borderRadius: 8, padding: '8px 12px', cursor: 'pointer',
+                  }}>{q}</button>
+                ))}
+              </div>
             </div>
           )}
 
@@ -175,7 +200,7 @@ export default function ReportChat({ reportId }: { reportId: string }) {
               }}
             />
             <button
-              onClick={send}
+              onClick={() => send()}
               disabled={sending || !input.trim()}
               style={{
                 display: 'flex', alignItems: 'center', gap: 6, background: '#C9A84C', color: '#1c1c1c',
