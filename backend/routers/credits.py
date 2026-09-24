@@ -42,7 +42,12 @@ async def my_credits(user: User = Depends(get_current_user),
         "deep_grade": credit_svc.DEEP_GRADE_CREDITS,
         "reanalysis": credit_svc.REANALYSIS_CREDITS,
     }
-    return {"plan": plan_for(org), **bal, "bundles": bundles, "analysis_costs": costs,
+    # The tier's monthly INCLUDED allotment (F1), so the UI can show what the base fee
+    # funds each cycle, not just the raw balance.
+    monthly_allotment = credit_svc.MONTHLY_INCLUDED.get(
+        (org.subscription_tier or "").strip().lower(), 0)
+    return {"plan": plan_for(org), **bal, "monthly_allotment": monthly_allotment,
+            "bundles": bundles, "analysis_costs": costs,
             "history": [{"kind": r.kind, "amount": r.amount, "note": r.note,
                          "created_at": r.created_at.isoformat()} for r in rows]}
 
