@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, func
+from sqlalchemy import select, update, func, and_
 from pydantic import BaseModel
 from typing import Optional
+from backend.config import settings
 from backend.models.base import get_db
 from backend.models.user import User
 from backend.models.organization import Organization
@@ -355,27 +356,18 @@ async def platform_stats(user: User = Depends(require_admin), db: AsyncSession =
     }
 
 
-@router.post("/monthly-recap/{org_id}")
-async def monthly_recap(org_id: str, send: bool = False, days: int = 30,
-                        user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    """Generate an org's monthly recap (F3) — the forced per-cycle visible win.
-
-    Deterministic, reuses analysis already run (no new vision/LLM cost). Preview by
-    default; `send=true` emails it to the org owner. A monthly cron (or the future
-    recap worker) hits this per active org before the renewal date."""
+async def _assemble_org_recap(db: AsyncSession, org, days: int = 30) -> dict:
+    """Assemble one org's monthly recap (F3): the period numbers + rendered email.
+    Deterministic, reuses analysis already run (no new vision/LLM cost). Shared by the
+    single-org admin endpoint and the cron sweep."""
     from datetime import timedelta
     from backend.models.event import Event
     from backend.models.learning import CoachLabelCorrection
     from backend.services import monthly_recap as recap_svc
-    from backend.services import email_service
-
-    org = (await db.execute(select(Organization).where(Organization.id == org_id))).scalar_one_or_none()
-    if not org:
-        raise HTTPException(status_code=404, detail="Org not found")
 
     start = datetime.utcnow() - timedelta(days=max(1, days))
     auto_b = Event.extra_data["auto_detected"].as_boolean()
-    in_period = and_(Event.organization_id == org_id, auto_b == True, Event.created_at >= start)
+    in_period = and_(Event.organization_id == org.id, auto_b == True, Event.created_at >= start)
 
     plays_detected = (await db.execute(
         select(func.count()).select_from(Event).where(in_period))).scalar() or 0
@@ -383,7 +375,7 @@ async def monthly_recap(org_id: str, send: bool = False, days: int = 30,
         select(func.count(func.distinct(Event.game_id))).where(in_period))).scalar() or 0
     corrections_applied = (await db.execute(
         select(func.count()).select_from(CoachLabelCorrection).where(
-            CoachLabelCorrection.organization_id == org_id,
+            CoachLabelCorrection.organization_id == org.id,
             CoachLabelCorrection.was_auto_detected == True,  # noqa: E712
             CoachLabelCorrection.created_at >= start))).scalar() or 0
 
@@ -394,34 +386,109 @@ async def monthly_recap(org_id: str, send: bool = False, days: int = 30,
         .where(in_period).group_by(label_col).order_by(func.count().desc()).limit(3))).all()
     top_labels = [{"label": r.label, "count": int(r.n)} for r in rows if r.label]
 
-    credits_remaining = (await credits.balance(db, org_id)).get("balance", 0)
+    credits_remaining = (await credits.balance(db, org.id)).get("balance", 0)
 
     recap = recap_svc.compute_recap(
-        period_label=start.strftime("the last %d days") if days != 30 else "the last 30 days",
+        period_label=(f"the last {days} days" if days != 30 else "the last 30 days"),
         films_analyzed=films_analyzed, plays_detected=plays_detected,
         corrections_applied=corrections_applied, credits_remaining=credits_remaining,
         top_labels=top_labels,
     )
 
     owner = (await db.execute(select(User).where(
-        User.organization_id == org_id, User.role == "owner"))).scalars().first()
+        User.organization_id == org.id, User.role == "owner"))).scalars().first()
     if owner is None:
         owner = (await db.execute(select(User).where(
-            User.organization_id == org_id))).scalars().first()
+            User.organization_id == org.id))).scalars().first()
 
-    subject = recap_svc.recap_subject(recap)
-    html = recap_svc.render_recap_html(
-        recap, coach_name=(owner.name if owner else ""), org_name=org.name)
+    return {
+        "recap": recap,
+        "subject": recap_svc.recap_subject(recap),
+        "html": recap_svc.render_recap_html(
+            recap, coach_name=(owner.name if owner else ""), org_name=org.name),
+        "owner_email": (owner.email if owner else None),
+    }
 
+
+@router.post("/monthly-recap/run-due")
+async def monthly_recap_run_due(key: str = "", days: int = 30, db: AsyncSession = Depends(get_db)):
+    """Cron-driven monthly recap sweep (F3 automation). One caller (a monthly cron)
+    hits this and it emails the recap to every ACTIVE PAID org that has not already
+    received one THIS calendar month. Idempotent via an agent_logs marker per org per
+    cycle, so a re-run or a second call the same month never double-sends. Guarded by
+    RECAP_CRON_SECRET (?key=); automation is disabled until Jay sets that secret."""
+    import hmac
+    from backend.services import email_service
+
+    if not (settings.RECAP_CRON_SECRET and key
+            and hmac.compare_digest(key, settings.RECAP_CRON_SECRET)):
+        raise HTTPException(status_code=403, detail="forbidden")
+
+    cycle = datetime.utcnow().strftime("%Y-%m")
+    cycle_marker = AgentLog.detail["cycle"].as_string()
+
+    orgs = (await db.execute(select(Organization).where(
+        Organization.subscription_tier.in_(["coach", "athletic_dept"]),
+        Organization.stripe_subscription_status == "active",
+    ))).scalars().all()
+
+    sent, skipped, failed = 0, 0, 0
+    for org in orgs:
+        already = (await db.execute(select(AgentLog.id).where(
+            AgentLog.organization_id == org.id,
+            AgentLog.phase == "monthly_recap",
+            cycle_marker == cycle,
+        ).limit(1))).scalar_one_or_none()
+        if already:
+            skipped += 1
+            continue
+        try:
+            built = await _assemble_org_recap(db, org, days)
+            if not built["owner_email"]:
+                skipped += 1
+                continue
+            await email_service.send_monthly_recap_email(
+                built["owner_email"], built["subject"], built["html"])
+            # Idempotency marker for this org + cycle (single caller, so send-then-log
+            # is safe; a failed send is not marked and is retried next run).
+            db.add(AgentLog(
+                organization_id=org.id, agent_name="Monthly Recap", agent_role="retention",
+                phase="monthly_recap", action=f"Recap emailed for {cycle}", level="success",
+                detail={"cycle": cycle, "plays": built["recap"]["plays_detected"],
+                        "recipient": built["owner_email"]},
+            ))
+            await db.commit()
+            sent += 1
+        except Exception:
+            await db.rollback()
+            failed += 1
+
+    return {"cycle": cycle, "eligible_orgs": len(orgs),
+            "sent": sent, "skipped": skipped, "failed": failed}
+
+
+@router.post("/monthly-recap/{org_id}")
+async def monthly_recap(org_id: str, send: bool = False, days: int = 30,
+                        user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Generate one org's monthly recap (F3). Preview by default; `send=true` emails it
+    to the org owner. For the unattended monthly sweep, see /monthly-recap/run-due."""
+    from backend.services import email_service
+
+    org = (await db.execute(select(Organization).where(Organization.id == org_id))).scalar_one_or_none()
+    if not org:
+        raise HTTPException(status_code=404, detail="Org not found")
+
+    built = await _assemble_org_recap(db, org, days)
     sent = False
     if send:
-        if not owner or not owner.email:
+        if not built["owner_email"]:
             raise HTTPException(status_code=400, detail="No owner email to send the recap to")
         try:
-            await email_service.send_monthly_recap_email(owner.email, subject, html)
+            await email_service.send_monthly_recap_email(
+                built["owner_email"], built["subject"], built["html"])
             sent = True
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Recap email failed: {e}")
 
-    return {"org_id": org_id, "recap": recap, "subject": subject, "sent": sent,
-            "recipient": (owner.email if owner else None), "html": html}
+    return {"org_id": org_id, "recap": built["recap"], "subject": built["subject"],
+            "sent": sent, "recipient": built["owner_email"], "html": built["html"]}

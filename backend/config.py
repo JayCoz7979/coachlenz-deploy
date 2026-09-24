@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     # Stripe
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
+    # Shared secret a monthly cron passes (?key=) to POST /admin/monthly-recap/run-due
+    # so it can drive the recap sweep unattended. Empty = automation disabled (the
+    # endpoint 403s), so the recap stays on-demand until Jay sets this.
+    RECAP_CRON_SECRET: str = ""
     STRIPE_PRICE_COACH: str = ""
     STRIPE_PRICE_ATHLETIC_DEPT: str = ""
     STRIPE_PRICE_DISTRICT: str = ""
