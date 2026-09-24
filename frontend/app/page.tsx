@@ -43,7 +43,11 @@ export default function Home() {
       <IntroOverlay />
       <header className="border-b border-gray-800 px-6 sm:px-8 py-4 flex items-center justify-between">
         <img src={logo.src} alt="CoachLenz" style={{ height: 30, width: 'auto' }} />
-        <Link href="/login" className="text-sm text-gray-400 hover:text-gray-100">Sign in</Link>
+        <nav className="flex items-center gap-5">
+          {/* Secondary link only. The primary action stays the "Start your free trial" CTA below. */}
+          <Link href="/book" className="text-sm text-gray-400 hover:text-gray-100">Book a Free Strategy Call</Link>
+          <Link href="/login" className="text-sm text-gray-400 hover:text-gray-100">Sign in</Link>
+        </nav>
       </header>
 
       <main className="flex-1">
