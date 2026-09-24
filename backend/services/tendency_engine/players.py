@@ -7,6 +7,12 @@ player block carries a coverage/confidence note so coaches know the limits.
 from typing import List, Dict, Any
 from collections import Counter, defaultdict
 from .football import _x, _is_success, _is_explosive, _is_run, _is_pass
+from . import court_zones as cz
+
+# A player block below this many primary touches is flagged low_sample: real, but too
+# thin to game-plan around. Single-camera film misses plays, so a coach should treat a
+# 1-2 rep "tendency" as directional, not fact.
+MIN_REPS = 4
 
 
 def _players_of(e) -> list:
@@ -26,8 +32,14 @@ def _made(e) -> bool:
 
 
 def _is_three(e) -> bool:
-    z = _x(e, "shot_zone") or ""
-    return "3" in z or "Corner" in z or "Wing 3" in z or "Top of Key" in z
+    # Route through the canonical zone taxonomy so "Left Wing 3" etc. count correctly
+    # (consistent with the team scout/tendency engines).
+    return cz.is_three_zone(_x(e, "shot_zone"))
+
+
+def _is_free_throw(e) -> bool:
+    st = (_x(e, "shot_type") or "").strip().lower()
+    return st in ("free throw", "ft", "free-throw") or cz.is_free_throw_zone(_x(e, "shot_zone"))
 
 
 def _primary_team(e) -> str:
@@ -97,6 +109,9 @@ def analyze_players(events, sport: str) -> Dict[str, Any]:
             "as_primary": len(a["primary_events"]),
             "roles": dict(a["roles"].most_common()),
             "avg_id_confidence": round(sum(confs) / len(confs), 2) if confs else None,
+            # Honesty flag: too few reps to present as a reliable tendency. The report
+            # marks these directional rather than dropping them.
+            "low_sample": len(a["primary_events"]) < MIN_REPS,
         }
         block.update(builder(a["primary_events"], a["roles"]))
         by_player[key] = block
@@ -115,8 +130,10 @@ def analyze_players(events, sport: str) -> Dict[str, Any]:
         },
         "by_player": by_player,
         "most_involved": ranked[0][0] if ranked else None,
+        "low_sample_count": sum(1 for v in by_player.values() if v.get("low_sample")),
         "note": "Single-camera, jersey-based. Only players with a legible jersey number are tracked; "
-                "unreadable numbers are omitted rather than guessed.",
+                "unreadable numbers are omitted rather than guessed. Players marked low_sample have too "
+                "few reps to game-plan around, treat them as directional.",
     }
 
 
@@ -142,7 +159,9 @@ def _football_player(primary_events, roles) -> Dict[str, Any]:
 
 
 def _basketball_player(primary_events, roles) -> Dict[str, Any]:
-    shots = [e for e in primary_events if e.event_type == "shot"]
+    # Field goals only: a free throw is not a FGA and must not pollute FG% / shot mix
+    # (consistent with the team engines).
+    shots = [e for e in primary_events if e.event_type == "shot" and not _is_free_throw(e)]
     makes = [e for e in shots if _made(e)]
     threes = [e for e in shots if _is_three(e)]
     threes_made = [e for e in threes if _made(e)]
@@ -163,9 +182,9 @@ def _basketball_player(primary_events, roles) -> Dict[str, Any]:
     else:
         role = "role_player"
 
-    # Category 4 — personal shot tendency classification.
-    paint = [e for e in shots if (_x(e, "shot_zone") or "") in ("Restricted Area", "Paint Non-RA")]
-    mid = [e for e in shots if "Mid" in (_x(e, "shot_zone") or "") or "Elbow" in (_x(e, "shot_zone") or "")]
+    # Category 4 — personal shot tendency classification (canonical zones).
+    paint = [e for e in shots if cz.is_paint_zone(_x(e, "shot_zone"))]
+    mid = [e for e in shots if cz.is_mid_zone(_x(e, "shot_zone"))]
     three_rate = round(len(threes) / len(shots) * 100, 1) if shots else 0
     paint_rate = round(len(paint) / len(shots) * 100, 1) if shots else 0
     mid_rate = round(len(mid) / len(shots) * 100, 1) if shots else 0
