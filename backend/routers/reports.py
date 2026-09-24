@@ -127,6 +127,30 @@ async def get_report(report_id: str, user: User = Depends(get_current_user), db:
             film_min_height = min(heights)
             low_res_film = film_min_height < 480
 
+    # Data-quality trust block (feature-value chart): a coach should see, at the top of
+    # the report, how much was analyzed and how confident it is BEFORE game-planning
+    # around it. Computed from the report's games' AI plays; works on existing reports.
+    data_quality = None
+    if report.game_ids:
+        from backend.models.event import Event
+        auto_b = Event.extra_data["auto_detected"].as_boolean()
+        extras = (await db.execute(select(Event.extra_data).where(
+            Event.game_id.in_(report.game_ids),
+            Event.organization_id == user.organization_id,
+            auto_b == True,
+        ))).scalars().all()
+        n = len(extras)
+        if n:
+            confs = [float((x or {}).get("confidence") or 0) for x in extras]
+            flagged = sum(1 for x in extras if (x or {}).get("needs_review"))
+            data_quality = {
+                "plays": n,
+                "avg_confidence": round(sum(confs) / n, 2),
+                "flagged": flagged,
+                "confident": n - flagged,
+                "confident_pct": round((n - flagged) / n * 100, 1),
+            }
+
     return {
         "id": str(report.id),
         "title": report.title,
@@ -136,6 +160,7 @@ async def get_report(report_id: str, user: User = Depends(get_current_user), db:
         "watermarked": report.watermarked,
         "sections": sections,
         "summary": summary,
+        "data_quality": data_quality,
         "film_min_height": film_min_height,
         "low_res_film": low_res_film,
         "generated_at": report.generated_at.isoformat() if report.generated_at else None,
