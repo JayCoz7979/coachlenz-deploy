@@ -64,10 +64,17 @@ never via an auto-applied migration alone.
   Still zero prod effect (flag off + superuser bypass). NOTE: worker jobs do not yet
   call `set_org_context`; that is deferred to Stage 3 because it is coupled to the
   bootstrap/cross-org connection decision below.
-- **Stage 3.** On a **staging / DB-branch** only: `ENABLE` + `FORCE` RLS + policies
-  on every tenant table. Run the full test suite AND a manual cross-org probe while
-  connected as `app_rls`. This is where 0-rows bugs surface — fix them here, never
-  in prod.
+- **Stage 3 — DRAFT PREPARED (review-only, 2026-08-01), not enabled.** See
+  `docs/security/rls-stage3-draft.md`. On a **staging / DB-branch** only: `ENABLE` +
+  `FORCE` RLS + policies on every tenant table. Run the full test suite AND a manual
+  cross-org probe while connected as `app_rls`. This is where 0-rows bugs surface —
+  fix them here, never in prod. The draft ships: a **dynamic** policy script
+  (`backend/scripts/rls/stage3_enable_rls.sql`, driven off `information_schema` so it
+  covers all org-scoped tables — now **32**, not the 27 below; 5 learning/legal/
+  report-chat tables were added since) + rollback; dormant dual-engine scaffolding
+  (`models/rls_engine.py` + `DATABASE_URL_RESTRICTED`); and the validation runbook +
+  privileged-path list. Router/worker wiring is deliberately deferred to the DB-branch
+  validation step (where 0-rows bugs are cheap to fix).
 - **Stage 4.** Cut over **one low-risk service's** `DATABASE_URL` to `app_rls` in
   prod, watch logs/health, then roll the rest one at a time. Keep env-revert as an
   instant rollback.

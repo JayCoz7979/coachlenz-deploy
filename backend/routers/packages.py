@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import uuid
 from slugify import slugify
 from backend.models.base import get_db
+from backend.models.rls_engine import get_db_privileged  # public package view reads across orgs by token
 from backend.models.user import User
 from backend.models.organization import Organization
 from backend.models.comms import FilmPackage
@@ -49,7 +50,7 @@ async def create_package(body: PackageCreate, user: User = Depends(get_current_u
     return {"id": str(pkg.id), "slug": pkg.slug, "share_token": pkg.share_token}
 
 @router.get("/view/{token}")
-async def view_package(token: str, db: AsyncSession = Depends(get_db)):
+async def view_package(token: str, db: AsyncSession = Depends(get_db_privileged)):
     result = await db.execute(select(FilmPackage).where(FilmPackage.share_token == token))
     pkg = result.scalar_one_or_none()
     if not pkg:
