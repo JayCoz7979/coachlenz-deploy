@@ -12,6 +12,26 @@ def test_split_spend_bucket_order_and_insufficient():
     assert C.split_spend(5, 5, 0) == (0, 0)
 
 
+def test_monthly_included_allotment_config_and_spend_order():
+    # F1: the subscription funds a monthly `included` allotment (Jay, 2026-09-23).
+    assert C.MONTHLY_INCLUDED["coach"] == 9
+    assert C.MONTHLY_INCLUDED["athletic_dept"] == 29
+    # The allotment is spent BEFORE purchased credits, so it is used, not stranded.
+    assert C.split_spend(9, 100, 29) == (9, 20)       # 9 included first, then 20 purchased
+    assert C.split_spend(9, 100, 9) == (9, 0)         # a 9-credit draw comes entirely from included
+
+
+def test_allotment_sizing_matches_intent():
+    # Coach 9 covers exactly the cheapest billable run (re-analysis / segment floor),
+    # a small-but-real breakdown, but NOT a full standard analysis (22-29): margin-safe
+    # on $9.99. The bigger monthly visible-value job is F3 (the recap), not a free
+    # full analysis.
+    assert C.MONTHLY_INCLUDED["coach"] == C.SEGMENT_MIN_CREDITS
+    assert C.MONTHLY_INCLUDED["coach"] < min(C.STANDARD_CREDITS.values())
+    # AD 29 covers at least one full standard analysis per cycle (basketball 27 / football 29).
+    assert C.MONTHLY_INCLUDED["athletic_dept"] >= min(C.STANDARD_CREDITS.values())
+
+
 def test_segment_credits_are_prorated_and_margin_neutral():
     # Football deep = 55. A 12-min slice of a 48-min game = 25% -> ceil(55*.25)=14.
     assert C.segment_credits("football", deep=True, full_seconds=48 * 60, segment_seconds=12 * 60) == 14

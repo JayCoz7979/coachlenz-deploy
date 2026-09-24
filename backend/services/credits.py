@@ -89,6 +89,22 @@ FLOOR_CREDIT_PRICE = 0.70   # Department bundle per-credit price (the worst case
 # Live Game Logger is the no-cost way to experience the product. Config knob.
 WELCOME_CREDITS = 0
 
+# ── Monthly INCLUDED allotment (F1, value-lock 2026-09-23). The subscription grants
+#    this many credits into the `included` bucket, RESET (not accumulated) every
+#    billing cycle, so the base fee always delivers credits without a separate bundle.
+#    `split_spend` already draws `included` before `purchased`, so no spend/refund
+#    change is needed.
+#
+#    Numbers (Jay, 2026-09-23): Coach 9 covers exactly the cheapest billable run (a
+#    re-analysis or a minimum segment = SEGMENT_MIN_CREDITS), so the base fee delivers
+#    one small-but-real breakdown per cycle while staying margin-safe on $9.99. AD 29
+#    covers one full standard analysis per cycle (basketball 27 / football 29), which
+#    the $29.99 tier has the headroom for. A free FULL analysis on Coach was rejected:
+#    real full-game compute (~$8-13) would break the 65% floor at $9.99. The larger
+#    "visible monthly value" job is carried by the monthly recap (F3), which reuses
+#    analysis already run and costs nothing to produce.
+MONTHLY_INCLUDED = {"coach": 9, "athletic_dept": 29}
+
 
 def max_cogs_at_floor(credits: int) -> float:
     """Max compute cost (USD) an analysis of this credit size may cost and still clear
@@ -186,6 +202,22 @@ async def grant_welcome(db: AsyncSession, org_id) -> None:
     db.add(_ledger(org_id, "welcome", WELCOME_CREDITS, 0, WELCOME_CREDITS, note="signup"))
 
 
+async def grant_monthly_allotment(db: AsyncSession, org_id, tier: Optional[str]) -> None:
+    """Set the org's INCLUDED bucket to this tier's monthly allotment (F1).
+
+    RESET semantics (set, not add) so the allotment refreshes each cycle and never
+    stacks. Call on subscription activation AND each renewal (invoice.payment_succeeded);
+    because it is a SET, the first-invoice-after-checkout case is a harmless no-op.
+    PURCHASED credits are never touched here. No-op for a tier with no allotment."""
+    target = MONTHLY_INCLUDED.get((tier or "").strip().lower(), 0)
+    row = await _ensure(db, org_id)
+    if row.included == target:
+        return
+    delta = target - row.included
+    row.included = target
+    db.add(_ledger(org_id, "allotment", delta, delta, 0, note=f"monthly included ({tier})"))
+
+
 async def spend(db: AsyncSession, org_id, n: int, ref: str) -> bool:
     """Atomically draw `n` credits under a row lock. False if the wallet is short."""
     row = await _row(db, org_id, lock=True)
@@ -224,11 +256,17 @@ async def refund_for_job(db: AsyncSession, ref: str) -> None:
 
 
 async def forfeit(db: AsyncSession, org_id) -> None:
-    """Zero the wallet on cancellation (credits are forfeited when the account lapses)."""
+    """On cancellation, forfeit ONLY the free monthly `included` allotment (F2,
+    value-lock 2026-09-23).
+
+    PURCHASED credits were paid for in cash and survive cancellation — they stay in
+    the wallet and are honored if the org resubscribes. Taking a coach's paid-for,
+    unused credits on cancel was a trust and word-of-mouth risk in a tight coaching
+    community, so it is no longer done."""
     row = await _row(db, org_id, lock=True)
-    if row is None or (row.included == 0 and row.purchased == 0):
+    if row is None or row.included == 0:
         return
-    inc, pur = row.included, row.purchased
+    inc = row.included
     row.included = 0
-    row.purchased = 0
-    db.add(_ledger(org_id, "forfeit", -(inc + pur), -inc, -pur, note="subscription canceled"))
+    db.add(_ledger(org_id, "forfeit", -inc, -inc, 0,
+                   note="subscription canceled (included allotment only; purchased retained)"))
