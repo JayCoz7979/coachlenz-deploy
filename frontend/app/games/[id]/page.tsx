@@ -1980,6 +1980,11 @@ export default function GamePage() {
                       DEEP · 3-PASS (full game)
                     </button>
                   </div>
+                  {/* Make the depth difference obvious at the decision point, not hidden in a tooltip. */}
+                  <div style={{ fontSize: 11, color: '#8a8a7e', marginTop: 6, lineHeight: 1.5 }}>
+                    <span style={{ color: '#a8d8b0', fontWeight: 700 }}>Fast</span> is one detection pass, quick and economical.{' '}
+                    <span style={{ color: '#C9A84C', fontWeight: 700 }}>Deep</span> runs two detection passes plus an Opus verification pass, so it catches more plays and double-checks each read. Deep costs about 3x the credits, use it on the games you will actually game-plan around.
+                  </div>
 
                   {/* Skip the warmup: start the full run at a chosen film time, run to the end */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
