@@ -6,7 +6,7 @@ import { useAuth } from '@/lib/auth'
 import logo from '../../public/coachlenz-logo.png'
 import {
   LayoutDashboard, Users, Film, FileText, Settings,
-  Trophy, UserCircle, Share2, ShieldCheck, LogOut, Upload, Link2, Target, ClipboardList, Award, UserPlus, BarChart3,
+  Share2, ShieldCheck, LogOut, Upload, Link2, Target, ClipboardList, Award, UserPlus, BarChart3,
 } from 'lucide-react'
 
 const NAV_SECTIONS = [
@@ -28,8 +28,10 @@ const NAV_SECTIONS = [
       { href: '/roster', label: 'Rosters', icon: ClipboardList },
       { href: '/staff', label: 'Staff', icon: UserPlus, requiresPermission: 'can_invite_staff' },
       { href: '/ad', label: 'Usage Dashboard', icon: BarChart3, requiresAdTier: true },
-      { href: '/coaches', label: 'Coach Tenure', icon: UserCircle, requiresTenure: true },
-      { href: '/teams-of-month', label: 'Teams of Month', icon: Trophy },
+      // Coach Tenure (kill) and Teams of Month (defer) pulled from the nav per the
+      // feature-value chart: they were vitamins padding the "what am I paying for"
+      // surface. Backend routes/data remain intact (non-destructive, reversible); a
+      // full teardown is flagged separately as it needs a migration + Jay's go.
     ],
   },
   {
