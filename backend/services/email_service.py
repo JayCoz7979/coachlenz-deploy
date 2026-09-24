@@ -143,3 +143,15 @@ async def send_referral_credit_email(to: str, name: str, credit_amount: str):
         "subject": "You earned a referral credit!",
         "html": f"<p>Hi {name},</p><p>Great news — you earned a <strong>{credit_amount}</strong> credit for referring a new CoachLenz customer.</p><p>Powered by <a href='https://cosbyaisolutions.com'>Cosby AI Solutions</a></p>",
     })
+
+
+async def send_monthly_recap_email(to: str, subject: str, html: str):
+    """Monthly recap (F3). Sent from the founder address so a reply reaches Jay, and
+    so the per-cycle 'here is what CoachLenz did for you' win feels personal."""
+    resend.Emails.send({
+        "from": FOUNDER_FROM,
+        "reply_to": FOUNDER_REPLY_TO,
+        "to": to,
+        "subject": subject,
+        "html": html,
+    })
