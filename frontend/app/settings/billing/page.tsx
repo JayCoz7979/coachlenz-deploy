@@ -144,8 +144,16 @@ export default function BillingPage() {
                 <div style={{ fontFamily: 'var(--font-syne,sans-serif)', fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>Analysis credits</div>
                 <div style={{ fontFamily: 'var(--font-syne,sans-serif)', fontSize: 26, fontWeight: 800, color: 'var(--green3)' }}>{credits.balance}<span style={{ fontSize: 12, fontWeight: 400, color: 'var(--text2)' }}> in your wallet</span></div>
               </div>
+              {/* Show the monthly INCLUDED allotment (F1) apart from purchased credits, so the
+                  coach sees what the base subscription funds each cycle. */}
+              {(credits.monthly_allotment > 0 || credits.included > 0) && (
+                <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 8, display: 'flex', gap: 16, flexWrap: 'wrap' as const }}>
+                  <span><strong style={{ color: 'var(--green3)' }}>{credits.included ?? 0}</strong> included this month{credits.monthly_allotment > 0 ? ` (your plan refreshes to ${credits.monthly_allotment} each renewal)` : ''}</span>
+                  <span><strong style={{ color: 'var(--green3)' }}>{credits.purchased ?? 0}</strong> purchased (yours, kept even if you cancel)</span>
+                </div>
+              )}
               <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 14 }}>
-                Credits never expire while your subscription is active. Standard football is {credits.analysis_costs?.standard?.football ?? 29} credits, deep + grade is {credits.analysis_costs?.deep_grade?.football ?? 55}, a re-analysis is {credits.analysis_costs?.reanalysis ?? 9}. The Live Game Logger is always free.
+                Purchased credits never expire while your subscription is active. Standard football is {credits.analysis_costs?.standard?.football ?? 29} credits, deep + grade is {credits.analysis_costs?.deep_grade?.football ?? 55}, a re-analysis is {credits.analysis_costs?.reanalysis ?? 9}. The Live Game Logger is always free.
               </div>
               <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' as const }}>
                 {(credits.bundles || []).map((b: any) => (
@@ -164,7 +172,7 @@ export default function BillingPage() {
           )}
 
           <p style={{ fontSize: 11, color: 'var(--text3)', textAlign: 'center' }}>
-            Credits are purchased separately, never expire while your account is active, and are forfeited on cancellation. The Live Game Logger is always free.{' '}
+            Purchased credits are separate, never expire while your account is active, and stay yours if you cancel (only the monthly included allotment resets). The Live Game Logger is always free.{' '}
             <a href={`mailto:${SALES_EMAIL}`} style={{ color: 'var(--green3)' }}>Contact us</a> for annual billing.
           </p>
         </div>

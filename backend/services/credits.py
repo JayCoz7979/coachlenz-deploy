@@ -156,8 +156,11 @@ async def has_account(db: AsyncSession, org_id) -> bool:
 
 async def balance(db: AsyncSession, org_id) -> dict:
     row = await _row(db, org_id)
-    total = (row.included + row.purchased) if row else 0
-    return {"balance": total, "on_system": row is not None}
+    inc = row.included if row else 0
+    pur = row.purchased if row else 0
+    # Split the wallet so the UI can show the monthly INCLUDED allotment (F1) apart
+    # from PURCHASED bundle credits. `balance` stays the total for existing callers.
+    return {"balance": inc + pur, "included": inc, "purchased": pur, "on_system": row is not None}
 
 
 def _ledger(org_id, kind, amount, inc_delta, pur_delta, ref=None, note=None):
