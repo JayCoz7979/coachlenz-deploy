@@ -1,0 +1,23 @@
+name: Monthly recap (F3)
+
+# Fires the monthly recap sweep (POST /admin/monthly-recap/run-due). The endpoint
+# emails the recap to every active paid org not already sent one this calendar month,
+# and is idempotent, so a re-run never double-sends. Scheduled workflows run only on
+# the default branch. RECAP_CRON_SECRET is a repo Actions secret.
+on:
+  schedule:
+    - cron: "0 13 1 * *"   # 1st of each month, 13:00 UTC (~7-8am Central)
+  workflow_dispatch: {}     # allow a manual run from the Actions tab
+
+jobs:
+  send-recap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger the monthly recap sweep
+        run: |
+          code=$(curl -s -o /tmp/recap_out -w "%{http_code}" -X POST \
+            "https://coachlenz-backend-production.up.railway.app/admin/monthly-recap/run-due?key=${{ secrets.RECAP_CRON_SECRET }}")
+          echo "HTTP $code"
+          cat /tmp/recap_out; echo
+          # Fail the job (so a broken cron is visible in Actions) if the sweep did not run.
+          test "$code" = "200"
