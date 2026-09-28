@@ -436,7 +436,11 @@ class IngestWorker(BaseWorker):
                 capture_output=True, text=True, timeout=90,
             )
             info = json.loads(probe.stdout)
-            duration = float(info.get("format", {}).get("duration", 0) or 0)
+            from backend.utils.media import duration_from_probe
+            # format.duration is empty on some containers (webm/mkv, some MP4/HLS);
+            # fall back to the stream duration / DURATION tag so we never store 0 for a
+            # perfectly good video.
+            duration = duration_from_probe(info)
             w = h = None
             for s in info.get("streams", []):
                 if s.get("codec_type") == "video" and s.get("width"):
