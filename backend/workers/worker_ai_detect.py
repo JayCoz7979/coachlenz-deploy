@@ -1313,21 +1313,41 @@ class AiDetectWorker(BaseWorker):
                 "cost": self._cost_summary()}
 
     async def _probe_duration(self, url: str, fallback: Optional[int] = None) -> float:
-        """True duration via ffprobe (falls back to the DB value)."""
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", url,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            )
-            out, _ = await asyncio.wait_for(proc.communicate(), timeout=90)
-            dur = float((json.loads(out.decode() or "{}").get("format") or {}).get("duration", 0) or 0)
-            if dur > 0:
-                return dur
-        except Exception as e:
-            logger.warning(f"[ai_detect] ffprobe duration failed: {e}")
+        """True duration via ffprobe (falls back to the DB value).
+
+        Reads duration from format OR the stream/tags (some containers only carry it
+        there), retries once for a transient read on a presigned URL, and, when it
+        truly can't be determined, raises a DIAGNOSABLE error (ffprobe host + stderr)
+        instead of the old opaque message. `-v error` (not quiet) so the reason is
+        captured."""
+        from backend.utils.media import duration_from_probe
+        last_err = ""
+        for attempt in (1, 2):
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "ffprobe", "-v", "error", "-print_format", "json",
+                    "-show_format", "-show_streams", url,
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                )
+                out, err = await asyncio.wait_for(proc.communicate(), timeout=90)
+                last_err = (err.decode(errors="ignore") or "").strip()[-300:]
+                dur = duration_from_probe(json.loads(out.decode() or "{}"))
+                if dur > 0:
+                    return dur
+            except Exception as e:
+                last_err = str(e)[:300]
+                logger.warning(f"[ai_detect] ffprobe duration attempt {attempt} failed: {e}")
         if fallback:
+            logger.warning(f"[ai_detect] ffprobe found no duration; using stored fallback {fallback}s")
             return float(fallback)
-        raise RuntimeError("Could not determine video duration")
+        try:
+            from urllib.parse import urlparse
+            host = urlparse(url).netloc or "?"
+        except Exception:
+            host = "?"
+        raise RuntimeError(
+            f"Could not determine video duration (ffprobe host={host}): "
+            f"{last_err or 'no duration in format or streams'}")
 
     async def _extract_window(self, url: str, start: float, dur: float, win_dir: str, idx: int,
                               frames_per_window: int = FRAMES_PER_WINDOW):
