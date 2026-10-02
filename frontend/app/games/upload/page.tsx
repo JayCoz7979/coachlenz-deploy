@@ -176,16 +176,46 @@ function UploadPageInner() {
     return () => { cancelled = true; clearTimeout(t) }
   }, [videoUrl])
 
+  // Read the video's duration client-side (hidden <video> + object URL) so the
+  // backend has a reliable duration fallback for the detector even if the later
+  // server-side ffprobe-over-R2 read fails (the #1 historical ingest fault).
+  // Best-effort: resolves undefined on any error or after a short timeout so it
+  // never blocks or fails the upload.
+  function readVideoDuration(f: File): Promise<number | undefined> {
+    return new Promise((resolve) => {
+      try {
+        const url = URL.createObjectURL(f)
+        const v = document.createElement('video')
+        let done = false
+        const finish = (d?: number) => {
+          if (done) return
+          done = true
+          try { URL.revokeObjectURL(url) } catch {}
+          resolve(typeof d === 'number' && isFinite(d) && d > 0 ? d : undefined)
+        }
+        v.preload = 'metadata'
+        v.onloadedmetadata = () => finish(v.duration)
+        v.onerror = () => finish(undefined)
+        setTimeout(() => finish(undefined), 8000)
+        v.src = url
+      } catch {
+        resolve(undefined)
+      }
+    })
+  }
+
   async function handleFileUpload(e?: React.FormEvent) {
     e?.preventDefault()
     if (!file) return
     setUploading(true)
     setError('')
     try {
+      const duration_seconds = await readVideoDuration(file)
       const gameRes = await api.post('/games', {
         ...form,
         file_name: file.name,
         file_size_bytes: file.size,
+        duration_seconds,
         team_id: form.team_id || undefined,
         is_home: form.is_home === '' ? undefined : form.is_home === 'true',
       })

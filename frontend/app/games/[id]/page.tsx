@@ -2203,6 +2203,9 @@ export default function GamePage() {
                     <div><div style={{ fontSize: 20, fontWeight: 700, color: '#f8f6f0' }}>{scorecard.side_split?.offense}/{scorecard.side_split?.defense}/{scorecard.side_split?.special_teams}</div><div style={{ fontSize: 10, color: '#7a7a6e' }}>off / def / ST</div></div>
                   )}
                 </div>
+                <div style={{ fontSize: 11, color: '#a8a89a', marginBottom: 10, lineHeight: 1.5 }}>
+                  &ldquo;Need your eyes&rdquo; plays aren&rsquo;t errors. They&rsquo;re reads a single fixed camera couldn&rsquo;t fully confirm (a jersey blurred mid-run, action off the frame edge), so CoachLenz flags them for a quick check instead of guessing. Tighter or multi-angle film lowers this count.
+                </div>
                 <div style={{ fontSize: 11, color: '#a8a89a', marginBottom: 6 }}>Field coverage (how often each detail was read)</div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 6 }}>
                   {Object.entries(scorecard.fill_rates || {}).map(([k, v]: any) => (

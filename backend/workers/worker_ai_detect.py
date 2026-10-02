@@ -1253,9 +1253,44 @@ class AiDetectWorker(BaseWorker):
                             )
                             for p in deduped
                         ]
-                        db.add_all(events)
-                        await db.commit()
-                        total_plays = len(events)
+                        # RELIABILITY (QA-07): one malformed play row must not throw
+                        # away a whole paid run. Insert each play in its own savepoint
+                        # so a rejected row is dropped (and logged) instead of failing
+                        # the entire commit and losing every good play with it. This
+                        # stays INSIDE the outer transaction that already archived and
+                        # cleared the prior run, so the prior run is never lost and
+                        # reports never double-count.
+                        saved = 0
+                        dropped = 0
+                        for ev in events:
+                            try:
+                                async with db.begin_nested():
+                                    db.add(ev)
+                                    await db.flush()
+                                saved += 1
+                            except Exception as row_err:
+                                dropped += 1
+                                try:
+                                    db.expunge(ev)
+                                except Exception:
+                                    pass
+                                logger.warning(f"[ai_detect] game {game_id}: dropped 1 "
+                                               f"unsaveable play ({row_err})")
+                        if saved == 0 and events:
+                            # Nothing from the new run could be saved. Leave the game
+                            # exactly as it was: roll back so the archive + prior-clear
+                            # are undone and the prior run stays ACTIVE. No data moved.
+                            await db.rollback()
+                            logger.error(f"[ai_detect] game {game_id}: 0/{len(events)} "
+                                         f"plays saveable; rolled back, prior run left intact")
+                            total_plays = 0
+                        else:
+                            await db.commit()
+                            total_plays = saved
+                            if dropped:
+                                logger.warning(f"[ai_detect] game {game_id}: committed "
+                                               f"{saved} plays, dropped {dropped} unsaveable "
+                                               f"(prior run preserved in archive)")
 
                 # ── Human escalation trigger (UATP) ────────────────────────
                 if needs_review_count > 0:

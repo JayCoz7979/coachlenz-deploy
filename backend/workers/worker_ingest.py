@@ -101,13 +101,14 @@ class IngestWorker(BaseWorker):
         self._log_resolution(game_id, "upload", width, height)
 
         async with AsyncSessionLocal() as db:
+            # Don't clobber a good stored duration (e.g. the one captured client-side
+            # at upload) with 0 when the ffprobe-over-R2 read fails — the stored value
+            # is the detector's duration fallback, so preserve it on probe failure.
+            vals = dict(status="ready", film_width=width, film_height=height)
+            if duration and duration > 0:
+                vals["duration_seconds"] = int(duration)
             await db.execute(
-                update(Game).where(Game.id == game_id).values(
-                    status="ready",
-                    duration_seconds=int(duration),
-                    film_width=width,
-                    film_height=height,
-                )
+                update(Game).where(Game.id == game_id).values(**vals)
             )
             # Auto-chain detection so an uploaded game analyzes itself end-to-end
             # (upload -> ingest -> ready -> multi-pass detection) with no extra click.
@@ -359,15 +360,14 @@ class IngestWorker(BaseWorker):
                 s3.upload_file(video_file, cfg.R2_BUCKET_NAME, r2_key)
 
         async with AsyncSessionLocal() as db:
+            # Preserve a good stored duration on probe failure (see upload path above);
+            # it is the detector's fallback and must not be overwritten with 0.
+            vals = dict(status="ready", r2_key=r2_key, file_size_bytes=file_size,
+                        film_width=width, film_height=height)
+            if duration and duration > 0:
+                vals["duration_seconds"] = int(duration)
             await db.execute(
-                update(Game).where(Game.id == game_id).values(
-                    status="ready",
-                    r2_key=r2_key,
-                    file_size_bytes=file_size,
-                    duration_seconds=int(duration),
-                    film_width=width,
-                    film_height=height,
-                )
+                update(Game).where(Game.id == game_id).values(**vals)
             )
             await db.commit()
 
