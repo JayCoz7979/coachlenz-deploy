@@ -54,7 +54,7 @@ CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "multipass-v28-preserve-runs"
+CODE_VERSION = "multipass-v29-reliability"
 
 def _serialize_event(ev: "Event") -> dict:
     """Snapshot an Event's data columns into a JSON-safe dict for archiving."""

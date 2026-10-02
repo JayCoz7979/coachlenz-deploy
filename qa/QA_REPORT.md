@@ -155,3 +155,63 @@ Applied to `worker_ai_detect.py` / `worker_ingest.py`:
 - QA-09 — deep-run cost near margin ceiling; monitor.
 - QA-10 — capture + store duration at upload (durable fix for QA-02 residual).
 - QA-11 — live cross-account isolation verification on a dry-run stack.
+
+---
+
+## Run: 2026-10-02 (b) — instinct campaign (Steps A/B/C/I)
+
+Acting on the instinct hardening prompt. Ran the read-only + safe-fix portion; the
+write/local-stack steps are owner-gated (flagged below). No live outbound fired, no
+prod writes, no QA users/data, $0 COGS (verified from logged data only).
+
+### Step A — confirm-still-green (deployed code, read via railway ssh)
+| Fix | Marker | Status |
+|---|---|---|
+| #258 temp-dir cleanup | `ignore_cleanup_errors` present | PASS |
+| #258 event coercion | `_f` helper present (4 refs) | PASS |
+| #258 ffprobe timeout | `-rw_timeout` present (both probes) | PASS |
+| #258 deleted-game guard | `scalar_one_or_none` in persist | PASS |
+| #257 duration | `duration_from_probe` in utils/media.py | PASS |
+| accuracy (#240/#250) | court_zones + low_sample present | PASS |
+| CODE_VERSION | was `multipass-v28`; #258 did NOT bump it | FIXED -> `v29-reliability` this run |
+
+### Step B — re-measure failure rate
+ai_detect jobs now: 67 done / 12 error (unchanged from baseline). Expected: #258
+merged minutes ago, so there are no post-fix runs yet. The fixes prevent recurrence
+going forward; a true drop can only be read once organic runs accumulate (new runs
+cost COGS, so we do not force them). ACTION: re-read this after ~10 real runs.
+
+### Step C — accuracy deep-dive (read-only, decrypt_json, no re-run)
+Game inspected: `b5ed3bbb` "CTN: Elk River at Coon Rapids Boys BB" (265 auto plays,
+~83 min). CRITICAL CONTEXT: this is an **Aug-1 run that PREDATES the accuracy fixes**,
+so it reflects the OLD engine, not current behavior.
+- side offense 159 / defense 99 / transition 7 (plausible balance).
+- **34 timeouts** (phantom; NFHS allows ~10) — the pre-#105 over-tag bug.
+- **0 free throws across 18 fouls** — FT recognition (v27) postdates this run.
+- **mixed result labels "Good" (43) + "Made" (38)** — pre-fix vocabulary; current engine uses "Made"/"Missed" (verified on DHHS).
+- **1 turnover in a full game** — suspicious under-detection; cannot tell if current engine still does this without a post-fix full-game run.
+- zones look correct (wing-3s present and now counted post-#240).
+
+Conclusions:
+1. Current-engine accuracy is verified clean on the post-fix DHHS game (earlier run).
+2. FINDING QA-12 (Medium): **old stored analyses still show pre-fix reads** (phantom timeouts, no FTs, mixed labels). A coach opening an old game sees the worse data. Fix direction: stamp each game with the CODE_VERSION it was analyzed under and surface "analyzed under an older engine, re-run for the current read" when it is behind; or batch-flag pre-v27 games. Do NOT auto re-run (COGS).
+3. FINDING QA-13 (Medium, owner): **turnover recall on the current engine is unverified**; the only full game available is pre-fix. Needs ONE post-fix full-game run (COGS) to measure, ties to the standing full-game benchmark.
+
+### Step I — public share-route 500 (HIGH, FIXED)
+- Location: `backend/routers/reports.py::view_shared_report` (`GET /reports/{report_id}/share/{token}`, public + unauthenticated).
+- Confirmed root cause by reading the route: `report_id: str` is queried against the UUID `TendencyReport.id`; a non-UUID (e.g. `/reports/1/share/x`) fails the uuid cast -> unhandled 500. A valid-but-unknown UUID already returns a clean 404.
+- Fix applied: validate `report_id` as UUID at the top; malformed -> 404 (same as unknown), no 500.
+```python
+try:
+    _uuid.UUID(str(report_id))
+except (ValueError, AttributeError, TypeError):
+    raise HTTPException(status_code=404, detail="This share link is invalid.")
+```
+
+### Owner-gated / not done this run
+- Steps D (client-side duration capture), E (per-row event salvage), F (stale-analyzing self-heal), G (live two-account isolation), H (needs-review copy reframe): queued as the next PR wave. G requires a LOCAL dry-run stack with two QA users (O3) which does not exist in this environment; it cannot be run against prod.
+- O1 prod queries: Step A/B/C above are the read-only results. O4 launch blockers (legal text, Stripe prices) remain Jay's.
+
+### Backlog additions
+- QA-12 — stamp games with analysis CODE_VERSION; surface "re-run for current engine" on pre-v27 games.
+- QA-13 — measure turnover (and overall) recall on a post-fix full-game run (owner/COGS).
