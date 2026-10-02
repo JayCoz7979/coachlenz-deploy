@@ -710,7 +710,10 @@ class AiDetectWorker(BaseWorker):
 
         total_plays = 0
         try:
-            with tempfile.TemporaryDirectory() as frames_dir:
+            # ignore_cleanup_errors: a lingering ffmpeg write can leave a window dir
+            # non-empty at teardown; without this the cleanup raised
+            # "[Errno 39] Directory not empty" and failed an otherwise-successful run.
+            with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as frames_dir:
                 # ── Extract frames ─────────────────────────────────────────
                 # Pre-flight: ensure room for the extracted frames.
                 free_gb = shutil.disk_usage(frames_dir).free / 1e9
@@ -1033,9 +1036,15 @@ class AiDetectWorker(BaseWorker):
                 # ── Persist events ─────────────────────────────────────────
                 if deduped:
                     async with AsyncSessionLocal() as db:
-                        # Load organization_id
+                        # Load organization_id. Guard: the game can be deleted mid-run
+                        # (e.g. a coach deletes a test game while it analyzes); don't
+                        # crash the whole run with "No row was found" — just stop, there
+                        # is nothing to save to.
                         result = await db.execute(select(Game).where(Game.id == game_id))
-                        g = result.scalar_one()
+                        g = result.scalar_one_or_none()
+                        if g is None:
+                            logger.warning(f"[ai_detect] game {game_id} vanished before persist; skipping save")
+                            return {"game_id": game_id, "plays_detected": 0, "skipped": "game_deleted"}
                         org_id = g.organization_id
 
                         # PRESERVE PRIOR RUNS. A coach pays for every run and may want
@@ -1108,6 +1117,16 @@ class AiDetectWorker(BaseWorker):
                             if isinstance(v, str):
                                 return v.strip().lower() in ("true", "yes", "1")
                             return bool(v)
+
+                        def _f(v):
+                            # FLOAT column (time_seconds): coerce or None; never a bool
+                            # or garbage string that asyncpg would reject.
+                            if v is None or isinstance(v, bool):
+                                return None
+                            try:
+                                return float(v)
+                            except (TypeError, ValueError):
+                                return None
 
                         DEEP_FIELDS = (
                             # Football round 1
@@ -1198,9 +1217,12 @@ class AiDetectWorker(BaseWorker):
                             Event(
                                 game_id=game_id,
                                 organization_id=org_id,
-                                event_type=p.get("event_type", "shot") if sport == "basketball" else "play",
+                                # event_type is a NOT NULL string column. Coerce the
+                                # basketball model read (a stray bool/number crashed the
+                                # WHOLE run with asyncpg "invalid input ... expected str").
+                                event_type=(_s(p.get("event_type")) or "shot") if sport == "basketball" else "play",
                                 side=_side(p),
-                                time_seconds=p.get("time_seconds"),
+                                time_seconds=_f(p.get("time_seconds")),
                                 down=_int(p.get("down")),
                                 distance=_int(p.get("distance")),
                                 field_position=_s(p.get("field_position")),
@@ -1325,7 +1347,9 @@ class AiDetectWorker(BaseWorker):
         for attempt in (1, 2):
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    "ffprobe", "-v", "error", "-print_format", "json",
+                    # -rw_timeout bounds a stuck R2 read (microseconds) so a hung probe
+                    # fails fast into the retry/fallback instead of blocking to the 90s wait.
+                    "ffprobe", "-v", "error", "-rw_timeout", "30000000", "-print_format", "json",
                     "-show_format", "-show_streams", url,
                     stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 )
