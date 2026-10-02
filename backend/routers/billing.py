@@ -16,11 +16,28 @@ from backend.config import settings
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
+# Monthly (default) price IDs, keyed by tier. Kept FLAT (tier -> price id) so the
+# existing checkout + tier-coverage tests keep their contract.
 PRICE_MAP = {
     "coach": settings.STRIPE_PRICE_COACH,
     "athletic_dept": settings.STRIPE_PRICE_ATHLETIC_DEPT,
     "district": settings.STRIPE_PRICE_DISTRICT,
 }
+
+# Annual (yearly-interval) price IDs, same keys. Empty until configured -> annual stays
+# dormant (no toggle, annual checkout refused) and goes live the moment these are set.
+ANNUAL_PRICE_MAP = {
+    "coach": settings.STRIPE_PRICE_COACH_ANNUAL,
+    "athletic_dept": settings.STRIPE_PRICE_ATHLETIC_DEPT_ANNUAL,
+    "district": settings.STRIPE_PRICE_DISTRICT_ANNUAL,
+}
+
+
+def annual_available() -> bool:
+    """True once the self-serve tiers have an annual price configured. Until then the
+    annual toggle stays hidden and annual checkout is refused — so the wiring ships
+    dormant and goes live the moment the annual price IDs are set in the env."""
+    return bool(ANNUAL_PRICE_MAP["coach"] and ANNUAL_PRICE_MAP["athletic_dept"])
 
 # Tiers with no self-serve Stripe price — they're sales-assisted. Kept out of
 # PRICE_MAP on purpose; checkout returns a clear "contact sales" message instead of
@@ -33,6 +50,8 @@ class CheckoutRequest(BaseModel):
     tier: str
     success_url: str
     cancel_url: str
+    # "monthly" (default) or "annual". Annual is refused until its price IDs are set.
+    interval: str = "monthly"
 
 @router.post("/checkout")
 async def create_checkout(body: CheckoutRequest, request: Request, user: User = Depends(get_current_user), org: Organization = Depends(get_current_org), db: AsyncSession = Depends(get_db)):
@@ -43,8 +62,16 @@ async def create_checkout(body: CheckoutRequest, request: Request, user: User = 
         )
     if body.tier not in PRICE_MAP:
         raise HTTPException(status_code=400, detail="Invalid tier")
-    price_id = PRICE_MAP[body.tier]
+    interval = (body.interval or "monthly").strip().lower()
+    if interval not in ("monthly", "annual"):
+        raise HTTPException(status_code=400, detail="Invalid billing interval")
+    price_id = (ANNUAL_PRICE_MAP if interval == "annual" else PRICE_MAP).get(body.tier)
     if not price_id:
+        if interval == "annual":
+            raise HTTPException(
+                status_code=400,
+                detail="Annual billing isn't available yet — choose monthly, or email info@cosbyaisolutions.com.",
+            )
         raise HTTPException(status_code=400, detail="Tier not configured")
     # Don't mint a SECOND subscription for an org that already has a live one. A
     # duplicate checkout orphans the first subscription (it keeps billing monthly,
@@ -73,8 +100,8 @@ async def create_checkout(body: CheckoutRequest, request: Request, user: User = 
         mode="subscription",
         success_url=body.success_url,
         cancel_url=body.cancel_url,
-        metadata={"org_id": str(org.id), "tier": body.tier, "client_ip": ip or ""},
-        subscription_data={"metadata": {"org_id": str(org.id), "client_ip": ip or ""}},
+        metadata={"org_id": str(org.id), "tier": body.tier, "interval": interval, "client_ip": ip or ""},
+        subscription_data={"metadata": {"org_id": str(org.id), "interval": interval, "client_ip": ip or ""}},
     )
     db.add(PurchaseIPLog(
         organization_id=org.id, user_id=user.id, ip=ip, user_agent=(ua or "")[:400],
@@ -100,7 +127,61 @@ async def billing_status(org: Organization = Depends(get_current_org)):
         "is_trial": org.is_trial,
         "stripe_status": org.stripe_subscription_status,
         "has_coach_tenure_access": org.has_coach_tenure_access,
+        "billing_interval": org.billing_interval,
+        # Lets the UI show the annual toggle only once annual price IDs are configured.
+        "annual_available": annual_available(),
     }
+
+@router.post("/allotment/run-monthly")
+async def allotment_run_monthly(key: str = "", db: AsyncSession = Depends(get_db)):
+    """Cron-driven monthly reset of the INCLUDED credit allotment for ANNUAL subscribers.
+
+    Monthly subs get this reset from their monthly invoice (invoice.payment_succeeded).
+    An annual sub's invoice fires only once a year, so without this their monthly
+    included credits would refresh yearly instead of each month. Resets `included` only
+    (purchased credits are never touched), idempotent per calendar month via an
+    agent_logs marker so a re-run never double-resets. Guarded by RECAP_CRON_SECRET
+    (?key=); dormant until that secret is set. Monthly subs are intentionally excluded
+    here so their allotment is not reset twice a cycle."""
+    import hmac
+    from datetime import datetime as _dt
+    from backend.services import credits as credit_svc
+    from backend.models.agent_log import AgentLog
+
+    if not (settings.RECAP_CRON_SECRET and key
+            and hmac.compare_digest(key, settings.RECAP_CRON_SECRET)):
+        raise HTTPException(status_code=403, detail="forbidden")
+
+    cycle = _dt.utcnow().strftime("%Y-%m")
+    cycle_marker = AgentLog.detail["cycle"].as_string()
+
+    orgs = (await db.execute(select(Organization).where(
+        Organization.subscription_tier.in_(["coach", "athletic_dept"]),
+        Organization.stripe_subscription_status == "active",
+        Organization.billing_interval == "annual",
+    ))).scalars().all()
+
+    reset, skipped = 0, 0
+    for row in orgs:
+        already = (await db.execute(select(AgentLog.id).where(
+            AgentLog.organization_id == row.id,
+            AgentLog.phase == "allotment_reset",
+            cycle_marker == cycle,
+        ).limit(1))).scalar_one_or_none()
+        if already:
+            skipped += 1
+            continue
+        await credit_svc.grant_monthly_allotment(db, row.id, row.subscription_tier)
+        db.add(AgentLog(
+            organization_id=row.id, agent_name="Billing", agent_role="billing",
+            phase="allotment_reset", action=f"Annual included allotment reset for {cycle}",
+            level="success", detail={"cycle": cycle, "tier": row.subscription_tier},
+        ))
+        await db.commit()
+        reset += 1
+
+    return {"cycle": cycle, "eligible_orgs": len(orgs), "reset": reset, "skipped": skipped}
+
 
 @router.post("/webhook")
 async def stripe_webhook(request: Request, stripe_signature: str = Header(None), db: AsyncSession = Depends(get_db)):
@@ -144,9 +225,13 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None),
                 # (F1) so the base fee delivers credits every cycle. Store the Stripe
                 # customer id too, so renewals (invoice.payment_succeeded) can find the
                 # org to reset the allotment.
+                interval = (md.get("interval") or "monthly").strip().lower()
+                if interval not in ("monthly", "annual"):
+                    interval = "monthly"
                 await db.execute(update(Organization).where(Organization.id == org_id).values(
                     subscription_tier=tier,
                     is_trial=False,
+                    billing_interval=interval,
                     stripe_subscription_id=data.get("subscription"),
                     stripe_subscription_status="active",
                     **({"stripe_customer_id": data.get("customer")} if data.get("customer") else {}),

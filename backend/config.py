@@ -55,6 +55,14 @@ class Settings(BaseSettings):
     STRIPE_PRICE_COACH: str = ""
     STRIPE_PRICE_ATHLETIC_DEPT: str = ""
     STRIPE_PRICE_DISTRICT: str = ""
+    # Annual (yearly-interval) Stripe price IDs. Leave empty and annual billing stays
+    # dormant: the annual toggle never appears and /billing/checkout refuses annual with
+    # a clear message. Set these to the yearly recurring price IDs and annual goes live
+    # with NO code change. Annual grants the same tier + the same monthly included
+    # allotment (reset monthly by the cron sweep, since a yearly invoice only fires once).
+    STRIPE_PRICE_COACH_ANNUAL: str = ""
+    STRIPE_PRICE_ATHLETIC_DEPT_ANNUAL: str = ""
+    STRIPE_PRICE_DISTRICT_ANNUAL: str = ""
 
     # Resend
     RESEND_API_KEY: str = ""
