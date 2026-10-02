@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime, timedelta
 import secrets
+import uuid as _uuid
 from backend.models.base import get_db
 from backend.models.user import User
 from backend.models.organization import Organization
@@ -333,6 +334,13 @@ async def view_shared_report(report_id: str, token: str, db: AsyncSession = Depe
     """Public, no-login, read-only view of a shared report. Gated by the capability
     token and its expiry. No player names appear in a report payload (jersey numbers
     and tendencies only), so nothing identifiable is exposed here."""
+    # This route is public and unauthenticated. A non-UUID report_id (e.g. /reports/1/
+    # share/x) would otherwise fail the uuid cast and surface a bare 500; treat a
+    # malformed id as a missing share link (clean 404), same as an unknown UUID.
+    try:
+        _uuid.UUID(str(report_id))
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(status_code=404, detail="This share link is invalid.")
     result = await db.execute(select(TendencyReport).where(
         TendencyReport.id == report_id, TendencyReport.share_token == token))
     report = result.scalar_one_or_none()
