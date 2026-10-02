@@ -29,6 +29,10 @@ class GameCreate(BaseModel):
     scout_attack_dir_h1: Optional[str] = None
     file_name: str
     file_size_bytes: Optional[int] = None
+    # Client-measured video duration (seconds), read from a hidden <video> element
+    # at file-select. Stored up front so the detector always has a duration fallback
+    # even when the later ffprobe-over-R2 read fails (the #1 historical ingest fault).
+    duration_seconds: Optional[float] = None
 
 @router.get("")
 async def list_games(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
@@ -66,6 +70,11 @@ async def create_game(body: GameCreate, user: User = Depends(get_current_user), 
         scout_attack_dir_h1=body.scout_attack_dir_h1,
         r2_key=key,
         file_size_bytes=body.file_size_bytes,
+        # Persist the client-measured duration immediately as the detector's fallback.
+        # ingest will overwrite it with the authoritative ffprobe value when that read
+        # succeeds, and keep this value when it fails (never clobbered with 0).
+        duration_seconds=(int(body.duration_seconds)
+                          if body.duration_seconds and body.duration_seconds > 0 else None),
         status="pending",
         is_trial_game=is_trial_active(org),
     )

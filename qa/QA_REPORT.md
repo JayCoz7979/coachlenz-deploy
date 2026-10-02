@@ -215,3 +215,22 @@ except (ValueError, AttributeError, TypeError):
 ### Backlog additions
 - QA-12 — stamp games with analysis CODE_VERSION; surface "re-run for current engine" on pre-v27 games.
 - QA-13 — measure turnover (and overall) recall on a post-fix full-game run (owner/COGS).
+
+---
+
+## Run — 2026-10-02 (wave 2, instinct detection hardening) — Opus
+
+Lens: grumpy 40-year consultant. Focus: AI video detection RELIABILITY (the #1 trust-maker). Prod read-only; no live outbound; no COGS re-runs. Shipped on PR #260 (base main), CI green (unit + integration + lint + frontend build). Hard rule honored: a coach's prior runs are never auto-deleted.
+
+### Shipped
+- **QA-07 (High) — per-row insert salvage.** `worker_ai_detect.py` persist: each play inserts in its own SAVEPOINT (`begin_nested`). One malformed row is dropped+logged instead of failing the whole commit and losing every good play. Stays inside the transaction that already archived+cleared the prior run (run-preservation #239), so a prior run is never lost; if the new run saves nothing it rolls back and leaves the prior run ACTIVE and untouched.
+- **QA-10 (High) — durable video duration.** Browser measures duration on file-select (hidden `<video>`, timeout-guarded) and sends it; `create_game` persists it as the detector fallback up front; ingest no longer clobbers a good stored duration with 0 on probe failure. No migration (`games.duration_seconds` already exists + already used as the detect fallback). Kills the #1 historical "Could not determine video duration" fault.
+- **QA-08 (Medium) — single-camera honesty.** Game coverage scorecard reframes the "need your eyes" count as an honest single-camera limit, not an error. Copy only.
+
+### Confirmed already-handled (no redundant code)
+- **QA-05** stale `status=analyzing` self-heal: status endpoint resets to ready when the job is inactive; trigger cleans orphaned jobs and allows the re-run.
+- **Run preservation (#239)** re-verified intact before touching the persist path.
+
+### Not in scope this run (owner-gated / COGS)
+- QA-11 live two-account tenant isolation (needs a local dry-run stack with outbound keys unset).
+- QA-13 full-game recall re-measure on the current engine (real Anthropic COGS — owner decision).
