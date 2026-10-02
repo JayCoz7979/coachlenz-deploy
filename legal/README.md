@@ -23,7 +23,7 @@
 
 - **Provider entity:** Cosby AI Solutions LLC ("CoachLenz" is the product). Founder & CEO: Jason L. Cosby. Governing law: State of Alabama.
 - **Contacts:** privacy@coachlenz.com (privacy/COPPA), legal@coachlenz.com (legal/DPA).
-- **Sub-processors:** Supabase (Postgres database + hosting), Cloudflare R2 (film storage), Anthropic (AI film analysis), Stripe (payments), Resend (transactional email), Twilio (phone verification), Railway (application hosting), Sentry (error monitoring).
+- **Sub-processors:** Railway (application hosting + PostgreSQL database), Cloudflare R2 (film storage), Anthropic (AI film analysis), Stripe (payments), Resend (transactional email), Sentry (error monitoring). NOTE (corrected 2026-10-02): the app database is Railway PostgreSQL, NOT Supabase; SMS/phone verification (Twilio) was removed, so Twilio is not an active sub-processor. Re-add Twilio only if phone verification is turned back on.
 - **Security posture (as implemented):** TLS in transit; film encrypted at rest in Cloudflare R2 (AES-256); sensitive stored fields additionally encrypted with authenticated symmetric encryption (Fernet, AES-128-CBC + HMAC); SSRF-guarded URL fetching; rate-limited auth; default-deny platform-admin gate; refresh-token revocation on logout/password change; documented credential-rotation schedule.
 - **EAGLE-EYE:** groups plays by jersey number and general appearance, confirmed by a coach. It does **not** capture faceprints or biometric identifiers.
 - **AI training:** student data is not used to train AI models; the AI sub-processor (Anthropic) does not train on API data by default.

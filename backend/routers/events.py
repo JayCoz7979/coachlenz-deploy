@@ -9,6 +9,7 @@ from backend.models.event import Event
 from backend.models.game import Game
 from backend.models.organization import Organization
 from backend.services.auth import get_current_user
+from backend.services.legal import assert_student_consent
 from backend.services import learning_loop
 from backend.services.learning_loop import CORRECTABLE_LABEL_FIELDS, EXTRA_DATA_LABEL_FIELDS
 from backend.services import play_enrich
@@ -76,6 +77,11 @@ async def create_event(body: EventCreate, user: User = Depends(get_current_user)
     game = await db.execute(select(Game).where(Game.id == body.game_id, Game.organization_id == user.organization_id))
     if not game.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Game not found")
+    # COPPA/FERPA: a manually tagged play can carry a student-athlete jersey, so require
+    # the per-org student-data attestation here too. New orgs already attested at game
+    # creation (this is a no-op pass-through for them); this also closes the legacy edge
+    # where a game predates consent enforcement.
+    await assert_student_consent(db, user.organization_id)
     event = Event(organization_id=user.organization_id, **body.dict())
     db.add(event)
     await db.commit()
@@ -96,6 +102,8 @@ async def bulk_create_events(events: list[EventCreate], user: User = Depends(get
     )).scalars().all()}
     if gids - owned:
         raise HTTPException(status_code=404, detail="Game not found")
+    # COPPA/FERPA student-data gate (see create_event); no-op once the org has attested.
+    await assert_student_consent(db, user.organization_id)
     objs = [Event(organization_id=user.organization_id, **e.dict()) for e in events]
     db.add_all(objs)
     await db.commit()

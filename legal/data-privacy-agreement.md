@@ -31,7 +31,7 @@ CoachLenz retains student data for the active contract plus 90 days, and upon te
 CoachLenz notifies the Educational Agency of any breach or unauthorized release of student PII **without unreasonable delay and no later than 7 calendar days after discovery**, in writing, and cooperates with the Agency's legal notification obligations (including NY Education Law §2-d / 8 NYCRR Part 121 where applicable).
 
 ## 9. Sub-processors
-CoachLenz uses the sub-processors listed in the Privacy Policy (Supabase, Cloudflare R2, Anthropic, Stripe, Resend, Twilio, Railway, Sentry) and remains responsible for their compliance with this DPA. CoachLenz will give the Agency notice of a new sub-processor that will process student data and an opportunity to object.
+CoachLenz uses the sub-processors listed in the Privacy Policy (Railway for application and PostgreSQL database hosting, Cloudflare R2 for film storage, Anthropic for AI film analysis, Stripe for payments, Resend for transactional email, and Sentry for error monitoring) and remains responsible for their compliance with this DPA. CoachLenz will give the Agency notice of a new sub-processor that will process student data and an opportunity to object.
 
 ## 10. NY Education Law §2-d — Appendix / Supplemental Information
 Where the Educational Agency is a New York agency, the CoachLenz Parents' Bill of Rights and the §2-d supplemental information (exclusive purposes for data use; sub-processor oversight; contract term and post-term data handling; challenge of data accuracy; storage and encryption) are incorporated by reference and provided at `parents-bill-of-rights.md`.

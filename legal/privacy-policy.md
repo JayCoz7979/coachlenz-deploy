@@ -7,7 +7,7 @@
 This policy explains what CoachLenz collects, how we use it, and your rights. CoachLenz is an AI sports-film analysis service used by coaches, schools, and athletic programs.
 
 ## 1. Information we collect
-- **Account information:** name, email, phone (for verification), organization, role, and password (stored only as a bcrypt hash).
+- **Account information:** name, email, organization, role, password (stored only as a bcrypt hash), and, if you choose to provide one, a phone number. Email is our account-verification method.
 - **Film and content you upload:** game/practice video and any titles, tags, or notes you add.
 - **Analysis output:** the play breakdowns, tendencies, reports, and grades our system produces from your film.
 - **Usage and telemetry:** log data, device/browser information, and feature usage, used to operate and improve the Service and detect abuse.
@@ -35,13 +35,11 @@ We use TLS in transit; film is encrypted at rest in Cloudflare R2 (AES-256); sen
 ## 7. Third-party sub-processors
 | Sub-processor | Purpose | Data category |
 |---|---|---|
-| Supabase | Database & application hosting | Account data, analysis metadata |
+| Railway | Application & database hosting (PostgreSQL) | Account data, student-athlete records, analysis metadata |
 | Cloudflare R2 | Film storage & delivery | Uploaded film |
 | Anthropic | AI film analysis | Frames/segments of film during analysis |
 | Stripe | Payment processing | Billing contact, subscription status (no full card number) |
 | Resend | Transactional email | Name, email |
-| Twilio | Phone verification | Phone number |
-| Railway | Application hosting | All service data in transit through the app |
 | Sentry | Error monitoring | Diagnostic/log data (no student PII in logs) |
 
 ## 8. Your choices and rights (incl. GDPR)
