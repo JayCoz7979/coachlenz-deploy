@@ -431,7 +431,7 @@ class IngestWorker(BaseWorker):
         try:
             import json
             probe = subprocess.run(
-                ["ffprobe", "-v", "quiet", "-print_format", "json",
+                ["ffprobe", "-v", "quiet", "-rw_timeout", "30000000", "-print_format", "json",
                  "-show_format", "-show_streams", path_or_url],
                 capture_output=True, text=True, timeout=90,
             )
