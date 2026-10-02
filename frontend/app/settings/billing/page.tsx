@@ -11,6 +11,7 @@ const TIERS = [
     key: 'coach',
     name: 'Coach',
     price: '$9.99',
+    annualPrice: '$99',
     annual: '$99/yr (2 months free)',
     desc: 'One head coach, add assistant coaches',
     features: ['Head coach + assistant seats', 'Assistants: view-only or analysis access', 'Your own credit wallet', 'Free Live Game Logger', 'Buy analysis credits as you need them'],
@@ -19,6 +20,7 @@ const TIERS = [
     key: 'athletic_dept',
     name: 'Athletic Dept',
     price: '$29.99',
+    annualPrice: '$299',
     annual: '$299/yr (2 months free)',
     desc: 'The whole school, all sports, one subscription',
     features: ['All sports, unlimited coach seats', 'Shared school-wide credit pool', 'Per-sport and per-coach credit caps', 'AD dashboard controls', 'Free Live Game Logger'],
@@ -33,15 +35,19 @@ export default function BillingPage() {
   const router = useRouter()
   const [loading, setLoading] = useState('')
   const [credits, setCredits] = useState<any>(null)
+  const [annualAvailable, setAnnualAvailable] = useState(false)
+  const [interval, setBillingInterval] = useState<'monthly' | 'annual'>('monthly')
 
   useEffect(() => { fetchMe() }, [])
   useEffect(() => { if (!isLoading && !user) router.push('/login') }, [isLoading, user])
   useEffect(() => { if (user) api.get('/credits').then(r => setCredits(r.data)).catch(() => {}) }, [user])
+  // Only surface the annual toggle once annual price IDs are configured server-side.
+  useEffect(() => { if (user) api.get('/billing/status').then(r => setAnnualAvailable(!!r.data?.annual_available)).catch(() => {}) }, [user])
 
   async function checkout(tier: string) {
     setLoading(tier)
     try {
-      const res = await api.post('/billing/checkout', { tier, success_url: `${window.location.origin}/dashboard`, cancel_url: `${window.location.origin}/settings/billing` })
+      const res = await api.post('/billing/checkout', { tier, interval, success_url: `${window.location.origin}/dashboard`, cancel_url: `${window.location.origin}/settings/billing` })
       window.location.href = res.data.checkout_url
     } catch { setLoading('') }
   }
@@ -89,6 +95,25 @@ export default function BillingPage() {
             )}
           </div>
 
+          {/* Monthly / annual toggle — only shown once annual pricing is configured. */}
+          {annualAvailable && (
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
+              <div style={{ display: 'inline-flex', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10, padding: 3, gap: 3 }}>
+                {(['monthly', 'annual'] as const).map(opt => (
+                  <button key={opt} onClick={() => setBillingInterval(opt)} style={{
+                    padding: '7px 16px', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                    fontFamily: 'var(--font-syne,sans-serif)', border: 'none',
+                    background: interval === opt ? 'var(--green)' : 'transparent',
+                    color: interval === opt ? '#fff' : 'var(--text2)',
+                  }}>
+                    {opt === 'monthly' ? 'Monthly' : 'Annual'}
+                    {opt === 'annual' && <span style={{ fontSize: 10, fontWeight: 600, color: interval === opt ? 'rgba(255,255,255,0.85)' : 'var(--green3)', marginLeft: 6 }}>2 months free</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Subscription tiers (access) */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
             {TIERS.map(tier => {
@@ -103,9 +128,12 @@ export default function BillingPage() {
                   {(tier as any).featured && !isCurrent && <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--gold)', fontFamily: 'var(--font-syne,sans-serif)', textTransform: 'uppercase' as const, letterSpacing: '0.08em', marginBottom: 6 }}>Scales your whole school</div>}
                   <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text2)', textTransform: 'uppercase' as const, letterSpacing: '0.08em', marginBottom: 7, fontFamily: 'var(--font-syne,sans-serif)' }}>{tier.name}</div>
                   <div style={{ fontFamily: 'var(--font-syne,sans-serif)', fontSize: 30, fontWeight: 800, color: 'var(--text)', marginBottom: 2 }}>
-                    {tier.price}<span style={{ fontSize: 13, fontWeight: 400, color: 'var(--text2)' }}>/mo</span>
+                    {interval === 'annual' ? (tier as any).annualPrice : tier.price}
+                    <span style={{ fontSize: 13, fontWeight: 400, color: 'var(--text2)' }}>{interval === 'annual' ? '/yr' : '/mo'}</span>
                   </div>
-                  <div style={{ fontSize: 10, color: 'var(--green3)', marginBottom: 3, fontFamily: 'var(--font-dm-mono,monospace)' }}>{tier.annual}</div>
+                  <div style={{ fontSize: 10, color: 'var(--green3)', marginBottom: 3, fontFamily: 'var(--font-dm-mono,monospace)' }}>
+                    {interval === 'annual' ? `2 months free vs ${tier.price}/mo` : tier.annual}
+                  </div>
                   <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 12, paddingBottom: 12, borderBottom: '1px solid var(--border)' }}>{tier.desc}</div>
                   <ul style={{ listStyle: 'none', marginBottom: 16 }}>
                     {tier.features.map(f => (
@@ -172,8 +200,10 @@ export default function BillingPage() {
           )}
 
           <p style={{ fontSize: 11, color: 'var(--text3)', textAlign: 'center' }}>
-            Purchased credits are separate, never expire while your account is active, and stay yours if you cancel (only the monthly included allotment resets). The Live Game Logger is always free.{' '}
-            <a href={`mailto:${SALES_EMAIL}`} style={{ color: 'var(--green3)' }}>Contact us</a> for annual billing.
+            Purchased credits are separate, never expire while your account is active, and stay yours if you cancel (only the monthly included allotment resets). The Live Game Logger is always free.
+            {!annualAvailable && (
+              <>{' '}<a href={`mailto:${SALES_EMAIL}`} style={{ color: 'var(--green3)' }}>Contact us</a> for annual billing.</>
+            )}
           </p>
         </div>
       </main>

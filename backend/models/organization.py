@@ -17,6 +17,11 @@ class Organization(Base):
     stripe_customer_id = Column(String, unique=True)
     stripe_subscription_id = Column(String, unique=True)
     stripe_subscription_status = Column(String)
+    # Billing cadence of the active subscription: "monthly" (default) or "annual".
+    # Set at checkout + confirmed from the Stripe metadata on checkout.session.completed.
+    # Drives the monthly included-allotment reset for annual subs (whose invoice, and
+    # thus the invoice-driven reset, only fires once a year).
+    billing_interval = Column(String, nullable=False, default="monthly", server_default=text("'monthly'"))
     has_coach_tenure_access = Column(Boolean, nullable=False, default=False)
     admin_level = Column(String)
     # Sport entitlement lock (set during onboarding, enforced everywhere film is
