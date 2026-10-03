@@ -6,7 +6,7 @@ import { useAuth } from '@/lib/auth'
 import logo from '../../public/coachlenz-logo.png'
 import {
   LayoutDashboard, Users, Film, FileText, Settings,
-  Share2, ShieldCheck, LogOut, Upload, Link2, Target, ClipboardList, Award, UserPlus, BarChart3, UserCircle,
+  Share2, ShieldCheck, LogOut, Upload, Link2, Target, ClipboardList, Award, UserPlus, BarChart3, UserCircle, ShieldAlert,
 } from 'lucide-react'
 
 const NAV_SECTIONS = [
@@ -43,6 +43,7 @@ const NAV_SECTIONS = [
       // it is admin-only: reachable for admins, never shown to coaches.
       { href: '/coaches', label: 'Coach Tenure', icon: UserCircle, requiresAdmin: true },
       { href: '/admin', label: 'Admin', icon: ShieldCheck, requiresAdmin: true },
+      { href: '/admin/privacy-requests', label: 'Privacy Requests', icon: ShieldAlert, requiresAdmin: true },
       { href: '/settings', label: 'Settings', icon: Settings },
     ],
   },
