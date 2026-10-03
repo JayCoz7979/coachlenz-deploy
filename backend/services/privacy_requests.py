@@ -26,16 +26,49 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.models.roster import RosterPlayer
 from backend.models.game import Game
 from backend.models.event import Event
+from backend.models.analysis_run import AnalysisRunArchive
+
+
+def _scrub_play_dict(play: dict, jersey: str) -> tuple[dict, bool]:
+    """Remove `jersey` as an identifier from one serialized play (used for archived run
+    snapshots). Returns (new_play, changed)."""
+    d = dict(play)
+    changed = False
+    if str(d.get("player")) == jersey:
+        d["player"] = None
+        changed = True
+    ed = dict(d.get("extra_data") or {})
+    ed_changed = False
+    for k in ("primary_player_jersey", "ball_carrier_jersey"):
+        if str(ed.get(k)) == jersey:
+            ed[k] = None
+            ed_changed = True
+    pls = ed.get("players")
+    if isinstance(pls, list):
+        filtered = [pp for pp in pls if str((pp or {}).get("jersey")) != jersey]
+        if len(filtered) != len(pls):
+            ed["players"] = filtered
+            ed_changed = True
+    if ed_changed:
+        d["extra_data"] = ed
+        changed = True
+    return d, changed
 
 
 async def execute_deletion(
-    db: AsyncSession, organization_id, roster_player_ids: list[str], game_ids: list[str] | None = None
+    db: AsyncSession, organization_id, roster_player_ids: list[str],
+    game_ids: list[str] | None = None, dry_run: bool = False
 ) -> dict:
     """Run a scoped student-data deletion. Returns a summary used for the certificate.
     Caller commits. Everything is org-scoped so a request can only touch the resolved
-    org's data."""
+    org's data.
+
+    dry_run=True computes the SAME summary WITHOUT deleting, mutating, or flushing
+    anything — it backs the admin preview so an irreversible deletion is confirmed
+    against exact numbers before it runs."""
     players_deleted = 0
     events_scrubbed = 0
+    archive_plays_scrubbed = 0
     games_deleted = 0
     per_player = []
 
@@ -52,13 +85,18 @@ async def execute_deletion(
         gids = [g for g in (await db.execute(select(Game.id).where(
             Game.team_id == p.team_id, Game.organization_id == organization_id))).scalars().all()]
         scrubbed_here = 0
+        archive_here = 0
         if gids:
+            # Live events carrying this jersey.
             evs = (await db.execute(select(Event).where(
                 Event.game_id.in_(gids),
                 Event.organization_id == organization_id,
                 Event.player == jersey,
             ))).scalars().all()
             for e in evs:
+                scrubbed_here += 1
+                if dry_run:
+                    continue
                 e.player = None
                 ed = dict(e.extra_data or {})
                 for k in ("primary_player_jersey", "ball_carrier_jersey"):
@@ -68,11 +106,35 @@ async def execute_deletion(
                 if isinstance(pl, list):
                     ed["players"] = [pp for pp in pl if str((pp or {}).get("jersey")) != jersey]
                 e.extra_data = ed  # reassign so SQLAlchemy flags the JSONB change
-                scrubbed_here += 1
+
+            # ARCHIVED run snapshots (analysis_run_archives.plays) also carry the jersey
+            # in their JSON — scrub them too, or the erasure is incomplete.
+            archives = (await db.execute(select(AnalysisRunArchive).where(
+                AnalysisRunArchive.game_id.in_(gids),
+                AnalysisRunArchive.organization_id == organization_id,
+            ))).scalars().all()
+            for a in archives:
+                new_plays = []
+                changed = False
+                for pl in (a.plays or []):
+                    if isinstance(pl, dict):
+                        np, ch = _scrub_play_dict(pl, jersey)
+                        if ch:
+                            changed = True
+                            archive_here += 1
+                        new_plays.append(np)
+                    else:
+                        new_plays.append(pl)
+                if changed and not dry_run:
+                    a.plays = new_plays  # reassign so SQLAlchemy flags the JSONB change
+
         events_scrubbed += scrubbed_here
-        await db.delete(p)
+        archive_plays_scrubbed += archive_here
+        if not dry_run:
+            await db.delete(p)
         players_deleted += 1
-        per_player.append({"name": name or "(unnamed)", "jersey": jersey, "plays_deidentified": scrubbed_here})
+        per_player.append({"name": name or "(unnamed)", "jersey": jersey,
+                           "plays_deidentified": scrubbed_here, "archive_plays_deidentified": archive_here})
 
     # School-authorized full film deletion (admin-specified game ids only).
     for gid in (game_ids or []):
@@ -81,21 +143,26 @@ async def execute_deletion(
         g = res.scalar_one_or_none()
         if g is None:
             continue
+        games_deleted += 1
+        if dry_run:
+            continue
         if g.r2_key:
             try:
                 from backend.services.r2 import delete_object
                 delete_object(g.r2_key)
             except Exception:
                 pass
-        await db.delete(g)  # Events cascade (FK ON DELETE CASCADE)
-        games_deleted += 1
+        await db.delete(g)  # Events + archives cascade (FK ON DELETE CASCADE)
 
-    await db.flush()
+    if not dry_run:
+        await db.flush()
     return {
         "players_deleted": players_deleted,
         "events_scrubbed": events_scrubbed,
+        "archive_plays_scrubbed": archive_plays_scrubbed,
         "games_deleted": games_deleted,
         "per_player": per_player,
+        "dry_run": dry_run,
     }
 
 
@@ -117,6 +184,9 @@ def render_certificate(*, certificate_id: str, request, summary: dict) -> str:
     if summary.get("events_scrubbed"):
         cats.append(f"Player identifiers removed from film analysis (jersey de-identified on "
                     f"<strong>{summary['events_scrubbed']}</strong> plays; the plays were retained, the student is no longer identified)")
+    if summary.get("archive_plays_scrubbed"):
+        cats.append(f"Player identifiers removed from archived analysis snapshots: "
+                    f"<strong>{summary['archive_plays_scrubbed']}</strong> plays")
     if summary.get("games_deleted"):
         cats.append(f"Game film deleted (school-authorized): <strong>{summary['games_deleted']}</strong>")
     if not cats:

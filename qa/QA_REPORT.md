@@ -253,3 +253,25 @@ Lens: grumpy 40-year consultant. Scope: the last compliance launch item — COPP
 ### Open (owner / counsel / follow-up build)
 - Attorney review of the minors'-data terms + venue/effective-date `[FILL-IN]`s, then the one-step version bump (docs/legal/legal-readiness-2026-10-02.md).
 - Public routes for full Privacy/DPA/Parents' Bill of Rights (NY §2-d) + a parent delete-request flow — recommended before onboarding real schools.
+
+---
+
+## Run — 2026-10-02 (COPPA deletion flow, instinct lens) — Opus
+
+Lens: grumpy 40-year consultant. Target: the NEW parent data access/deletion flow (PR #264) — public intake + DESTRUCTIVE, irreversible deletion of a minor's data. Adversarial code audit against the real data model; prod verified READ-ONLY (route 405 / admin 403 / status 404). Fixes shipped on a branch + PR.
+
+### Findings + fixes
+- **QA-D1 (HIGH) — incomplete erasure.** `execute_deletion` scrubbed only LIVE events; the child's jersey still lived in `analysis_run_archives.plays` (JSON snapshots of prior runs). A parent "delete everything" that leaves the kid in archived snapshots is a COPPA failure. FIX: the deletion now also scrubs the jersey from archived run snapshots for that team's games (reassigns the JSONB so the change persists); whole-game deletion already cascades archives. Certificate + audit report the archived-plays count. Test proves archived snapshots are de-identified and teammates untouched.
+- **QA-D2 (MED) — no preview before an irreversible action.** Fulfill deleted immediately on pasted IDs (fat-finger = wrong irreversible deletion + a certificate emailed). FIX: `POST /admin/privacy-requests/{id}/preview` runs `execute_deletion(dry_run=True)` — computes exact counts/players WITHOUT mutating, deleting, or flushing (then rolls back defensively). The admin UI now REQUIRES a Preview before the Delete button enables. Test proves dry-run writes nothing.
+- **QA-D3 (MED) — verification evidence not captured.** Verify recorded only THAT an admin clicked, not HOW identity was confirmed. FIX: `verification_method` is now required on verify (400 if blank), stamped into the audit log with the admin's email; UI gates the Verify button on it.
+- **QA-D4 (LOW) — unbounded public intake fields.** FIX: Pydantic `max_length` caps on every intake field so the public form can't bloat storage.
+
+### Confirmed safe (no change needed)
+- Admin endpoints are `require_admin` (prod 403 verified); public status is `secrets.compare_digest` token-gated; malformed request_id → 404 (not 500).
+- Deletion is ORG-SCOPED on every query — a roster_player/game id from another org is a no-op, not a cross-tenant delete. Season/team scoping means a jersey reused on another team is not touched.
+- HTML-injection closed in the prior commit (every requester field `html.escape`d into emails/cert; test).
+- Intake rate-limited 5/min.
+
+### Open / honest gaps (documented, not blocking)
+- Identity verification remains human-gated (admin confirms with the school). That is defensible for a school-consent product and now has a recorded method, but there is no automated proof the requester is the parent — a known, accepted limitation to revisit with counsel.
+- Access-request data compilation is still admin/out-of-band (no automated export).

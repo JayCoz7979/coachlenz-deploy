@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,14 +32,15 @@ _VALID_REL = {"parent", "guardian", "eligible_student", "school_official", "othe
 
 
 class PrivacyRequestIn(BaseModel):
-    request_type: str
-    requester_name: str
+    # Length caps so a public, unauthenticated form can't be used to bloat storage.
+    request_type: str = Field(max_length=20)
+    requester_name: str = Field(max_length=200)
     requester_email: EmailStr
-    relationship: str
-    student_name: str
-    school_or_org: Optional[str] = None
-    student_details: Optional[str] = None
-    details: Optional[str] = None
+    relationship: str = Field(max_length=40)
+    student_name: str = Field(max_length=200)
+    school_or_org: Optional[str] = Field(default=None, max_length=300)
+    student_details: Optional[str] = Field(default=None, max_length=1000)
+    details: Optional[str] = Field(default=None, max_length=4000)
 
 
 @router.post("/privacy/requests")
@@ -132,7 +133,10 @@ async def list_requests(status: Optional[str] = None, user: User = Depends(requi
 
 class VerifyIn(BaseModel):
     organization_id: Optional[str] = None
-    note: Optional[str] = None
+    # How the requester's authority over this student's data was confirmed (e.g.
+    # "confirmed parent with Lincoln HS AD by phone 10/2"). Required: it is the audit
+    # record of HOW identity was verified, not just THAT an admin clicked verify.
+    verification_method: str = Field(max_length=1000)
 
 
 @router.post("/admin/privacy-requests/{request_id}/verify")
@@ -140,6 +144,8 @@ async def verify_request(request_id: str, body: VerifyIn, user: User = Depends(r
                          db: AsyncSession = Depends(get_db)):
     """Mark the requester's identity/authority verified (coordinated with the school) and
     attach the org the data lives in. Required before fulfillment."""
+    if not (body.verification_method or "").strip():
+        raise HTTPException(status_code=400, detail="Record how the requester was verified.")
     pr = (await db.execute(select(PrivacyRequest).where(PrivacyRequest.id == request_id))).scalar_one_or_none()
     if not pr:
         raise HTTPException(status_code=404, detail="Request not found")
@@ -149,8 +155,8 @@ async def verify_request(request_id: str, body: VerifyIn, user: User = Depends(r
         pr.organization_id = body.organization_id
     pr.status = "verified"
     pr.verified_at = datetime.utcnow()
-    if body.note:
-        pr.resolution_note = ((pr.resolution_note or "") + f"\n[verify] {body.note}").strip()
+    pr.resolution_note = ((pr.resolution_note or "") +
+                          f"\n[verify by {user.email}] {body.verification_method.strip()}").strip()
     await db.commit()
     return {"ok": True, "status": pr.status}
 
@@ -159,6 +165,26 @@ class FulfillIn(BaseModel):
     roster_player_ids: list[str] = []
     game_ids: list[str] = []
     note: Optional[str] = None
+
+
+@router.post("/admin/privacy-requests/{request_id}/preview")
+async def preview_fulfillment(request_id: str, body: FulfillIn, user: User = Depends(require_admin),
+                              db: AsyncSession = Depends(get_db)):
+    """DRY RUN: show exactly what a deletion WOULD remove (players, plays, archived-snapshot
+    plays, games) without changing anything — so an irreversible erasure is confirmed
+    against real numbers before it runs."""
+    pr = (await db.execute(select(PrivacyRequest).where(PrivacyRequest.id == request_id))).scalar_one_or_none()
+    if not pr:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if pr.request_type != "deletion":
+        raise HTTPException(status_code=400, detail="Preview applies to deletion requests only")
+    if not pr.organization_id:
+        raise HTTPException(status_code=400, detail="Resolve the org (verify step) before previewing")
+    summary = await svc.execute_deletion(
+        db, pr.organization_id, body.roster_player_ids, body.game_ids, dry_run=True)
+    # Defensive: a dry run must leave no pending changes.
+    await db.rollback()
+    return {"ok": True, "preview": summary}
 
 
 @router.post("/admin/privacy-requests/{request_id}/fulfill")
@@ -184,6 +210,7 @@ async def fulfill_request(request_id: str, body: FulfillIn, user: User = Depends
         pr.completed_at = datetime.utcnow()
         note = (f"deleted players={summary['players_deleted']}, "
                 f"plays de-identified={summary['events_scrubbed']}, "
+                f"archived-snapshot plays de-identified={summary.get('archive_plays_scrubbed', 0)}, "
                 f"games deleted={summary['games_deleted']}")
         if body.note:
             note += f" | {body.note}"

@@ -24,6 +24,7 @@ export default function AdminPrivacyRequestsPage() {
   const [players, setPlayers] = useState<Record<string, string>>({})
   const [games, setGames] = useState<Record<string, string>>({})
   const [note, setNote] = useState<Record<string, string>>({})
+  const [preview, setPreview] = useState<Record<string, any>>({})
 
   useEffect(() => { fetchMe() }, [])
   useEffect(() => {
@@ -46,7 +47,11 @@ export default function AdminPrivacyRequestsPage() {
   }
 
   const verify = (r: Req) => act(r.id, () =>
-    api.post(`/admin/privacy-requests/${r.id}/verify`, { organization_id: orgId[r.id] || undefined, note: note[r.id] || undefined }))
+    api.post(`/admin/privacy-requests/${r.id}/verify`, { organization_id: orgId[r.id] || undefined, verification_method: note[r.id] || '' }))
+  const previewReq = (r: Req) => act(r.id, async () => {
+    const res = await api.post(`/admin/privacy-requests/${r.id}/preview`, { roster_player_ids: csv(players[r.id]), game_ids: csv(games[r.id]) })
+    setPreview(s => ({ ...s, [r.id]: res.data.preview }))
+  })
   const fulfill = (r: Req) => act(r.id, () =>
     api.post(`/admin/privacy-requests/${r.id}/fulfill`, { roster_player_ids: csv(players[r.id]), game_ids: csv(games[r.id]), note: note[r.id] || undefined }))
   const reject = (r: Req) => act(r.id, () =>
@@ -97,10 +102,10 @@ export default function AdminPrivacyRequestsPage() {
                   <div className="space-y-2">
                     <input className="input" placeholder="Organization ID the data lives in"
                       value={orgId[r.id] || ''} onChange={e => setOrgId(s => ({ ...s, [r.id]: e.target.value }))} />
-                    <input className="input" placeholder="Note (optional)"
+                    <input className="input" placeholder="How did you verify the requester? (required — e.g. confirmed parent with the AD by phone)"
                       value={note[r.id] || ''} onChange={e => setNote(s => ({ ...s, [r.id]: e.target.value }))} />
                     <div className="flex gap-2">
-                      <button disabled={busy === r.id} onClick={() => verify(r)} className="btn-primary">Verify</button>
+                      <button disabled={busy === r.id || !(note[r.id] || '').trim()} onClick={() => verify(r)} className="btn-primary">Verify</button>
                       <button disabled={busy === r.id} onClick={() => reject(r)} className="px-3 py-2 rounded border border-red-800 text-red-400 text-sm">Reject</button>
                     </div>
                   </div>
@@ -114,16 +119,31 @@ export default function AdminPrivacyRequestsPage() {
                           value={players[r.id] || ''} onChange={e => setPlayers(s => ({ ...s, [r.id]: e.target.value }))} />
                         <input className="input" placeholder="Game IDs to delete entirely — school-authorized (comma-separated)"
                           value={games[r.id] || ''} onChange={e => setGames(s => ({ ...s, [r.id]: e.target.value }))} />
+                        {preview[r.id] && (
+                          <div className="text-xs bg-gray-800/60 border border-gray-700 rounded p-2 text-gray-300">
+                            <div className="font-semibold text-gray-200 mb-1">Preview — this will remove:</div>
+                            <div>Players: {preview[r.id].players_deleted} · Plays de-identified: {preview[r.id].events_scrubbed} · Archived-snapshot plays: {preview[r.id].archive_plays_scrubbed} · Games deleted: {preview[r.id].games_deleted}</div>
+                            {(preview[r.id].per_player || []).map((p: any, i: number) => (
+                              <div key={i} className="text-gray-400">• #{p.jersey} {p.name} — {p.plays_deidentified} plays, {p.archive_plays_deidentified} archived</div>
+                            ))}
+                          </div>
+                        )}
                       </>
                     )}
                     <input className="input" placeholder="Note (optional)"
                       value={note[r.id] || ''} onChange={e => setNote(s => ({ ...s, [r.id]: e.target.value }))} />
                     <div className="flex gap-2">
-                      <button disabled={busy === r.id} onClick={() => fulfill(r)} className="btn-primary">
+                      {r.request_type === 'deletion' && (
+                        <button disabled={busy === r.id} onClick={() => previewReq(r)} className="px-3 py-2 rounded border border-gray-600 text-gray-200 text-sm">Preview</button>
+                      )}
+                      <button disabled={busy === r.id || (r.request_type === 'deletion' && !preview[r.id])} onClick={() => fulfill(r)} className="btn-primary">
                         {r.request_type === 'deletion' ? 'Delete & certify' : 'Mark fulfilled'}
                       </button>
                       <button disabled={busy === r.id} onClick={() => reject(r)} className="px-3 py-2 rounded border border-red-800 text-red-400 text-sm">Reject</button>
                     </div>
+                    {r.request_type === 'deletion' && !preview[r.id] && (
+                      <p className="text-xs text-gray-500">Run Preview first — deletion is irreversible.</p>
+                    )}
                   </div>
                 )}
               </div>
