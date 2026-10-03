@@ -234,3 +234,22 @@ Lens: grumpy 40-year consultant. Focus: AI video detection RELIABILITY (the #1 t
 ### Not in scope this run (owner-gated / COGS)
 - QA-11 live two-account tenant isolation (needs a local dry-run stack with outbound keys unset).
 - QA-13 full-game recall re-measure on the current engine (real Anthropic COGS — owner decision).
+
+---
+
+## Run — 2026-10-02 (legal/consent readiness, instinct lens) — Opus
+
+Lens: grumpy 40-year consultant. Scope: the last compliance launch item — COPPA/FERPA + legal consent. Static/adversarial review (prod read-only, no outbound, no COGS). Shipped on a branch + PR, CI green. HARD LINE held: no "ATTORNEY REVIEW REQUIRED" banner removed, no version flipped off `-draft` — binding minors'-data text is counsel's, not mine to fake.
+
+### Findings + fixes shipped
+- **L-1 (High) — subprocessor list was factually wrong.** Drafts named Supabase (DB) and Twilio (phone verification); reality is Railway PostgreSQL and no SMS (email is the sole identity gate, Twilio removed). A school-signed DPA naming unused vendors + omitting the real DB host is a defect. Corrected `legal/privacy-policy.md`, `legal/data-privacy-agreement.md`, `legal/README.md`.
+- **L-2 (Med) — cookie-policy analytics placeholder.** Verified no analytics in code; replaced the `[FILL-IN]` with a definitive "no analytics cookies" statement.
+- **L-3 (Med) — manual play tagging had no student-data gate.** `POST /events` + `/events/bulk` wrote student jerseys with ownership-only. New orgs are covered transitively (game creation is gated) but the guarantee was implicit + left a legacy edge. Added `assert_student_consent` to both + a regression test (`test_bulk_events_blocked_without_student_consent`); updated the positive bulk test for the new consent check.
+
+### Verified complete (no code needed)
+- Consent enforcement covers every minors'-data first-touch (auth, games, ingest, roster ×3, live, scout ×2, onboarding, recruiting, now events). Per-org attestation model: no new org can store a minor's data without attesting first.
+- Re-consent on version bump is wired (ReconsentGate + /legal/accept-latest).
+
+### Open (owner / counsel / follow-up build)
+- Attorney review of the minors'-data terms + venue/effective-date `[FILL-IN]`s, then the one-step version bump (docs/legal/legal-readiness-2026-10-02.md).
+- Public routes for full Privacy/DPA/Parents' Bill of Rights (NY §2-d) + a parent delete-request flow — recommended before onboarding real schools.

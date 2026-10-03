@@ -18,6 +18,9 @@ class _Result:
     def scalar_one_or_none(self):
         return self.v
 
+    def scalar_one(self):
+        return self.v
+
     def scalars(self):
         items = self.v if isinstance(self.v, list) else ([] if self.v is None else [self.v])
         return SimpleNamespace(all=lambda: items)
@@ -61,9 +64,22 @@ def test_bulk_events_rejects_unowned_game():
 def test_bulk_events_accepts_owned_games():
     body = [ev.EventCreate(game_id="g1", event_type="play"),
             ev.EventCreate(game_id="g1", event_type="play")]
-    db = _DB([_Result(["g1"])])  # g1 owned
+    # Results in call order: owned-games lookup, then the student_data consent-count
+    # check added by the COPPA/FERPA gate (1 = org has attested -> gate passes).
+    db = _DB([_Result(["g1"]), _Result(1)])
     out = asyncio.run(ev.bulk_create_events(body, user=_user(), db=db))
     assert out["created"] == 2 and len(db.added) == 2
+
+
+def test_bulk_events_blocked_without_student_consent():
+    # COPPA/FERPA: owning the game is not enough — a manually tagged play carrying a
+    # student jersey must be blocked until the org makes the student-data attestation.
+    body = [ev.EventCreate(game_id="g1", event_type="play")]
+    db = _DB([_Result(["g1"]), _Result(0)])  # game owned, but no consent on record
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(ev.bulk_create_events(body, user=_user(), db=db))
+    assert exc.value.status_code == 403
+    assert not db.added  # nothing written
 
 
 # ── clip assignment ───────────────────────────────────────────────────────────
