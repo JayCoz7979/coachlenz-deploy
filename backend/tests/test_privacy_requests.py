@@ -47,29 +47,57 @@ def _event(player, extra):
 def test_deletion_deletes_player_and_deidentifies_only_that_jersey():
     ev_match = _event("23", {"primary_player_jersey": "23",
                              "players": [{"jersey": "23"}, {"jersey": "10"}]})
-    # Call order per execute_deletion: player lookup, game-ids for team, events for jersey.
+    archive = SimpleNamespace(plays=[
+        {"player": "23", "extra_data": {"primary_player_jersey": "23",
+                                        "players": [{"jersey": "23"}, {"jersey": "10"}]}},
+        {"player": "10", "extra_data": {"primary_player_jersey": "10"}},
+    ])
+    # Call order per execute_deletion: player, game-ids, live events, archived snapshots.
     db = _DB([
         _Result(_player()),        # RosterPlayer lookup
         _Result(["g1"]),           # Game.id for the team
         _Result([ev_match]),       # Events on those games with player == "23"
+        _Result([archive]),        # AnalysisRunArchive rows for those games
     ])
     summary = asyncio.run(svc.execute_deletion(db, "o1", ["p1"], []))
 
     assert summary["players_deleted"] == 1
     assert summary["events_scrubbed"] == 1
+    assert summary["archive_plays_scrubbed"] == 1
     assert summary["games_deleted"] == 0
-    # The play row survives but the student is no longer identified.
+    assert summary["dry_run"] is False
+    # Live play survives but the student is no longer identified.
     assert ev_match.player is None
     assert ev_match.extra_data["primary_player_jersey"] is None
     assert ev_match.extra_data["players"] == [{"jersey": "10"}]  # teammate untouched
+    # Archived snapshot scrubbed too (the erasure reaches prior runs).
+    assert archive.plays[0]["player"] is None
+    assert archive.plays[0]["extra_data"]["players"] == [{"jersey": "10"}]
+    assert archive.plays[1]["player"] == "10"  # teammate's archived play untouched
     assert db.deleted and getattr(db.deleted[0], "id", None) == "p1"
     assert db.flushed
+
+
+def test_deletion_dry_run_computes_but_writes_nothing():
+    ev_match = _event("23", {"primary_player_jersey": "23", "players": [{"jersey": "23"}]})
+    archive = SimpleNamespace(plays=[{"player": "23", "extra_data": {}}])
+    db = _DB([_Result(_player()), _Result(["g1"]), _Result([ev_match]), _Result([archive])])
+    summary = asyncio.run(svc.execute_deletion(db, "o1", ["p1"], [], dry_run=True))
+    # Counts are computed...
+    assert summary["players_deleted"] == 1 and summary["events_scrubbed"] == 1
+    assert summary["archive_plays_scrubbed"] == 1 and summary["dry_run"] is True
+    # ...but NOTHING was mutated, deleted, or flushed.
+    assert ev_match.player == "23"
+    assert archive.plays[0]["player"] == "23"
+    assert not db.deleted and not db.flushed
 
 
 def test_deletion_skips_unknown_player_no_write():
     db = _DB([_Result(None)])  # player not found / not in org
     summary = asyncio.run(svc.execute_deletion(db, "o1", ["ghost"], []))
-    assert summary == {"players_deleted": 0, "events_scrubbed": 0, "games_deleted": 0, "per_player": []}
+    assert summary["players_deleted"] == 0 and summary["events_scrubbed"] == 0
+    assert summary["archive_plays_scrubbed"] == 0 and summary["games_deleted"] == 0
+    assert summary["per_player"] == []
     assert not db.deleted
 
 
