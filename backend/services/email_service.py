@@ -163,7 +163,8 @@ PRIVACY_REPLY_TO = f"privacy@{settings.RESEND_DOMAIN}"
 
 async def send_privacy_request_ack(to: str, name: str, request_type: str, reference: str):
     """Acknowledge a parent's data access/deletion request so they know it was received."""
-    first = (name or "there").split(" ")[0]
+    import html as _html
+    first = _html.escape((name or "there").split(" ")[0])
     label = "deletion" if request_type == "deletion" else "access"
     resend.Emails.send({
         "from": FROM,
@@ -185,19 +186,23 @@ async def send_privacy_request_ack(to: str, name: str, request_type: str, refere
 
 
 async def send_privacy_admin_notice(to: str, request):
-    """Alert the CoachLenz admin that a new privacy request needs review."""
+    """Alert the CoachLenz admin that a new privacy request needs review. All
+    requester-supplied fields are HTML-escaped so a malicious submission can't inject
+    markup into the admin's inbox."""
+    import html as _html
+    e = lambda v: _html.escape(str(v or ""))
     resend.Emails.send({
         "from": FROM,
         "to": to,
-        "subject": f"New {request.request_type} privacy request — {request.student_name}",
+        "subject": f"New {e(request.request_type)} privacy request — {e(request.student_name)}",
         "html": (
-            f"<p>A new <strong>{request.request_type}</strong> request was submitted.</p>"
+            f"<p>A new <strong>{e(request.request_type)}</strong> request was submitted.</p>"
             f"<ul>"
-            f"<li>Requester: {request.requester_name} ({request.relationship}) — {request.requester_email}</li>"
-            f"<li>Student: {request.student_name}</li>"
-            f"<li>School/org: {request.school_or_org or '(not given)'}</li>"
-            f"<li>Details: {request.student_details or ''} {request.details or ''}</li>"
-            f"<li>Reference: {request.id}</li>"
+            f"<li>Requester: {e(request.requester_name)} ({e(request.relationship)}) — {e(request.requester_email)}</li>"
+            f"<li>Student: {e(request.student_name)}</li>"
+            f"<li>School/org: {e(request.school_or_org) or '(not given)'}</li>"
+            f"<li>Details: {e(request.student_details)} {e(request.details)}</li>"
+            f"<li>Reference: {e(request.id)}</li>"
             f"</ul>"
             f"<p>Review it in the admin Privacy Requests page: verify the requester, then fulfill or reject.</p>"
         ),
@@ -205,8 +210,11 @@ async def send_privacy_admin_notice(to: str, request):
 
 
 async def send_deletion_certificate(to: str, name: str, certificate_html: str):
-    """Send the parent the Deletion Certificate when a deletion request is completed."""
-    first = (name or "there").split(" ")[0]
+    """Send the parent the Deletion Certificate when a deletion request is completed.
+    certificate_html is built by privacy_requests.render_certificate, which already
+    HTML-escapes every requester-supplied field."""
+    import html as _html
+    first = _html.escape((name or "there").split(" ")[0])
     resend.Emails.send({
         "from": FROM,
         "reply_to": PRIVACY_REPLY_TO,
@@ -221,8 +229,10 @@ async def send_deletion_certificate(to: str, name: str, certificate_html: str):
 
 
 async def send_privacy_request_resolution(to: str, name: str, subject: str, message_html: str):
-    """Generic completion/rejection notice for an access request or a rejected request."""
-    first = (name or "there").split(" ")[0]
+    """Generic completion/rejection notice. The caller must pass message_html with any
+    user-supplied text already escaped (see routers/privacy.py)."""
+    import html as _html
+    first = _html.escape((name or "there").split(" ")[0])
     resend.Emails.send({
         "from": FROM,
         "reply_to": PRIVACY_REPLY_TO,

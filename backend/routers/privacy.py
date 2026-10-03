@@ -6,6 +6,7 @@ requester (in coordination with the school, which holds consent under the school
 mechanism) and fulfills it. Deletion fulfillment runs a tightly scoped erasure and emails
 a Deletion Certificate. The request row is the audit trail.
 """
+import html
 import secrets
 from datetime import datetime
 from typing import Optional
@@ -206,7 +207,7 @@ async def fulfill_request(request_id: str, body: FulfillIn, user: User = Depends
             pr.requester_email, pr.requester_name,
             "Your CoachLenz data access request is complete",
             "<p>Your data access request has been completed. We'll provide the compiled "
-            "records to you securely" + (f": {body.note}" if body.note else ".") + "</p>")
+            "records to you securely" + (f": {html.escape(body.note)}" if body.note else ".") + "</p>")
     except Exception:
         pass
     return {"ok": True, "status": pr.status}
@@ -231,7 +232,7 @@ async def reject_request(request_id: str, body: RejectIn, user: User = Depends(r
         await email_service.send_privacy_request_resolution(
             pr.requester_email, pr.requester_name,
             "Update on your CoachLenz data request",
-            f"<p>We were unable to complete your request as submitted. Reason: {body.reason}</p>"
+            f"<p>We were unable to complete your request as submitted. Reason: {html.escape(body.reason)}</p>"
             f"<p>If you believe this is in error, reply with any additional detail that helps us "
             f"verify your authority over this student's data.</p>")
     except Exception:

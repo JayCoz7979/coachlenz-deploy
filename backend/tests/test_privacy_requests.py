@@ -86,6 +86,18 @@ def test_certificate_reports_only_what_happened():
     assert "Jordan Smith" in html
 
 
+def test_certificate_escapes_injected_html():
+    # A requester-supplied field must never inject markup into the emailed certificate.
+    req = SimpleNamespace(requester_name="<script>alert(1)</script>", relationship="parent",
+                          student_name="<img src=x onerror=alert(1)>", created_at=None)
+    html = svc.render_certificate(
+        certificate_id="CL-DEL-X", request=req,
+        summary={"players_deleted": 1, "events_scrubbed": 0, "games_deleted": 0})
+    assert "<script>" not in html
+    assert "<img src=x" not in html
+    assert "&lt;script&gt;" in html
+
+
 def test_certificate_handles_nothing_found():
     req = SimpleNamespace(requester_name="Pat", relationship="parent",
                           student_name="Nobody", created_at=None)

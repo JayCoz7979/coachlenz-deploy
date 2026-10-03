@@ -17,6 +17,7 @@ data or a whole team's film by accident:
 The certificate reports exactly what was removed — no category is claimed that the
 fulfillment did not actually do.
 """
+import html
 from datetime import datetime
 
 from sqlalchemy import select
@@ -104,6 +105,12 @@ def render_certificate(*, certificate_id: str, request, summary: dict) -> str:
     now = datetime.utcnow().strftime("%B %d, %Y")
     req_date = request.created_at.strftime("%B %d, %Y") if getattr(request, "created_at", None) else now
 
+    # All requester-supplied fields are HTML-escaped: they flow into this certificate
+    # (emailed) and must never inject markup.
+    e_name = html.escape(str(request.requester_name or ""))
+    e_rel = html.escape(str(request.relationship or ""))
+    e_student = html.escape(str(request.student_name or ""))
+
     cats = []
     if summary.get("players_deleted"):
         cats.append(f"Roster / player profile records deleted: <strong>{summary['players_deleted']}</strong>")
@@ -124,8 +131,8 @@ def render_certificate(*, certificate_id: str, request, summary: dict) -> str:
         f"<tr><td><strong>Certificate ID</strong></td><td>{certificate_id}</td></tr>"
         f"<tr><td><strong>Date of deletion</strong></td><td>{now}</td></tr>"
         f"<tr><td><strong>Request received</strong></td><td>{req_date}</td></tr>"
-        f"<tr><td><strong>Requested by</strong></td><td>{request.requester_name} ({request.relationship})</td></tr>"
-        f"<tr><td><strong>Student</strong></td><td>{request.student_name}</td></tr>"
+        f"<tr><td><strong>Requested by</strong></td><td>{e_name} ({e_rel})</td></tr>"
+        f"<tr><td><strong>Student</strong></td><td>{e_student}</td></tr>"
         f"</table>"
         f"<p><strong>Data removed:</strong></p><ul>{cat_html}</ul>"
         f"<p>We certify that the data described above has been removed from CoachLenz "
