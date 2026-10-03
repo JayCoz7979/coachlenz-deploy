@@ -15,6 +15,10 @@ from backend.routers.reports import (
     clamp_share_days, create_report_share, view_shared_report, revoke_report_share,
 )
 
+# Real report_ids are UUIDs (the column is a Postgres uuid). The public view validates
+# the format up front, so these tests use a valid uuid string for the id argument.
+VALID_ID = "11111111-1111-1111-1111-111111111111"
+
 
 class _Result:
     def __init__(self, value):
@@ -77,7 +81,7 @@ def test_create_share_sets_token_and_clamped_expiry():
 def test_view_valid_share_returns_payload():
     rep = _report(share_token="tok123",
                   share_expires_at=datetime.utcnow() + timedelta(days=3))
-    out = asyncio.run(view_shared_report("r1", "tok123", db=_FakeDB(rep)))
+    out = asyncio.run(view_shared_report(VALID_ID, "tok123", db=_FakeDB(rep)))
     assert out["shared"] is True
     # Finding #6: the public view serves a neutral, derived title, never the
     # coach's raw report.title.
@@ -91,7 +95,7 @@ def test_public_view_does_not_leak_a_player_name_in_the_title():
     rep = _report(title="John Smith - DB breakdown", report_type="self_scout",
                   sport="basketball", share_token="tok123",
                   share_expires_at=datetime.utcnow() + timedelta(days=3))
-    out = asyncio.run(view_shared_report("r1", "tok123", db=_FakeDB(rep)))
+    out = asyncio.run(view_shared_report(VALID_ID, "tok123", db=_FakeDB(rep)))
     assert "John Smith" not in out["title"]
     assert out["title"] == "Basketball Self-Scouting Report"
 
@@ -100,15 +104,29 @@ def test_view_expired_share_is_410():
     rep = _report(share_token="tok123",
                   share_expires_at=datetime.utcnow() - timedelta(minutes=1))
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(view_shared_report("r1", "tok123", db=_FakeDB(rep)))
+        asyncio.run(view_shared_report(VALID_ID, "tok123", db=_FakeDB(rep)))
     assert exc.value.status_code == 410
 
 
 def test_view_unknown_token_is_404():
     # Report not found for this (id, token) pair -> DB returns None.
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(view_shared_report("r1", "wrong", db=_FakeDB(None)))
+        asyncio.run(view_shared_report(VALID_ID, "wrong", db=_FakeDB(None)))
     assert exc.value.status_code == 404
+
+
+def test_view_nonuuid_report_id_is_404_without_touching_db():
+    # Regression: a non-UUID report_id (e.g. /reports/1/share/x) must 404 up front, NOT
+    # reach the query (where asyncpg raises at uuid bind time -> a bare 500 in prod). The
+    # guard must short-circuit BEFORE any db.execute, so this DB raises if touched.
+    class _Boom:
+        async def execute(self, *_a, **_k):
+            raise AssertionError("DB must not be queried for a malformed report_id")
+
+    for bad in ("1", "not-a-uuid", "r1", ""):
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(view_shared_report(bad, "tok", db=_Boom()))
+        assert exc.value.status_code == 404
 
 
 # ── revoke ───────────────────────────────────────────────────────────────────

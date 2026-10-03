@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime, timedelta
 import secrets
+import uuid as _uuid
 from backend.models.base import get_db
 from backend.models.user import User
 from backend.models.organization import Organization
@@ -334,11 +335,18 @@ async def view_shared_report(report_id: str, token: str, db: AsyncSession = Depe
     """Public, no-login, read-only view of a shared report. Gated by the capability
     token and its expiry. No player names appear in a report payload (jersey numbers
     and tendencies only), so nothing identifiable is exposed here."""
-    # This route is public and unauthenticated. A malformed report_id (e.g.
-    # /reports/1/share/x) fails the Postgres uuid cast on the SELECT and would
-    # otherwise surface a bare 500. DataError is exactly that cast failure (a
-    # connection outage is OperationalError, so this does not mask real faults);
-    # treat it as a missing share link (clean 404), same as an unknown token.
+    # This route is public and unauthenticated. report_id maps to a UUID column, so a
+    # malformed path segment (e.g. /reports/1/share/x) otherwise blows up when the value
+    # is bound for the query — asyncpg raises during parameter encoding (surfacing as a
+    # bare 500), BEFORE a DataError the query-level except could catch. Validate the UUID
+    # format here, up front and driver-independent, and treat a malformed id as a missing
+    # share link (clean 404). (A prior fix caught DataError at the query, but the real
+    # failure happens at bind time; the fake-DB/SQLite tests never exercised the asyncpg
+    # path, so it shipped green and still 500'd in prod.)
+    try:
+        _uuid.UUID(str(report_id))
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(status_code=404, detail="This share link is invalid.")
     try:
         result = await db.execute(select(TendencyReport).where(
             TendencyReport.id == report_id, TendencyReport.share_token == token))
