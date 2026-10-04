@@ -513,6 +513,7 @@ STRONGEST SIGNAL — THE SCOREBOARD. The score bug only ticks UP on a make. Read
   Whenever the scoreboard is legible, the score change is the TRUTH — trust it over the blurry ball.
 AFTER-PLAY REACTION (use when the score bug is not legible on these frames): MADE = no rebound scramble, the other team inbounds under the basket or pushes the ball the other way, defenders retreat. MISSED = the ball caroms off rim/backboard and a REBOUND battle follows.
 BALL THROUGH NET: a make drops straight down through the net and the net kicks up.
+PAINT, RIM & LAYUP SHOTS ARE HIGH-PERCENTAGE — the #1 made/miss error. Layups, dunks, putbacks, and restricted-area shots go IN far more often than they miss (roughly 55-65%). On this wide single camera the ball is hardest to track exactly at the rim, so DO NOT default a paint or restricted-area attempt to "Missed" just because you could not see it drop. Look for the net kick, defenders turning to sprint back the other way, or the offense retreating on defense (MADE); only call it "Missed" on a clear rim/backboard carom into a rebound battle. If you cannot tell, use null. A paint attempt labeled "Missed" with no positive miss evidence is the single most common mistake on this film — when unsure on a shot at the rim, lean MADE or null, never a blind "Missed".
 If NONE of these are readable (far basket, traffic, score not legible this frame), result = null and say so in blind_spot. Never guess made/missed 50/50, and never fall back to "missed".
 
 ━━━ EVENT-TYPE DISCIPLINE (read before labeling) ━━━
