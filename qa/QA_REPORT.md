@@ -275,3 +275,41 @@ Lens: grumpy 40-year consultant. Target: the NEW parent data access/deletion flo
 ### Open / honest gaps (documented, not blocking)
 - Identity verification remains human-gated (admin confirms with the school). That is defensible for a school-consent product and now has a recorded method, but there is no automated proof the requester is the parent — a known, accepted limitation to revisit with counsel.
 - Access-request data compilation is still admin/out-of-band (no automated export).
+
+---
+
+## Run — 2026-10-04 (basketball COGS + accuracy, Instinct-led) — Opus
+
+Authorized by Jason (voice note 2026-10-03 11:55pm CT): ONE fast-full run on DHHS vs LHS (0c96b094). Quality bar: Power-Four analyst. Prod read-only otherwise. All costs below are MEASURED from agent_logs; recall/precision vs film is NOT VERIFIED (needs Jason's spot-check).
+
+### Measured cost (the mission number)
+| Path | Mode | Calls | Cost | vs 65% floor |
+|---|---|---|---|---|
+| Uncapped deep (full=true, my 10-03 run) | deep, 389 seg | 141 Opus + 390 Sonnet | $64.21 | 4.4x over deep floor ($14.70) |
+| **Fast-full (customer path, full=false)** | fast, ~250 seg | 251 Sonnet, 0 Opus | **$12.68** | **1.9x over fast floor ($6.62); ~33% margin** |
+
+Deep cost split: Opus $44.46 (69.2%) / Sonnet $19.75. Fast is Sonnet-only.
+Margin formula: max COGS = credits x $0.70 x 0.35. Fast basketball = 27cr -> $6.62 ceiling. Fast-full ($12.68) FAILS it.
+
+### Detection counts (fast vs uncapped deep)
+| | Fast ($12.68) | Deep ($64.21) |
+|---|---|---|
+| Plays | 183 | 261 |
+| Shots | 78 (26 made/42 miss/10 null) | 103 (51/48/4) |
+| Possessions | 63 | 85 |
+| Needs-review | 64 (35%) | 83 (32%) |
+
+### Accuracy concern (NOT VERIFIED — flag for spot-check)
+- **Paint Non-RA: 28 shots, only 2 made (7%).** Paint shots convert ~55-65% in reality. Near-zero paint makes = the engine is defaulting makes to "missed" when it can't see the ball drop on a single-cam. Fast mode SKIPS the Opus verify pass that normally corrects made/miss, so this is uncorrected.
+- Score reconstruction from made shots ~= 48-57 combined points (fast) vs ~79 (deep) vs ~90-130 typical HS game -> under-detection of scoring.
+- Both paths under-detect attempts on this single-cam (78 / 103 vs ~100-140 realistic).
+
+### Verdict
+On a typical single-cam, the every-game (fast) path currently fails BOTH gates: cost 1.9x over floor AND made/miss below the analyst bar (paint makes broken without a verify pass). Mission is justified and now precisely targeted.
+
+### Lever plan (reframed by the data)
+- DEEP path: adaptive Opus (verify only low-confidence/contradiction plays) -> cuts the 69% Opus share; helps deep hold $14.70.
+- FAST path (the every-game goal): Opus doesn't apply. To hit <=$6.62: lower BB frames/window (120->~70), dead-time skip (FTs/timeouts/inbounds), batching. AND to fix made/miss cheaply: a TARGETED result-verify on uncertain shots (Sonnet, or Opus only on makes-near-rim) inside fast. This is the key insight: fast is cheap but made/miss needs a light verify; deep's Opus verify fixes it at 5x cost.
+- Haiku triage: design-doc only (per authorization).
+
+Next: build P1 levers as PRs (flagged, measurement hooks), validate recall on Quick Test / deep-on-segment, re-measure against both gates.
