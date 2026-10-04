@@ -921,6 +921,30 @@ class AiDetectWorker(BaseWorker):
                                 "estimated_calls": len(batches) * calls_per_seg},
                     )
 
+                # ── Dead-time skip (basketball fast only; flag-gated) ─────────
+                # Drop clearly-static windows (timeouts, huddles, dead balls) BEFORE they
+                # cost a vision call. Scored locally by inter-frame motion (no API spend).
+                # Fail-safe: a window that can't be scored returns +inf and is kept.
+                if (_is_bb_sport and not getattr(self, "_multipass", False)
+                        and settings.DETECT_DEADTIME_SKIP and len(batches) > 1):
+                    thr = settings.DETECT_DEADTIME_MOTION_MIN
+                    kept, skipped = [], 0
+                    for b in batches:
+                        if self._batch_motion_score(b) < thr:
+                            skipped += 1
+                        else:
+                            kept.append(b)
+                    if skipped and kept:   # never skip everything
+                        batches = kept
+                        await log_agent_action(
+                            game_id=game_id, organization_id=str(org_id), job_id=job_id,
+                            phase="deadtime_skip", level="info",
+                            action=f"Dead-time skip: skipped {skipped} static window(s), analyzing {len(batches)}",
+                            reason="Those windows were static (timeout/huddle/dead ball), so I "
+                                   "skipped them to save cost without dropping live action.",
+                            detail={"skipped": skipped, "analyzed": len(batches), "motion_min": thr},
+                        )
+
                 # Log a heartbeat roughly every 10% of batches so the live panel
                 # shows steady progress without flooding the log.
                 log_every = max(1, len(batches) // 10)
@@ -2123,6 +2147,36 @@ class AiDetectWorker(BaseWorker):
             total += cost
             models[model] = {**d, "cost_usd": round(cost, 4)}
         return {"models": models, "total_usd": round(total, 4)}
+
+    @staticmethod
+    def _batch_motion_score(batch) -> float:
+        """Mean absolute 64x64 grayscale difference between consecutive frames in a
+        window. Low = static (timeout / huddle / dead ball); high = live action. Used by
+        the dead-time skip to drop static windows before they cost a vision call.
+
+        FAIL-SAFE: any problem (missing lib, unreadable frame, <2 frames) returns +inf so
+        the window is KEPT — a scoring error must never silently drop real basketball."""
+        try:
+            from PIL import Image
+        except Exception:
+            return float("inf")
+        grays = []
+        for item in (batch or []):
+            path = item[0] if isinstance(item, (tuple, list)) else item
+            try:
+                im = Image.open(path).convert("L").resize((64, 64))
+                grays.append(im.getdata())
+            except Exception:
+                continue
+        if len(grays) < 2:
+            return float("inf")
+        diffs = []
+        for a, b in zip(grays, grays[1:]):
+            n = len(a)
+            if not n:
+                continue
+            diffs.append(sum(abs(x - y) for x, y in zip(a, b)) / n)
+        return (sum(diffs) / len(diffs)) if diffs else float("inf")
 
     def _assign_times(self, plays: list, batch) -> list:
         """Confidence-gate plays and stamp each with the REAL timestamp of the frame

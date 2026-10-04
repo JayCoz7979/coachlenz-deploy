@@ -70,6 +70,15 @@ class Settings(BaseSettings):
     DETECT_FAST_RESULT_VERIFY_CONF: float = 0.75   # a shot at/below this confidence is re-checked
     DETECT_FAST_RESULT_VERIFY_MAX: int = 8         # cap re-checked shots per batch (cost guard)
 
+    # Dead-time skip (basketball fast COGS lever). Basketball film is full of static
+    # stretches — timeouts, huddles, dead balls, free-throw set-ups — that cost a full
+    # vision call for no play. When enabled, each candidate window is scored locally by
+    # inter-frame motion (no API cost) and clearly-static windows are skipped before they
+    # are sent to Claude. OFF by default + fail-safe (a scoring error never skips a
+    # window); validate the cost saving AND recall on a test run before enabling.
+    DETECT_DEADTIME_SKIP: bool = False
+    DETECT_DEADTIME_MOTION_MIN: float = 2.0   # mean abs 64x64 grayscale frame-diff below this = static
+
     # Stripe
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
