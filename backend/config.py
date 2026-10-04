@@ -60,6 +60,16 @@ class Settings(BaseSettings):
     DETECT_FRAMES_PER_WINDOW_BB_FAST: int = 120
     DETECT_FRAMES_PER_WINDOW_BB_DEEP: int = 100
 
+    # Fast-path made/miss verify (accuracy fix without Opus). Fast mode skips the deep
+    # verify pass, so uncertain shot RESULTS (e.g. paint makes that look like misses on a
+    # single cam) go uncorrected. When enabled, one cheap Sonnet re-check per batch
+    # re-reads the SAME (cached) frames for only the shaky shots and fixes made/miss,
+    # never defaulting to "Missed". OFF by default: validate the cost add + the paint
+    # made/miss gain on a test run before enabling.
+    DETECT_FAST_RESULT_VERIFY: bool = False
+    DETECT_FAST_RESULT_VERIFY_CONF: float = 0.75   # a shot at/below this confidence is re-checked
+    DETECT_FAST_RESULT_VERIFY_MAX: int = 8         # cap re-checked shots per batch (cost guard)
+
     # Stripe
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""

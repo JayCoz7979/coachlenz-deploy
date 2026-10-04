@@ -454,6 +454,21 @@ Return ONLY JSON with the fields you are confident about plus a judgment:
 verdict is "confirmed" | "corrected" | "unreadable". Use null for anything the film cannot support."""
 
 
+# Fast-path made/miss re-check (Sonnet, one cheap call per batch). Fast mode has no deep
+# verify, so uncertain shot RESULTS go uncorrected — on a single cam a made layup in the
+# paint often looks like a miss, so the detector defaults it to "Missed". This re-reads
+# ONLY made/miss for the listed shaky shots and must NEVER guess "Missed".
+RESULT_VERIFY_PROMPT_BB = """You are a basketball film reviewer re-checking ONE thing only: did each listed shot go IN or NOT? Use the frames.
+
+For EACH shot index in the USER MESSAGE, decide the RESULT:
+- "Made" requires POSITIVE evidence: the ball going through the net, or the scoreboard score ticking up right after.
+- "Missed" requires POSITIVE evidence: the ball hitting rim/backboard and bouncing away, an airball, or a rebound/possession change with no score change.
+- If you genuinely cannot tell from this fixed single-camera angle, return null. NEVER default to "Missed". A wrong "Missed" on a make is the worst error you can make here.
+- Paint and rim shots are the HIGH-make-rate shots; do not assume a paint attempt missed just because the ball is hard to track at the rim.
+
+Return ONLY JSON: {"results":[{"i":<index>,"result":"Made"},{"i":<index>,"result":null}, ...]} with one entry per shot index given."""
+
+
 # Deep-basketball technique grading (Opus, opt-in), the basketball analog of the
 # football grade pass.
 GRADE_PROMPT_BASKETBALL = """You are a college basketball quality-control coach grading EXECUTION on one possession. The frames are HIGH-RESOLUTION moments of a single possession; the known context (action, result) is in the USER MESSAGE.
@@ -2147,10 +2162,69 @@ class AiDetectWorker(BaseWorker):
             prompt = DETECTION_PROMPT_BASKETBALL if sport == "basketball" else DETECTION_PROMPT
             sys_text = getattr(self, "_team_context", "") + prompt
             content = self._frame_content(batch)
+            # Fast-path made/miss verify (flag): cache the frames so the optional
+            # re-check re-reads them cheaply (cache_r ~10% of fresh input), not a second
+            # full image send.
+            fast_verify = (sport == "basketball" and settings.DETECT_FAST_RESULT_VERIFY)
+            if fast_verify:
+                content = self._with_cache(content)
             parsed = await self._vision_json(client, DETECT_MODEL, content,
                                              max_tokens=DETECT_MAX_TOKENS,
                                              system=self._cached_system(sys_text))
-            return self._assign_times(parsed.get("plays", []), batch)
+            plays = parsed.get("plays", [])
+            if fast_verify and plays:
+                await self._fast_bb_result_verify(client, content, plays)
+            return self._assign_times(plays, batch)
+
+    @staticmethod
+    def _uncertain_bb_shots(plays: list, conf: float, max_n: int) -> list:
+        """Pick the shots whose made/miss is shaky enough to re-check: result is null, or
+        confidence at/below `conf`. Paint / restricted-area / rim shots (the ones a single
+        cam most often misreads as misses) go first, then lowest confidence; capped at
+        `max_n`. Returns (index_in_plays, play) pairs."""
+        cand = []
+        for i, p in enumerate(plays):
+            if (p.get("event_type") or "") != "shot":
+                continue
+            c = float(p.get("confidence") or 0)
+            if p.get("result") is None or c <= conf:
+                zone = (p.get("shot_zone") or "").lower()
+                paint = ("paint" in zone or "restricted" in zone or "rim" in zone)
+                cand.append((not paint, c, i, p))  # paint first, then lowest confidence
+        cand.sort(key=lambda t: (t[0], t[1]))
+        return [(i, p) for _paint, _c, i, p in cand[:max_n]]
+
+    async def _fast_bb_result_verify(self, client, frames, plays: list) -> None:
+        """One cheap Sonnet re-check of made/miss for the shaky shots in this batch,
+        re-reading the cached `frames`. Only overwrites a result with a POSITIVE-evidence
+        Made/Missed; a null (honest 'unknown') is ignored, so a correct call is never
+        downgraded and a guessed miss is only ever replaced by a confident call."""
+        shots = self._uncertain_bb_shots(
+            plays, settings.DETECT_FAST_RESULT_VERIFY_CONF, settings.DETECT_FAST_RESULT_VERIFY_MAX)
+        if not shots:
+            return
+        listing = [{"i": i, "shot_zone": p.get("shot_zone"), "current_result": p.get("result")}
+                   for i, p in shots]
+        user = "Re-check made/miss for these shots (index = i):\n" + json.dumps(listing, default=str)
+        try:
+            v = await self._vision_json(
+                client, DETECT_MODEL, frames + [{"type": "text", "text": user}],
+                max_tokens=512, system=self._cached_system(RESULT_VERIFY_PROMPT_BB))
+        except Exception as e:
+            logger.warning(f"[ai_detect] fast bb result-verify failed: {e}")
+            return
+        by_i = {}
+        for r in (v.get("results") or []):
+            if isinstance(r, dict) and "i" in r:
+                try:
+                    by_i[int(r["i"])] = r.get("result")
+                except (TypeError, ValueError):
+                    pass
+        for i, p in shots:
+            r = by_i.get(i)
+            if r in ("Made", "Missed"):   # overwrite only with a positive-evidence call
+                p["result"] = r
+                p["result_verified"] = True
 
     # Pre-snap fields handed to the post-snap pass as alignment context.
     _PRESNAP_CTX_KEYS = (
