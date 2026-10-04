@@ -45,6 +45,14 @@ class Settings(BaseSettings):
     # Override via env (ANTHROPIC_MODEL) to change the report model in one place.
     ANTHROPIC_MODEL: str = "claude-sonnet-4-6"
 
+    # Detection verify tuning (COGS vs recall knob, deep mode). A merged play below
+    # the confidence threshold (or flagged contradictory by the reconciler) gets an
+    # Opus second look, capped per batch. Opus is ~69% of deep COGS, so LOWERING the
+    # threshold (fewer plays verified) cuts cost but weakens made/miss correction;
+    # tune against recall, never blind. Defaults preserve current behavior.
+    DETECT_VERIFY_CONFIDENCE_THRESHOLD: float = 0.65
+    DETECT_MAX_VERIFY_PER_BATCH: int = 3
+
     # Stripe
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
