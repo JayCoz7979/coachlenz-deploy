@@ -106,8 +106,11 @@ MODEL_PRICING = {
     "claude-sonnet-4-6": {"in": 3.0,  "out": 15.0, "cache_w": 3.75,  "cache_r": 0.30},
     "claude-opus-4-8":   {"in": 15.0, "out": 75.0, "cache_w": 18.75, "cache_r": 1.50},
 }
-VERIFY_CONFIDENCE_THRESHOLD = 0.65   # merged plays below this get an Opus second look
-MAX_VERIFY_PER_BATCH = 3             # cap Opus calls per batch (cost guardrail)
+# Opus verify knobs — now env-tunable (same defaults). Opus is ~69% of deep COGS, so
+# these are the primary cost/recall dial for deep mode. Lower threshold / lower cap =
+# fewer Opus calls = cheaper, but less made/miss correction. Tune against recall.
+VERIFY_CONFIDENCE_THRESHOLD = settings.DETECT_VERIFY_CONFIDENCE_THRESHOLD  # merged plays below this get an Opus second look
+MAX_VERIFY_PER_BATCH = settings.DETECT_MAX_VERIFY_PER_BATCH                # cap Opus calls per batch (cost guardrail)
 # Concurrency for the vision pass. Segments run in parallel instead of one-at-a-time.
 # DEEP makes 2-3 calls per segment, so fewer run at once to respect rate limits.
 PARALLEL_VISION_FAST = 8
@@ -1321,6 +1324,12 @@ class AiDetectWorker(BaseWorker):
                 # ── Cost report (measured token usage -> $) ────────────────
                 cost = self._cost_summary()
                 per_play = round(cost["total_usd"] / total_plays, 4) if total_plays else None
+                # P1a observability: how much of this run went to the Opus verify pass
+                # (the dominant deep-mode cost). Lets Instinct tune the verify threshold
+                # against recall with a real number instead of guessing.
+                _opus = (cost.get("models", {}).get(VERIFY_MODEL, {}) or {})
+                opus_cost_share = (round((_opus.get("cost_usd") or 0) / cost["total_usd"], 3)
+                                   if cost.get("total_usd") else 0.0)
                 elapsed = round(time.monotonic() - getattr(self, "_t0", time.monotonic()), 1)
                 film_secs = getattr(game, "duration_seconds", None)
                 await log_agent_action(
@@ -1333,6 +1342,10 @@ class AiDetectWorker(BaseWorker):
                             + (" with grading" if getattr(self, '_grade', False) else "")
                             + f". CODE_VERSION={CODE_VERSION}."),
                     detail={**cost, "per_play_usd": per_play,
+                            "opus_cost_share": opus_cost_share,
+                            "opus_calls": (_opus.get("calls") or 0),
+                            "verify_threshold": VERIFY_CONFIDENCE_THRESHOLD,
+                            "verify_cap_per_batch": MAX_VERIFY_PER_BATCH,
                             "grade": getattr(self, "_grade", False),
                             "mode": "deep" if getattr(self, "_multipass", False) else "fast",
                             # timeliness + film-quality context for the detection-quality gate
