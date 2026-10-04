@@ -53,6 +53,13 @@ class Settings(BaseSettings):
     DETECT_VERIFY_CONFIDENCE_THRESHOLD: float = 0.65
     DETECT_MAX_VERIFY_PER_BATCH: int = 3
 
+    # Basketball frames-per-window (COGS vs recall knob). Basketball samples densely
+    # because shots/steals happen in under a second; cost scales ~linearly with frames.
+    # Env-tunable so a 120/100/80 same-game comparison can find the floor that holds
+    # recall. Defaults preserve current behavior.
+    DETECT_FRAMES_PER_WINDOW_BB_FAST: int = 120
+    DETECT_FRAMES_PER_WINDOW_BB_DEEP: int = 100
+
     # Stripe
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""

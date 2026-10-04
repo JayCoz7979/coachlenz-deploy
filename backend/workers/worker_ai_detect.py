@@ -74,8 +74,10 @@ FRAMES_PER_WINDOW_DEEP = 50  # ~1 frame / 6s
 # the possession gets logged with no outcome. Basketball samples MUCH denser so the
 # shot moment is actually on screen. Cost scales with frames, which is why deep-on-a-
 # segment exists (run this density on one quarter, not a full game).
-FRAMES_PER_WINDOW_BB_FAST = 120  # ~1 frame / 2.5s
-FRAMES_PER_WINDOW_BB_DEEP = 100  # ~1 frame / 3s
+# Env-tunable (same defaults) so basketball frame density can be dialed for the
+# cost/recall floor without a code change. Cost scales ~linearly with these.
+FRAMES_PER_WINDOW_BB_FAST = settings.DETECT_FRAMES_PER_WINDOW_BB_FAST  # ~1 frame / 2.5s at 120
+FRAMES_PER_WINDOW_BB_DEEP = settings.DETECT_FRAMES_PER_WINDOW_BB_DEEP  # ~1 frame / 3s at 100
 PARALLEL_JOBS = 6          # concurrent ffmpeg processes
 JOB_TIMEOUT = 300          # per-window timeout (s); a stuck window fails alone, not the whole job
 
