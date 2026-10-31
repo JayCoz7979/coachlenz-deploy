@@ -1,3 +1,11 @@
+import type { Metadata } from 'next'
+
+export const metadata: Metadata = {
+  title: 'Terms of Service',
+  description: 'The terms for using CoachLenz, the AI film analyst OS from Cosby AI Solutions LLC.',
+  alternates: { canonical: '/terms' },
+}
+
 export default function TermsPage() {
   return (
     <div className="min-h-screen bg-gray-950 px-8 py-16 max-w-3xl mx-auto">
