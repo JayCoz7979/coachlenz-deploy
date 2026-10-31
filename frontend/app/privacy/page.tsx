@@ -1,3 +1,11 @@
+import type { Metadata } from 'next'
+
+export const metadata: Metadata = {
+  title: 'Privacy Policy',
+  description: 'How CoachLenz handles coach and student-athlete data, built to COPPA and FERPA standards, with access and deletion requests.',
+  alternates: { canonical: '/privacy' },
+}
+
 export default function PrivacyPage() {
   return (
     <div className="min-h-screen bg-gray-950 px-8 py-16 max-w-3xl mx-auto">
