@@ -42,10 +42,22 @@ FALLBACK_INTERVAL = 2.0    # was 5.0 — tighter coverage, no >2s gap
 MIN_CONFIDENCE = 0.5       # unchanged — keep quality gate
 # Drop frames closer together than this (dedup same-moment frames)
 CLUSTER_GAP_SECONDS = 1.5  # new — snap-aware frame clustering
+# Dedup window: two detections closer than this in time are treated as ONE play
+# (the same event seen across adjacent frames) and merged, keeping the more
+# confident read. Football snaps sit 20-40s apart, so an 8s window safely collapses
+# multi-frame echoes without touching distinct snaps. Basketball is continuous:
+# distinct scoring plays (transition buckets, offensive-rebound putbacks, steals,
+# back-to-back free throws) occur far closer than 8s, so an 8s window silently DROPS
+# the second play. Basketball therefore uses a tight window set below the FAST
+# frame-sampling gap (4.5s) so two separately-sampled plays are never merged away,
+# while true same-moment echoes still collapse. The basketball value is a
+# conservative, recall-first default and is tunable once labeled data exists.
+DEDUP_WINDOW_SECONDS = 8.0
+DEDUP_WINDOW_SECONDS_BASKETBALL = 3.0
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "multipass-v8-eagleeye-lean"
+CODE_VERSION = "multipass-v9-bball-dedup"
 
 # Parallel ranged extraction: one long fps=0.5 pass over a 2.75h stream times out
 # silently. Instead decode many short windows concurrently, each its own ffmpeg.
@@ -616,8 +628,8 @@ class AiDetectWorker(BaseWorker):
 
                 await asyncio.gather(*[process_batch(i, b) for i, b in enumerate(batches)])
 
-                # ── Deduplicate by time (within 5s = same play) ───────────
-                deduped = self._deduplicate_plays(all_plays)
+                # ── Deduplicate by time (sport-aware window = same play) ──
+                deduped = self._deduplicate_plays(all_plays, sport)
                 # Derive yards/result from the down-and-distance progression — far more
                 # reliable than reading yardage off a still frame.
                 if sport in ("football", "flag_football"):
@@ -1450,10 +1462,21 @@ class AiDetectWorker(BaseWorker):
                 cur = None  # unknown gain → can't place the next spot
         return plays
 
-    def _deduplicate_plays(self, plays: list[dict]) -> list[dict]:
-        """Merge plays within 8s of each other (likely the same play seen across adjacent frames)."""
+    def _deduplicate_plays(self, plays: list[dict], sport: str = "football") -> list[dict]:
+        """Merge detections that are the same play seen across adjacent frames.
+
+        The merge window is SPORT-AWARE. Football snaps are 20-40s apart, so an 8s
+        window collapses multi-frame echoes safely. Basketball is continuous and its
+        distinct plays occur far closer together, so it uses a tight window
+        (DEDUP_WINDOW_SECONDS_BASKETBALL) below the frame-sampling gap, so two
+        separately-sampled possessions are never merged into one and dropped.
+        """
         if not plays:
             return []
+
+        window = (DEDUP_WINDOW_SECONDS_BASKETBALL
+                  if (sport or "").lower() == "basketball"
+                  else DEDUP_WINDOW_SECONDS)
 
         sorted_plays = sorted(plays, key=lambda p: p.get("time_seconds") or 0)
         deduped = [sorted_plays[0]]
@@ -1461,7 +1484,7 @@ class AiDetectWorker(BaseWorker):
         for play in sorted_plays[1:]:
             last_time = deduped[-1].get("time_seconds") or 0
             this_time = play.get("time_seconds") or 0
-            if (this_time - last_time) < 8:
+            if (this_time - last_time) < window:
                 # Keep the one with higher confidence
                 if play.get("confidence", 0) > deduped[-1].get("confidence", 0):
                     deduped[-1] = play
