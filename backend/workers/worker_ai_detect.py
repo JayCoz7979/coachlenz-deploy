@@ -57,7 +57,7 @@ DEDUP_WINDOW_SECONDS_BASKETBALL = 3.0
 # Skip the first N seconds (avoids intro graphics / countdown clocks)
 SKIP_START_SECONDS = 5
 # Bumped on each detection-pipeline change so the DB agent log proves which code ran.
-CODE_VERSION = "multipass-v9-bball-dedup"
+CODE_VERSION = "multipass-v10-bball-density"
 
 # Parallel ranged extraction: one long fps=0.5 pass over a 2.75h stream times out
 # silently. Instead decode many short windows concurrently, each its own ffmpeg.
@@ -457,6 +457,15 @@ class AiDetectWorker(BaseWorker):
         self._test_mode = bool(payload.get("test"))
         return await self._detect_plays(game_id, dry_run=dry_run, job_id=job_id)
 
+    def _resolve_multipass_active(self, sport: str) -> bool:
+        """Single source of truth for whether the deep multipass analysis path
+        actually runs for this sport. Multipass analysis is implemented only for
+        football/flag_football (see _analyze_batch), so deep mode's frame-density
+        reduction is justified ONLY when both hold. For any other sport, a deep
+        request keeps FAST density instead of silently losing frames for no depth.
+        """
+        return getattr(self, "_multipass", False) and (sport or "").lower() in ("football", "flag_football")
+
     async def _detect_plays(self, game_id: str, dry_run: bool = False, job_id=None) -> dict:
         # ── Load game ──────────────────────────────────────────────────────
         async with AsyncSessionLocal() as db:
@@ -472,6 +481,15 @@ class AiDetectWorker(BaseWorker):
             org_id = game.organization_id
             # Team attribution context for the vision prompts (which jerseys = scouted team).
             self._team_context = _build_team_context(game.scout_jersey, game.opponent_jersey)
+
+        # Multipass ANALYSIS only actually runs for football/flag_football (see
+        # _analyze_batch). Deep mode trades frame density for that extra per-segment
+        # reasoning, so the density/concurrency/cost choices below must track whether
+        # multipass TRULY runs, not merely whether deep was requested. Otherwise a
+        # basketball (or any non-football) DEEP run drops ~24% of its frames
+        # (50/window vs 66) for no compensating depth, silently hurting recall on the
+        # premium path.
+        self._multipass_active = self._resolve_multipass_active(sport)
 
         # UATP identity disclosure — the agent says who it is and what it will do
         # BEFORE it acts, every run.
@@ -526,8 +544,10 @@ class AiDetectWorker(BaseWorker):
                         reason="A cheap sample to confirm the breakdown and team colors before you spend on a full game.",
                         detail={"test_seconds": int(duration)},
                     )
-                # Denser sampling for recall; lighter in deep mode since each batch is 3 calls.
-                fpw = FRAMES_PER_WINDOW_DEEP if getattr(self, "_multipass", False) else FRAMES_PER_WINDOW_FAST
+                # Denser sampling for recall. Only the football multipass path makes
+                # 2-3 calls per batch, so lighter sampling applies ONLY when multipass
+                # actually runs; every other sport keeps FAST density.
+                fpw = FRAMES_PER_WINDOW_DEEP if self._multipass_active else FRAMES_PER_WINDOW_FAST
                 frame_paths = await self._extract_windows(video_source, duration, frames_dir, frames_per_window=fpw)
                 # Snap-aware clustering: drop same-moment duplicates (no-op on the uniform
                 # window grid, but harmless and protects against overlapping windows).
@@ -570,7 +590,7 @@ class AiDetectWorker(BaseWorker):
                 if not getattr(self, "_full_coverage", False) and total_segments > MAX_SEGMENTS_PER_RUN:
                     step = total_segments / MAX_SEGMENTS_PER_RUN
                     batches = [batches[int(i * step)] for i in range(MAX_SEGMENTS_PER_RUN)]
-                    calls_per_seg = 3 if getattr(self, "_multipass", False) else 1
+                    calls_per_seg = 3 if self._multipass_active else 1
                     await log_agent_action(
                         game_id=game_id, organization_id=str(org_id), job_id=job_id,
                         phase="cost_guard", level="info",
@@ -587,9 +607,10 @@ class AiDetectWorker(BaseWorker):
                 failed_batches = 0
                 completed = 0
                 # Process segments concurrently (was one-at-a-time). Bounded by a
-                # semaphore so we stay within API rate limits; deep mode runs fewer at
-                # once because each segment makes 2-3 calls.
-                concurrency = PARALLEL_VISION_DEEP if getattr(self, "_multipass", False) else PARALLEL_VISION_FAST
+                # semaphore so we stay within API rate limits; the football multipass
+                # path runs fewer at once because each segment makes 2-3 calls. A
+                # single-call sport (e.g. basketball) keeps FAST concurrency.
+                concurrency = PARALLEL_VISION_DEEP if self._multipass_active else PARALLEL_VISION_FAST
                 sem = asyncio.Semaphore(concurrency)
 
                 async def process_batch(batch_idx, batch):
