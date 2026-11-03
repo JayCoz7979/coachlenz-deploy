@@ -263,10 +263,19 @@ def _summarize(possessions: list) -> dict:
 def maybe_build_possession_context(events: list) -> Optional[dict]:
     """Flag-gated entrypoint. Returns None when the flag is OFF (the default), so a
     caller can wire this after the single pass without changing shipped behavior
-    until the flag is deliberately enabled."""
+    until the flag is deliberately enabled.
+
+    When on, it returns the possession reconstruction PLUS the review queue in one
+    serializable blob, so a single consumer (the report, the scout response) has
+    everything the coach-facing review screen needs without a second call. The
+    review candidates are the uncertain detections surfaced for a human look; they
+    are NOT promoted to confirmed events.
+    """
     if not possession_context_enabled():
         return None
-    return build_possession_context(events)
+    ctx = build_possession_context(events)
+    ctx["review_candidates"] = build_review_queue(events)
+    return ctx
 
 
 # ── 2. review queue (uncertain candidates, never promoted) ────────────────────

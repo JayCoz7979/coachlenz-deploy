@@ -50,6 +50,33 @@ def test_flag_on_returns_context():
         os.environ.pop("BB_POSSESSION_CONTEXT_ENABLED", None)
 
 
+def test_flag_on_blob_includes_review_candidates():
+    # The wired blob carries BOTH the possession reconstruction and the review
+    # queue, so the coach-facing screen has everything from one payload.
+    os.environ["BB_POSSESSION_CONTEXT_ENABLED"] = "true"
+    try:
+        ctx = maybe_build_possession_context(POSSESSION_EVENTS)
+        assert "review_candidates" in ctx
+        assert ctx["review_candidates"] == build_review_queue(POSSESSION_EVENTS)
+        assert len(ctx["review_candidates"]) == 1          # the 0.60 turnover only
+        assert ctx["review_candidates"][0]["status"] == "pending_review"
+    finally:
+        os.environ.pop("BB_POSSESSION_CONTEXT_ENABLED", None)
+
+
+def test_flag_on_empty_events_is_safe():
+    # ON with no events -> a well-formed empty blob, no crash, nothing invented.
+    os.environ["BB_POSSESSION_CONTEXT_ENABLED"] = "true"
+    try:
+        ctx = maybe_build_possession_context([])
+        assert ctx["deterministic"] is True
+        assert ctx["possessions"] == []
+        assert ctx["summary"]["total_possessions"] == 0
+        assert ctx["review_candidates"] == []
+    finally:
+        os.environ.pop("BB_POSSESSION_CONTEXT_ENABLED", None)
+
+
 # ── 1. possession reconstruction ──────────────────────────────────────────────
 def test_possession_counts_and_teams():
     ctx = build_possession_context(POSSESSION_EVENTS)
@@ -238,6 +265,8 @@ def test_fixture_is_labeled_synthetic():
 _TESTS = [
     test_flag_defaults_off,
     test_flag_on_returns_context,
+    test_flag_on_blob_includes_review_candidates,
+    test_flag_on_empty_events_is_safe,
     test_possession_counts_and_teams,
     test_undetected_gaps_flagged_not_invented,
     test_quarters_only_where_tagged,
