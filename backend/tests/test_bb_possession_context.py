@@ -164,6 +164,51 @@ def test_shipped_time_only_dedup_drops_the_distinct_putback():
     assert len(out) < len(dedup_basketball_actions([dict(p) for p in RAW_DETECTIONS]))
 
 
+# ── 5. worker wiring: _dedupe_for_sport honors the flag (basketball only) ─────
+def test_wiring_flag_off_basketball_uses_time_only():
+    # Default off -> the worker's dispatch returns the shipped time-only result,
+    # so the distinct putback is dropped (shipped behavior is unchanged).
+    os.environ.pop("BB_POSSESSION_CONTEXT_ENABLED", None)
+    from backend.workers.worker_ai_detect import AiDetectWorker
+    w = AiDetectWorker()
+    out = w._dedupe_for_sport([dict(p) for p in RAW_DETECTIONS], "basketball")
+    time_only = w._deduplicate_plays([dict(p) for p in RAW_DETECTIONS], "basketball")
+    assert [p["time_seconds"] for p in out] == [p["time_seconds"] for p in time_only]
+    assert not any(p["time_seconds"] == 24.0 for p in out)
+
+
+def test_wiring_flag_on_basketball_uses_action_aware():
+    # Flag on -> the worker dispatches to the action-aware dedup, so the distinct
+    # made putback at 24.0 survives.
+    os.environ["BB_POSSESSION_CONTEXT_ENABLED"] = "true"
+    try:
+        from backend.workers.worker_ai_detect import AiDetectWorker
+        w = AiDetectWorker()
+        out = w._dedupe_for_sport([dict(p) for p in RAW_DETECTIONS], "basketball")
+        assert any(p["time_seconds"] == 24.0 and p["result"] == "made" for p in out)
+        assert len(out) == len(dedup_basketball_actions([dict(p) for p in RAW_DETECTIONS]))
+    finally:
+        os.environ.pop("BB_POSSESSION_CONTEXT_ENABLED", None)
+
+
+def test_wiring_flag_on_football_stays_time_only():
+    # The flag is basketball-only. Football never takes the action-aware path,
+    # even with the flag on, so football dedup is identical regardless of the flag.
+    os.environ["BB_POSSESSION_CONTEXT_ENABLED"] = "true"
+    try:
+        from backend.workers.worker_ai_detect import AiDetectWorker
+        w = AiDetectWorker()
+        fb = [
+            {"time_seconds": 10.0, "event_type": "run", "side": "offense", "confidence": 0.9},
+            {"time_seconds": 12.0, "event_type": "run", "side": "offense", "confidence": 0.8},
+        ]
+        out = w._dedupe_for_sport([dict(p) for p in fb], "football")
+        time_only = w._deduplicate_plays([dict(p) for p in fb], "football")
+        assert [p["time_seconds"] for p in out] == [p["time_seconds"] for p in time_only]
+    finally:
+        os.environ.pop("BB_POSSESSION_CONTEXT_ENABLED", None)
+
+
 # ── accessor works on ORM-like objects too ────────────────────────────────────
 class _StubEvent:
     def __init__(self, **kw):
@@ -208,6 +253,9 @@ _TESTS = [
     test_action_aware_keeps_distinct_putback_within_3s,
     test_action_aware_merges_true_duplicate_keeping_higher_confidence,
     test_shipped_time_only_dedup_drops_the_distinct_putback,
+    test_wiring_flag_off_basketball_uses_time_only,
+    test_wiring_flag_on_basketball_uses_action_aware,
+    test_wiring_flag_on_football_stays_time_only,
     test_works_on_event_objects,
     test_fixture_is_labeled_synthetic,
 ]
