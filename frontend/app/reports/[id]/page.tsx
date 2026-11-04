@@ -7,6 +7,7 @@ import api from '@/lib/api'
 import Link from 'next/link'
 import { ChevronLeft, Loader2, FileText, AlertTriangle, TrendingUp, Shield, Zap, Target, Printer, Download, ChevronDown } from 'lucide-react'
 import FieldHeatMap from '@/components/report/FieldHeatMap'
+import PossessionReview from '@/components/report/PossessionReview'
 
 interface Section {
   heading: string
@@ -505,6 +506,12 @@ export default function ReportPage() {
             <div style={{ marginBottom: 28 }}>
               <FieldHeatMap summary={report.summary} />
             </div>
+          )}
+
+          {/* Possession review (basketball) — renders only when the report summary
+              carries a possession_context blob (flag-gated at generation time). */}
+          {report.summary && typeof report.summary !== 'string' && report.summary.possession_context && (
+            <PossessionReview context={report.summary.possession_context} />
           )}
 
           {/* Watermark banner */}
