@@ -82,6 +82,8 @@ from backend.models.report_chat import ReportChatMessage  # noqa: E402
 from backend.models.source_connection import SourceConnection  # noqa: E402
 from backend.services.auth import hash_password, create_access_token  # noqa: E402
 from backend.services.encryption import encrypt_json  # noqa: E402
+from backend.models.legal import LegalAcceptance  # noqa: E402
+from backend.services.legal import STUDENT_DATA_VERSION  # noqa: E402
 from backend.routers import scout_football, reports, scout, events, games  # noqa: E402
 # PII-bearing routers, mounted so the tenant-isolation sweep exercises the real
 # handlers. None of these pull in boto3/twilio/playwright at import (verified), so
@@ -110,7 +112,7 @@ TABLES = [Organization.__table__, User.__table__, Game.__table__,
           Event.__table__, TendencyReport.__table__, Job.__table__, AgentLog.__table__,
           Clip.__table__, Team.__table__, RosterPlayer.__table__, GradeAnnotation.__table__,
           Playlist.__table__, PlaylistClip.__table__, ReportChatMessage.__table__,
-          SourceConnection.__table__]
+          SourceConnection.__table__, LegalAcceptance.__table__]
 
 # Swap the Postgres-only types on just the tables we create.
 for _t in TABLES:
@@ -147,6 +149,13 @@ async def setup_db():
         ids["analyst"] = str(analyst.id)
         ids["reviewer"] = str(reviewer.id)
         ids["other"] = str(other.id)
+        # COPPA/FERPA: the main test org has made the student-data attestation, so the
+        # gated endpoints (scout session, roster, film) run their intended path instead
+        # of returning the consent 403. Uses the real model fields and the current
+        # version constant from backend.services.legal, never a hardcoded date.
+        db.add(LegalAcceptance(organization_id=org.id, user_id=reviewer.id,
+                               document="student_data", version=STUDENT_DATA_VERSION))
+        await db.commit()
         # A completed report to exercise /export (generated_at set, real summary).
         summary = {
             "total_plays": 80, "offense_plays": 60, "defense_plays": 20,
@@ -382,6 +391,9 @@ async def run():
 
         # ── Entitlement gates fire on a real endpoint (trial vs paid) ──────
         await entitlement_gates(ac)
+
+        # ── COPPA/FERPA student-data gate denies before, allows after ──────
+        await student_consent_gate(ac)
 
         # ── Readiness probe pings the live DB (happy path) ─────────────────
         from backend.health import db_ready
@@ -641,6 +653,49 @@ async def entitlement_gates(ac):
     check("trial single-game report -> 200 (allowed)", r.status_code == 200)
     r = await ac.post("/reports", json={"title": "Multi", "sport": "football", "game_ids": [g1, g2]}, headers=tok("analyst"))
     check("paid multi-game report -> 200 (control)", r.status_code == 200)
+
+
+async def student_consent_gate(ac):
+    """Prove the COPPA/FERPA student-data gate still denies before attestation and
+    allows after, on a DEDICATED fresh org so it cannot ride the main org's seeded
+    acceptance. The denied path must be the structured consent 403 (not a missing-table
+    500 or a validation error), and the allowed path must reach the real positive
+    response once a valid acceptance is seeded for THIS org only. No bypass, no
+    monkeypatch, no policy-constant change, and the seeded row uses the model's real
+    fields plus the imported current version constant."""
+    async with AsyncSessionLocal() as db:
+        corg = Organization(name="Consent HS", slug=f"consent-{uuid.uuid4().hex[:8]}",
+                            is_trial=False)
+        db.add(corg)
+        await db.flush()
+        cuser = User(organization_id=corg.id, name="Consent Owner",
+                     email=f"consent-{uuid.uuid4().hex[:6]}@x.com",
+                     hashed_password=hash_password("x"), role="owner", email_verified=True)
+        db.add(cuser)
+        await db.commit()
+        for o in (corg, cuser):
+            await db.refresh(o)
+        corg_id, cuser_id = str(corg.id), str(cuser.id)
+    ctok = {"Authorization": f"Bearer {create_access_token(cuser_id, corg_id)}"}
+    body = {"opponent": "Gate Test", "games_scouted": 3}
+
+    # BEFORE attestation: the gate denies with the structured consent error.
+    r = await ac.post("/scout/football/session", json=body, headers=ctok)
+    detail = r.json().get("detail") if r.headers.get("content-type", "").startswith("application/json") else None
+    check("consent gate: denied before attestation -> 403 student_consent_required",
+          r.status_code == 403 and isinstance(detail, dict)
+          and detail.get("code") == "student_consent_required")
+
+    # Seed a VALID acceptance for THIS org only (real model fields, current version).
+    async with AsyncSessionLocal() as db:
+        db.add(LegalAcceptance(organization_id=uuid.UUID(corg_id), user_id=uuid.UUID(cuser_id),
+                               document="student_data", version=STUDENT_DATA_VERSION))
+        await db.commit()
+
+    # AFTER attestation: the same otherwise-valid request reaches its positive path.
+    r = await ac.post("/scout/football/session", json=body, headers=ctok)
+    check("consent gate: allowed after attestation -> 200 + session_id",
+          r.status_code == 200 and bool(r.json().get("session_id")))
 
 
 if __name__ == "__main__":
