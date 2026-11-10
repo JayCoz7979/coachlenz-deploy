@@ -6,9 +6,13 @@ Two consents are captured and enforced:
   - student_data: a per-ORG authority attestation made before any student-athlete
     roster data is entered — the COPPA/FERPA representation.
 
-Versions are bumped when the corresponding legal/*.md text is finalized or changed
-by the attorney, which forces a fresh acceptance. They stay "-draft" until then.
-This module is the enforcement scaffolding; the actual legal TEXT is the lawyer's.
+Versions are bumped when the corresponding legal text is finalized or changed, which
+forces a fresh acceptance (per-user terms/privacy via the ReconsentGate modal).
+This module is the enforcement scaffolding; the TEXT lives on the /terms and /privacy
+pages. The terms + privacy text was finalized for the self-serve launch on
+2026-11-10 (self-serve-coach-facing, with the upload-rights warranty and AI-analysis
+disclosure); an attorney glance is still recommended for the school/district DPA and
+the biometric specifics. The student-data + recruiting attestations remain -draft.
 """
 from fastapi import HTTPException
 from sqlalchemy import select, func
@@ -16,8 +20,8 @@ from sqlalchemy.exc import IntegrityError
 
 from backend.models.legal import LegalAcceptance
 
-TERMS_VERSION = "2026-07-31-draft"
-PRIVACY_VERSION = "2026-07-31-draft"
+TERMS_VERSION = "2026-11-10"
+PRIVACY_VERSION = "2026-11-10"
 STUDENT_DATA_VERSION = "2026-07-31-draft"
 RECRUITING_DIRECTORY_VERSION = "2026-08-05-draft"
 
