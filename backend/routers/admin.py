@@ -76,7 +76,7 @@ async def funnel_gate(user: User = Depends(require_admin), db: AsyncSession = De
 @router.get("/analysis-costs")
 async def analysis_costs(user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     """Real per-run analysis cost from the measured cost logs (agent_logs phase=cost),
-    grouped by sport + type, each checked against its 65% margin ceiling. This is the
+    grouped by sport + type, each checked against its 50% margin ceiling. This is the
     live answer to 'what does a football deep analysis actually cost', from our own
     token accounting, not Anthropic's aggregate bill."""
     rows = (await db.execute(

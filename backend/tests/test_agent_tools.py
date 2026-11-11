@@ -39,14 +39,14 @@ def test_credit_costs_tool_returns_locked_numbers():
     out = asyncio.run(T.by_name("credit_costs").handler(ctx, {}))
     assert out["standard"]["football"] == 29
     assert out["deep_grade"]["football"] == 55
-    assert out["margin_floor"] == 0.65
+    assert out["margin_floor"] == 0.50
 
 
 def test_margin_check_tool_math():
     ctx = T.ToolContext(db=None)
     out = asyncio.run(T.by_name("margin_check").handler(ctx, {"avg_cost_usd": 10.0, "credits": 55}))
     assert out["revenue_at_floor_usd"] == 38.5
-    assert out["max_cogs_to_hold_floor_usd"] == 13.475
+    assert out["max_cogs_to_hold_floor_usd"] == 19.25
     assert out["verdict"] == "pass"
 
 

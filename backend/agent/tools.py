@@ -141,7 +141,7 @@ async def _learning_summary(ctx: ToolContext, args: Dict[str, Any]) -> Dict[str,
 TOOLS: List[Tool] = [
     Tool("credit_costs", "The credit cost of each analysis type, the credit bundles, and the margin floor. No arguments.",
          {"type": "object", "properties": {}, "additionalProperties": False}, _credit_costs),
-    Tool("margin_check", "Check whether a measured average compute cost per run holds the 65% margin floor for an analysis of a given credit size.",
+    Tool("margin_check", "Check whether a measured average compute cost per run holds the 50% margin floor for an analysis of a given credit size.",
          {"type": "object", "properties": {
              "avg_cost_usd": {"type": "number", "description": "measured average USD cost per run"},
              "credits": {"type": "integer", "description": "credit cost of that analysis type"}},
