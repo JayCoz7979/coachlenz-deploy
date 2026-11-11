@@ -64,7 +64,9 @@ export default function ReconsentGate() {
           <a href="/privacy" target="_blank" rel="noreferrer" style={{ color: '#C9A84C', textDecoration: 'underline' }}>Privacy Policy</a>
         </div>
         {err && <div style={{ fontSize: 12, color: '#e07070', marginBottom: 10 }}>{err}</div>}
-        <button onClick={accept} disabled={saving} className="btn-primary" style={{ width: '100%' }}>
+        <button onClick={accept} disabled={saving} className="btn-primary" style={{
+          width: '100%', height: 'auto', minHeight: 48, padding: '12px 20px',
+          whiteSpace: 'normal', lineHeight: 1.35, textAlign: 'center' }}>
           {saving ? 'Saving…' : `I have read and accept the updated ${label}`}
         </button>
         <p style={{ fontSize: 10, color: '#7a7a6e', marginTop: 10, textAlign: 'center' }}>
