@@ -4,50 +4,10 @@ import { usePathname } from 'next/navigation'
 import { useAuth } from '@/lib/auth'
 // Static import so the asset serves under output:'standalone' (public/ is not bundled).
 import logo from '../../public/coachlenz-logo.png'
-import {
-  LayoutDashboard, Users, Film, FileText, Settings,
-  Share2, ShieldCheck, LogOut, Upload, Link2, Target, ClipboardList, Award, UserPlus, BarChart3, UserCircle, ShieldAlert,
-} from 'lucide-react'
-
-const NAV_SECTIONS = [
-  {
-    label: 'Film Room',
-    items: [
-      { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-      { href: '/games', label: 'Film Library', icon: Film },
-      { href: '/games/upload?tab=url', label: 'Import Film', icon: Upload },
-      { href: '/scout', label: 'Scout Opponent', icon: Target },
-      { href: '/reports', label: 'Reports', icon: FileText },
-      { href: '/grades', label: 'Player Grades', icon: Award },
-    ],
-  },
-  {
-    label: 'Organization',
-    items: [
-      { href: '/teams', label: 'Teams', icon: Users },
-      { href: '/roster', label: 'Rosters', icon: ClipboardList },
-      { href: '/staff', label: 'Staff', icon: UserPlus, requiresPermission: 'can_invite_staff' },
-      { href: '/ad', label: 'Usage Dashboard', icon: BarChart3, requiresAdTier: true },
-      // Coach Tenure (kill) and Teams of Month (defer) pulled from the nav per the
-      // feature-value chart: they were vitamins padding the "what am I paying for"
-      // surface. Backend routes/data remain intact (non-destructive, reversible); a
-      // full teardown is flagged separately as it needs a migration + Jay's go.
-    ],
-  },
-  {
-    label: 'Account',
-    items: [
-      { href: '/settings/connections', label: 'Connected Accounts', icon: Link2 },
-      { href: '/referrals', label: 'Referrals', icon: Share2 },
-      // Coach Tenure is not a customer feature (it's the founder's own profile tool), so
-      // it is admin-only: reachable for admins, never shown to coaches.
-      { href: '/coaches', label: 'Coach Tenure', icon: UserCircle, requiresAdmin: true },
-      { href: '/admin', label: 'Admin', icon: ShieldCheck, requiresAdmin: true },
-      { href: '/admin/privacy-requests', label: 'Privacy Requests', icon: ShieldAlert, requiresAdmin: true },
-      { href: '/settings', label: 'Settings', icon: Settings },
-    ],
-  },
-]
+import { LogOut } from 'lucide-react'
+// Shared nav source of truth, rendered by both this legacy shell and OSShell, so
+// every section is reachable from whichever shell the current page uses.
+import { NAV_SECTIONS, navItemVisible } from '@/lib/nav'
 
 const TIER_LABELS: Record<string, string> = {
   trial: 'Trial',
@@ -87,13 +47,7 @@ export default function Sidebar() {
       {/* Navigation */}
       <nav style={{ flex: 1, padding: '8px 8px', overflowY: 'auto' }}>
         {NAV_SECTIONS.map(section => {
-          const visible = section.items.filter(item => {
-            if ((item as any).requiresTenure && !user?.organization?.has_coach_tenure_access) return false
-            if ((item as any).requiresAdmin && !user?.organization?.admin_level) return false
-            if ((item as any).requiresPermission && !user?.permissions?.includes((item as any).requiresPermission)) return false
-            if ((item as any).requiresAdTier && !['athletic_dept', 'district'].includes(user?.organization?.subscription_tier || '')) return false
-            return true
-          })
+          const visible = section.items.filter(item => navItemVisible(item, user))
           if (!visible.length) return null
           return (
             <div key={section.label} style={{ marginBottom: 16 }}>

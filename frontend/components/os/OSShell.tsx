@@ -14,55 +14,9 @@ import { SPORTS, SPORT_META } from '@/lib/sports'
 // Static import so the asset is emitted to /_next/static/media (served in the
 // standalone build); the public/ folder is not bundled with output:'standalone'.
 import logo from '../../public/coachlenz-logo.png'
-
-const NAV: { section: string; items: NavItem[] }[] = [
-  {
-    section: 'Analysis',
-    items: [
-      { href: '/dashboard', label: 'Dashboard', icon: '📊' },
-      { href: '/games', label: 'Film Room', icon: '🎬' },
-      { href: '/live', label: 'Live Game', icon: '⚡', badge: 'New', badgeKind: 'gold' },
-      { href: '/tendencies', label: 'Tendency Engine', icon: '🧠' },
-      { href: '/reports', label: 'Scout Reports', icon: '📋' },
-    ],
-  },
-  {
-    section: 'Intelligence',
-    items: [{ href: '/intel', label: 'Film Intelligence', icon: '🔬', badge: 'Live', badgeKind: 'g' }],
-  },
-  {
-    section: 'Roster',
-    items: [
-      { href: '/players', label: 'Player Grades', icon: '👤' },
-      { href: '/recruiting', label: 'Recruiting', icon: '🎯', badge: 'New', badgeKind: 'gold' },
-    ],
-  },
-  {
-    section: 'Staff',
-    items: [
-      { href: '/messaging', label: 'Staff Messaging', icon: '💬' },
-      { href: '/games/upload', label: 'Upload Film', icon: '⬆️' },
-    ],
-  },
-  {
-    section: 'Account',
-    items: [
-      { href: '/settings/connections', label: 'Connected Accounts', icon: '🔗' },
-      { href: '/settings/billing', label: 'Plans & Pricing', icon: '💳' },
-      { href: '/referrals', label: 'Referrals', icon: '🎁' },
-      { href: '/admin', label: 'Admin', icon: '🛡️', requiresAdmin: true },
-    ],
-  },
-]
-
-interface NavItem {
-  href: string
-  label: string
-  icon: string
-  badge?: string
-  badgeKind?: 'g' | 'gold' | 'r'
-  requiresAdmin?: boolean
-}
+// Shared nav source of truth, rendered by both OSShell and the legacy Sidebar, so
+// every section is reachable from whichever shell the current page uses.
+import { NAV_SECTIONS, navItemVisible } from '@/lib/nav'
 
 // Sport tabs, sourced from the single sports list (mirrors backend CHOOSABLE_SPORTS).
 const ALL_SPORTS = SPORTS.map(k => ({ key: k as string, ...SPORT_META[k] }))
@@ -92,7 +46,6 @@ export default function OSShell({ title, children }: { title: string; children: 
   if (isLoading || !user) return null
 
   const org = user.organization
-  const isAdmin = !!org.admin_level
   const tabs = ALL_SPORTS.filter(s => sports.includes(s.key))
   // Show ONLY the org's actually-chosen sport(s). Never invent a default (the old
   // code fell back to Football, which was wrong for a basketball coach). If the sport
@@ -114,12 +67,12 @@ export default function OSShell({ title, children }: { title: string; children: 
           <img src={logo.src} alt="CoachLenz"
                style={{ width: '100%', maxWidth: 210, height: 'auto', display: 'block' }} />
         </div>
-        {NAV.map(group => {
-          const items = group.items.filter(i => !i.requiresAdmin || isAdmin)
+        {NAV_SECTIONS.map(group => {
+          const items = group.items.filter(i => navItemVisible(i, user))
           if (!items.length) return null
           return (
-            <div className="nav-sec" key={group.section}>
-              <div className="nav-lbl">{group.section}</div>
+            <div className="nav-sec" key={group.label}>
+              <div className="nav-lbl">{group.label}</div>
               {items.map(item => (
                 <Link
                   key={item.href}
@@ -127,7 +80,7 @@ export default function OSShell({ title, children }: { title: string; children: 
                   className={'ni' + (isActive(item.href) ? ' active' : '')}
                   onClick={() => setNavOpen(false)}
                 >
-                  <span className="ni-icon">{item.icon}</span>
+                  <span className="ni-icon">{item.emoji}</span>
                   {item.label}
                   {item.badge && (
                     <span className={'ni-badge nb-' + (item.badgeKind || 'g')}>{item.badge}</span>
