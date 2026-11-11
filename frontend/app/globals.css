@@ -65,7 +65,7 @@ html, body {
     align-items: center;
     justify-content: center;
     gap: 6px;
-    background: #C9A84C;
+    background: var(--gold);
     color: #1c1c1c;
     border: none;
     border-radius: 2px;
@@ -79,7 +79,7 @@ html, body {
     transition: background 0.12s;
     white-space: nowrap;
   }
-  .btn-primary:hover { background: #e2c06a; }
+  .btn-primary:hover { background: var(--gold-light); }
   .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
 
   .btn-green {
@@ -87,7 +87,7 @@ html, body {
     align-items: center;
     justify-content: center;
     gap: 6px;
-    background: #1a5c2a;
+    background: var(--green);
     color: #f8f6f0;
     border: none;
     border-radius: 2px;
@@ -101,7 +101,7 @@ html, body {
     transition: background 0.12s;
     white-space: nowrap;
   }
-  .btn-green:hover { background: #236b32; }
+  .btn-green:hover { background: var(--green-mid); }
   .btn-green:disabled { opacity: 0.45; cursor: not-allowed; }
 
   .btn-outline {
@@ -110,8 +110,8 @@ html, body {
     justify-content: center;
     gap: 6px;
     background: transparent;
-    color: #f8f6f0;
-    border: 1px solid rgba(255,255,255,0.20);
+    color: var(--text);
+    border: 1px solid var(--border3);
     border-radius: 2px;
     padding: 0 20px;
     height: 48px;
@@ -151,7 +151,7 @@ html, body {
     align-items: center;
     justify-content: center;
     gap: 6px;
-    background: #C9A84C;
+    background: var(--gold);
     color: #1c1c1c;
     border: none;
     border-radius: 2px;
@@ -164,24 +164,24 @@ html, body {
     cursor: pointer;
     transition: background 0.12s;
   }
-  .btn-gold:hover { background: #e2c06a; }
+  .btn-gold:hover { background: var(--gold-light); }
 
   /* ── Inputs ── */
   .input {
-    background: #3d3d3d;
-    border: 1px solid rgba(255,255,255,0.10);
+    background: var(--bg3);
+    border: 1px solid var(--border2);
     border-radius: 2px;
     padding: 12px 16px;
     height: 48px;
-    color: #f8f6f0;
+    color: var(--text);
     font-family: var(--font-dm-sans, sans-serif);
     font-size: 14px;
     width: 100%;
     transition: border-color 0.12s;
   }
-  .input:focus { outline: none; border: 2px solid #C9A84C; }
-  .input::placeholder { color: #7a7a6e; }
-  .input option { background: #3d3d3d; }
+  .input:focus { outline: none; border: 2px solid var(--gold); }
+  .input::placeholder { color: var(--text3); }
+  .input option { background: var(--bg3); }
 
   /* ── Labels ── */
   .label {
@@ -189,7 +189,7 @@ html, body {
     font-family: var(--font-dm-mono, monospace);
     font-size: 10px;
     font-weight: 500;
-    color: #7a7a6e;
+    color: var(--text3);
     text-transform: uppercase;
     letter-spacing: 0.09em;
     margin-bottom: 5px;
@@ -197,8 +197,8 @@ html, body {
 
   /* ── Cards ── */
   .card {
-    background: #2e2e2e;
-    border: 1px solid rgba(255,255,255,0.06);
+    background: var(--bg2);
+    border: 1px solid var(--border);
     border-radius: 4px;
     padding: 20px 22px;
   }
@@ -306,3 +306,22 @@ html, body {
 
 @keyframes fadeUp { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @keyframes pulseDot { 0%,100% { opacity: 1; } 50% { opacity: 0.2; } }
+
+/* ── Light theme (opt-in via body.app-light) ──────────────────────────────
+   Dark is the default (the :root block above) and is left untouched. Light only
+   re-maps the semantic tokens; html/body and the tokenized component classes
+   (card, input, button and label) read these vars, so they flip with no extra edits.
+   Greens/gold are deepened for contrast on light surfaces. */
+body.app-light {
+  --green:#1a5c2a; --green-mid:#236b32; --green-light:#2d8c40;
+  --gold:#b08d2e; --gold-light:#caa64a; --gold-bg:rgba(176,141,46,0.12); --gold-border:rgba(176,141,46,0.28);
+  --bg:#f4f6f1; --bg2:#ffffff; --bg3:#e9ece4;
+  --text:#191a17; --text2:#3b3d36; --text3:#6a6d62;
+  --border:rgba(0,0,0,0.08); --border2:rgba(0,0,0,0.12); --border3:rgba(0,0,0,0.22);
+  --error:#c0392b; --error-bg:rgba(192,57,43,0.10);
+  --green2:#236b32; --green3:#2d8c40; --greenl:rgba(26,92,42,0.14); --greenl2:rgba(26,92,42,0.06);
+  --gold2:#caa64a; --goldl:rgba(176,141,46,0.14); --red:#c0392b; --redl:rgba(192,57,43,0.10);
+  --warn:#b7791f; --warnl:rgba(183,121,31,0.12);
+}
+body.app-light ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.14); }
+body.app-light ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.26); }
