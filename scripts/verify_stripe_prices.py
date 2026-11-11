@@ -4,14 +4,14 @@ Reconcile the LIVE Stripe Price amounts against the rate the billing page charge
 for. Confirms decision item 4 from docs/coachlenz-build-spec-v3.1.md: does Stripe
 actually charge what customers are shown?
 
-WHY THIS MATTERS — three sources currently disagree on the monthly price:
-  * billing page display  (frontend/app/settings/billing/page.tsx): $199 / $399 / $1,999
-  * scripts/stripe_setup.py (what it CREATES):                        $49  / $99  / $249
-  * v3.0 spec:                                                        $299 / $599 / $2,999
-If stripe_setup.py was ever run to create the live prices, customers are being
-charged a fraction of the advertised rate. This script reads the ACTUAL prices
-from Stripe and tells you which (if any) source is live. Set EXPECTED below to the
-rate Team Analysis ratifies, then this becomes a pre-launch guard.
+WHY THIS MATTERS: the subscription price a customer pays is a pre-created Stripe Price
+object (billing.py references STRIPE_PRICE_COACH / STRIPE_PRICE_ATHLETIC_DEPT by id), so
+the real charge lives in Stripe, not in the code. In-repo sources have disagreed on that
+number over time (old setup scripts say $199 / $399, the retired marketing site showed
+$149 / $299). The current locked, customer-facing rate is Coach $9.99/mo ($99/yr) and
+Athletic Dept $29.99/mo ($299/yr), per the app billing page and services/credits.py. This
+script reads the ACTUAL Stripe prices and confirms they match that rate before it goes on
+any public page.
 
 Run with the secret key + price IDs in the ENVIRONMENT, never in code. On Railway
 they already exist:
@@ -32,12 +32,19 @@ import sys
 import stripe
 
 # EXPECTED = the rate the customer-facing billing page charges for (the source of
-# truth for what a customer agreed to pay). Update if Team Analysis ratifies a
-# different number; do NOT quietly change it to match a wrong Stripe price.
+# truth for what a customer agreed to pay). Update only to a number Jay has ratified;
+# do NOT quietly change it to match a wrong Stripe price.
+#
+# Locked model: two self-serve tiers. District and enterprise are sales-assisted (no
+# self-serve Stripe price in PRICE_MAP), so they are out of scope for this guard.
 EXPECTED = {
-    "STRIPE_PRICE_COACH":         {"tier": "coach",         "usd": 199,  "interval": "month"},
-    "STRIPE_PRICE_ATHLETIC_DEPT": {"tier": "athletic_dept", "usd": 399,  "interval": "month"},
-    "STRIPE_PRICE_DISTRICT":      {"tier": "district",      "usd": 1999, "interval": "month"},
+    "STRIPE_PRICE_COACH":         {"tier": "coach",         "usd": 9.99,  "interval": "month"},
+    "STRIPE_PRICE_ATHLETIC_DEPT": {"tier": "athletic_dept", "usd": 29.99, "interval": "month"},
+    # Annual prices ($99 / $299, two months free). Annual billing is dormant until these
+    # env vars are set (billing.py annual_available()); uncomment to guard them once the
+    # annual price IDs are configured in Railway.
+    # "STRIPE_PRICE_COACH_ANNUAL":         {"tier": "coach (annual)",         "usd": 99,  "interval": "year"},
+    # "STRIPE_PRICE_ATHLETIC_DEPT_ANNUAL": {"tier": "athletic_dept (annual)", "usd": 299, "interval": "year"},
 }
 
 
