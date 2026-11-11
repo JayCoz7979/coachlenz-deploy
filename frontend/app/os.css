@@ -9,6 +9,7 @@
   --gold:#c9a84c;--gold2:#e8c96a;--goldl:rgba(201,168,76,0.15);
   --red:#ef4444;--redl:rgba(239,68,68,0.12);
   --warn:#f59e0b;--warnl:rgba(245,158,11,0.12);
+  --topbar:rgba(7,9,13,.92);
   --mono:var(--font-dm-mono,'DM Mono',monospace);
   --sans:var(--font-dm-sans,'DM Sans',sans-serif);
   --display:var(--font-syne,'Syne',sans-serif);
@@ -45,7 +46,7 @@
 .clz .tour-btn{display:block;width:100%;margin-top:9px;padding:8px;border-radius:8px;background:transparent;border:1px solid var(--border2);color:var(--text2);font-size:12px;cursor:pointer;text-align:center;transition:.12s;font-family:var(--sans)}
 .clz .tour-btn:hover{background:var(--bg3);color:var(--text)}
 .clz .main{flex:1;min-width:0}
-.clz .topbar{position:sticky;top:37px;z-index:50;background:rgba(7,9,13,.92);backdrop-filter:blur(14px);border-bottom:1px solid var(--border);padding:10px 22px;display:flex;align-items:center;gap:12px}
+.clz .topbar{position:sticky;top:37px;z-index:50;background:var(--topbar);backdrop-filter:blur(14px);border-bottom:1px solid var(--border);padding:10px 22px;display:flex;align-items:center;gap:12px}
 .clz .page-ttl{font-family:var(--display);font-size:15px;font-weight:700;flex:1;white-space:nowrap}
 .clz .sport-tabs{display:flex;gap:4px;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
 .clz .sport-tabs::-webkit-scrollbar{display:none}
@@ -404,3 +405,20 @@
 .clz .sp{display:block}
 .clz .report-viewer{display:block}
 .clz .ai-resp{display:block}
+
+/* ── Light theme (opt-in via body.app-light) ──────────────────────────────
+   Dark is the default and is left untouched above. Light only re-maps the
+   semantic tokens; every .clz rule already reads them, so the whole OS shell
+   flips with no per-component edits. Greens/gold are deepened here so accent
+   text stays legible on light surfaces (the dark ramp is tuned for the inverse). */
+body.app-light .clz{
+  --bg:#f4f6f1;--bg2:#ffffff;--bg3:#eef1ea;--bg4:#e4e8dd;--bg5:#d9dfce;
+  --border:rgba(20,32,18,0.10);--border2:rgba(20,32,18,0.15);--border3:rgba(20,32,18,0.26);
+  --text:#16201a;--text2:#3d4a3e;--text3:#6b766c;
+  --green:#234011;--green2:#2f5618;--green3:#2f6a18;--green4:#1f9d47;
+  --greenl:rgba(45,80,22,0.12);--greenl2:rgba(45,80,22,0.05);
+  --gold:#b08d2e;--gold2:#caa64a;--goldl:rgba(176,141,46,0.16);
+  --red:#cf3a3a;--redl:rgba(207,58,58,0.10);
+  --warn:#b7791f;--warnl:rgba(183,121,31,0.13);
+  --topbar:rgba(255,255,255,.90);
+}

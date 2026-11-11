@@ -4,6 +4,8 @@ import './globals.css'
 import './os.css'
 import ReconsentGate from '@/components/legal/ReconsentGate'
 import ServiceWorkerRegistrar from '@/components/ServiceWorkerRegistrar'
+import { ThemeProvider } from '@/components/theme/ThemeProvider'
+import { NO_FLASH_SCRIPT } from '@/lib/theme/theme'
 
 const bebasNeue = Bebas_Neue({
   subsets: ['latin'],
@@ -67,6 +69,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body className={`${bebasNeue.variable} ${dmSans.variable} ${dmMono.variable} ${syne.variable}`}>
+        {/* Applies the saved light/dark theme + accent before paint, so there is no flash. */}
+        <script dangerouslySetInnerHTML={{ __html: NO_FLASH_SCRIPT }} />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{
@@ -82,8 +86,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             }),
           }}
         />
-        {children}
-        <ReconsentGate />
+        <ThemeProvider>
+          {children}
+          <ReconsentGate />
+        </ThemeProvider>
         <ServiceWorkerRegistrar />
       </body>
     </html>

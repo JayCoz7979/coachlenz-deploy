@@ -14,6 +14,7 @@ import { SPORTS, SPORT_META } from '@/lib/sports'
 // Static import so the asset is emitted to /_next/static/media (served in the
 // standalone build); the public/ folder is not bundled with output:'standalone'.
 import logo from '../../public/coachlenz-logo.png'
+import ThemeMenu from '@/components/theme/ThemeMenu'
 
 const NAV: { section: string; items: NavItem[] }[] = [
   {
@@ -169,6 +170,7 @@ export default function OSShell({ title, children }: { title: string; children: 
               ))}
             </div>
           )}
+          <ThemeMenu />
         </div>
         <div className="page">{children}</div>
       </div>
