@@ -46,6 +46,9 @@ class RegisterRequest(BaseModel):
     referral_code: str | None = None
     # Must be true: the user checked the Terms + Privacy consent box at signup.
     accepted_terms: bool = False
+    # Optional, explicit: the coach ticked the "send me CoachLenz tips and product
+    # updates" box. Defaults false (unchecked) so marketing is opt-IN, never assumed.
+    marketing_opt_in: bool = False
     # Anonymous funnel id from the landing page, so the account can be tied back to
     # the visit it came from. Optional, best-effort, never required.
     anon_id: str | None = None
@@ -112,6 +115,13 @@ async def register(body: RegisterRequest, request: Request, db: AsyncSession = D
     user.signup_ip = ip  # persisted on commit below — chargeback/dispute evidence
     await record_acceptance(db, org.id, user.id, "terms", ip=ip)
     await record_acceptance(db, org.id, user.id, "privacy", ip=ip)
+
+    # Marketing permission (opt-IN only). If the coach ticked the box, record the
+    # consent + timestamp and log it with the IP for the audit trail, same as terms.
+    if body.marketing_opt_in:
+        user.marketing_opt_in = True
+        user.marketing_opt_in_at = datetime.utcnow()
+        await record_acceptance(db, org.id, user.id, "marketing", ip=ip)
 
     if referred_by:
         from backend.models.referral import Referral
@@ -360,3 +370,23 @@ async def verify_phone(request: Request, body: VerifyPhoneRequest, user: User = 
     await db.execute(update(User).where(User.id == user.id).values(phone_verified=True))
     await db.commit()
     return {"ok": True, "phone_verified": True}
+
+
+class UnsubscribeRequest(BaseModel):
+    token: str
+
+
+@router.post("/unsubscribe")
+@limiter.limit("20/minute")
+async def unsubscribe(request: Request, body: UnsubscribeRequest, db: AsyncSession = Depends(get_db)):
+    """One-click marketing opt-out from an email link (public, no login). Flips the
+    coach's marketing_opt_in off by their stable unsubscribe token. Idempotent, and it
+    returns the same confirmation whether or not the token matched, so the endpoint
+    can't be used to probe which tokens are real."""
+    token = (body.token or "").strip()
+    if token:
+        u = (await db.execute(select(User).where(User.unsubscribe_token == token))).scalar_one_or_none()
+        if u is not None and u.marketing_opt_in:
+            u.marketing_opt_in = False
+            await db.commit()
+    return {"ok": True, "message": "You're unsubscribed from CoachLenz marketing emails."}

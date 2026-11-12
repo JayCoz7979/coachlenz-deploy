@@ -1,3 +1,4 @@
+import secrets
 import uuid
 from datetime import datetime
 from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Integer, CheckConstraint
@@ -51,6 +52,13 @@ class User(Base):
     # SMS send endpoint can't be looped to pump Twilio (toll fraud).
     phone_verify_last_sent = Column(DateTime(timezone=True))
     phone_verify_sent_today = Column(Integer, nullable=False, default=0, server_default="0")
+    # Marketing permission (migration 055): opt-in captured at signup so coaches can be
+    # emailed product updates, with the timestamp of consent. A stable per-user
+    # unsubscribe token backs a one-click opt-out (CAN-SPAM); it is generated for every
+    # user, so an opted-out or never-opted-in coach still has a working unsubscribe link.
+    marketing_opt_in = Column(Boolean, nullable=False, default=False, server_default="false")
+    marketing_opt_in_at = Column(DateTime(timezone=True))
+    unsubscribe_token = Column(String, unique=True, default=lambda: secrets.token_urlsafe(32))
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 

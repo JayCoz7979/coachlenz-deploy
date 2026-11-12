@@ -8,6 +8,16 @@ FROM = f"CoachLenz <noreply@{settings.RESEND_DOMAIN}>"
 FOUNDER_FROM = f"Jay Cosby, CoachLenz <jay@{settings.RESEND_DOMAIN}>"
 FOUNDER_REPLY_TO = settings.FOUNDER_REPLY_TO or f"jay@{settings.RESEND_DOMAIN}"
 
+# The app that hosts the /unsubscribe page (same host the reset-password link uses).
+APP_BASE = "https://app.coachlenz.com"
+
+
+def marketing_unsubscribe_url(token: str) -> str:
+    """One-click unsubscribe link for a coach's stable token. REQUIRED in the footer of
+    every marketing email (CAN-SPAM). A transactional email (welcome, verification,
+    report-ready, password reset) must NOT use this; only promotional sends do."""
+    return f"{APP_BASE}/unsubscribe?token={token}"
+
 async def send_welcome_email(to: str, name: str):
     first = (name or "Coach").split(" ")[0]
     resend.Emails.send({
