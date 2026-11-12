@@ -350,7 +350,7 @@ export default function AdminPage() {
           )}
           {tab === 'costs' && (
             <div className="space-y-4">
-              <p className="text-sm text-gray-400">Real measured cost per analysis run (from our own token accounting), grouped by sport and type, checked against the {costs ? Math.round(costs.margin_floor * 100) : 65}% margin floor at the cheapest credit price (${costs?.floor_credit_price ?? 0.70}/credit). <span className="text-gray-300">pass</span> holds the floor, <span className="text-gray-300">watch</span> is 50-65%, <span className="text-gray-300">fail</span> is below 50%.</p>
+              <p className="text-sm text-gray-400">Real measured cost per analysis run (from our own token accounting), grouped by sport and type, checked against the {costs ? Math.round(costs.margin_floor * 100) : 65}% margin floor at the cheapest credit price (${costs?.floor_credit_price ?? 0.70}/credit). <span className="text-gray-300">pass</span> holds the floor, <span className="text-gray-300">watch</span> is 40-50%, <span className="text-gray-300">fail</span> is below 40%.</p>
               {costs && costs.groups?.length > 0 ? (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">

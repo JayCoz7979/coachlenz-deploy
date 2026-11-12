@@ -13,9 +13,11 @@ Subscriptions are cheap access, not credits:
 A deep film analysis spends a fixed number of credits by type (below), drawn from the
 org's wallet, and is refunded if the run fails.
 
-Margin: a 65% gross floor is non-negotiable. Validate against the CHEAPEST credit
-price ($0.70 at the Department bundle) versus real compute cost, if it holds at $0.70
-it holds everywhere. max_cogs_at_floor() gives the ceiling per analysis size.
+Margin: a 50% gross floor (Jay, 2026-11-11, down from 65% to price more accessibly
+while launching; raise it back as the base grows and compute keeps getting cheaper).
+Validate against the CHEAPEST credit price ($0.70 at the Department bundle) versus real
+compute cost, if it holds at $0.70 it holds everywhere. max_cogs_at_floor() gives the
+ceiling per analysis size.
 """
 import math
 from typing import Optional, Tuple
@@ -60,7 +62,7 @@ def segment_credits(sport: Optional[str], deep: bool,
     """Discounted credit cost for analyzing only a segment (e.g. one quarter).
 
     Charge the full-run cost scaled by the fraction of the film analyzed. This is
-    margin-NEUTRAL: compute cost and revenue both scale with the slice, so the 65%
+    margin-NEUTRAL: compute cost and revenue both scale with the slice, so the 50%
     floor holds exactly as it does on a full run. Falls back to the full cost when the
     film length is unknown, and never charges more than a full run or less than the
     segment floor."""
@@ -82,7 +84,11 @@ BUNDLES = {
 }
 
 # ── Margin floor: validate the cheapest credit ($0.70, Department) vs real COGS. ──
-MARGIN_FLOOR = 0.65
+# MARGIN_FLOOR is the pass line (acceptable gross margin); MARGIN_FAIL is the hard
+# loss-risk line. Between them is the "watch" (thin) band. Lowered 0.65 -> 0.50 on
+# 2026-11-11 (Jay) to price more accessibly at launch; nudge back up as scale grows.
+MARGIN_FLOOR = 0.50
+MARGIN_FAIL = 0.40
 FLOOR_CREDIT_PRICE = 0.70   # Department bundle per-credit price (the worst case)
 
 # Welcome credits granted on signup. 0 by design (credits are purchased); the free
@@ -100,7 +106,7 @@ WELCOME_CREDITS = 0
 #    one small-but-real breakdown per cycle while staying margin-safe on $9.99. AD 29
 #    covers one full standard analysis per cycle (basketball 27 / football 29), which
 #    the $29.99 tier has the headroom for. A free FULL analysis on Coach was rejected:
-#    real full-game compute (~$8-13) would break the 65% floor at $9.99. The larger
+#    real full-game compute (~$8-13) would break the 50% floor at $9.99. The larger
 #    "visible monthly value" job is carried by the monthly recap (F3), which reuses
 #    analysis already run and costs nothing to produce.
 MONTHLY_INCLUDED = {"coach": 9, "athletic_dept": 29}
@@ -108,7 +114,7 @@ MONTHLY_INCLUDED = {"coach": 9, "athletic_dept": 29}
 
 def max_cogs_at_floor(credits: int) -> float:
     """Max compute cost (USD) an analysis of this credit size may cost and still clear
-    the 65% gross floor at the cheapest bundle price. Real per-run cost must stay under
+    the 50% gross floor at the cheapest bundle price. Real per-run cost must stay under
     this."""
     revenue = credits * FLOOR_CREDIT_PRICE
     return round(revenue * (1 - MARGIN_FLOOR), 4)
@@ -116,15 +122,15 @@ def max_cogs_at_floor(credits: int) -> float:
 
 def margin_verdict(avg_cost_usd: float, credits: int) -> str:
     """Compare a measured average per-run cost to the credit revenue at the cheapest
-    bundle price. 'pass' holds the 65% floor, 'watch' is 50-65% (thin), 'fail' is below
-    50% margin (or a loss). This is the stress-test at $0.70/credit."""
+    bundle price. 'pass' holds the 50% floor, 'watch' is 40-50% (thin), 'fail' is below
+    40% margin (or a loss). This is the stress-test at $0.70/credit."""
     revenue = credits * FLOOR_CREDIT_PRICE
     if revenue <= 0:
         return "no_data"
     margin = 1 - (avg_cost_usd / revenue)
     if margin >= MARGIN_FLOOR:
         return "pass"
-    if margin >= 0.50:
+    if margin >= MARGIN_FAIL:
         return "watch"
     return "fail"
 

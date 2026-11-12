@@ -1,6 +1,6 @@
 """
 Analysis-credit model (pure): locked per-analysis credit costs, bundle catalog, the
-spend bucket math, and the 65% margin-floor helper.
+spend bucket math, and the 50% margin-floor helper.
 """
 from backend.services import credits as C
 
@@ -75,19 +75,21 @@ def test_bundles_catalog_and_descending_per_credit():
 
 
 def test_margin_floor_ceilings():
-    # Max compute cost per run to hold 65% at the cheapest ($0.70) credit price.
-    assert C.max_cogs_at_floor(29) == 7.105    # standard football
-    assert C.max_cogs_at_floor(55) == 13.475   # deep+grade football
-    assert C.max_cogs_at_floor(9) == 2.205     # re-analysis
-    assert C.MARGIN_FLOOR == 0.65
+    # Max compute cost per run to hold 50% at the cheapest ($0.70) credit price.
+    assert C.max_cogs_at_floor(29) == 10.15    # standard football
+    assert C.max_cogs_at_floor(55) == 19.25    # deep+grade football
+    assert C.max_cogs_at_floor(9) == 3.15      # re-analysis
+    assert C.MARGIN_FLOOR == 0.50
+    assert C.MARGIN_FAIL == 0.40
 
 
 def test_margin_verdict_bands():
     # Deep+grade football = 55 credits -> $38.50 revenue at the $0.70 floor.
+    # pass >= 50%, watch 40-50%, fail < 40%.
     assert C.margin_verdict(10.0, 55) == "pass"      # ~74% margin
-    assert C.margin_verdict(13.475, 55) == "pass"    # exactly 65%
-    assert C.margin_verdict(16.0, 55) == "watch"     # ~58%
-    assert C.margin_verdict(20.0, 55) == "fail"      # ~48% (thin/loss risk)
+    assert C.margin_verdict(19.25, 55) == "pass"     # exactly 50% (floor)
+    assert C.margin_verdict(21.0, 55) == "watch"     # ~45% (thin)
+    assert C.margin_verdict(25.0, 55) == "fail"      # ~35% (loss risk)
     assert C.margin_verdict(5.0, 0) == "no_data"
 
 
