@@ -26,6 +26,10 @@ async def get_me(user: User = Depends(get_current_user), org: Organization = Dep
         "permissions": sorted(role_permissions(user.role)),
         "phone": user.phone,
         "phone_verified": user.phone_verified,
+        # Email confirmation gates the free Live Game Logger (a confirmed email is the
+        # lead we capture), so the UI needs this to route an unverified coach to verify.
+        "email_verified": user.email_verified,
+        "marketing_opt_in": user.marketing_opt_in,
         "avatar_url": user.avatar_url,
         "organization": {
             "id": str(org.id),

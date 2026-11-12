@@ -78,7 +78,15 @@ export default function LiveSetupPage() {
   const [consent, setConsent] = useState<{ attestation: string } | null>(null)
 
   useEffect(() => { fetchMe() }, [])
-  useEffect(() => { if (!isLoading && !user) router.push('/login') }, [isLoading, user])
+  useEffect(() => {
+    if (isLoading) return
+    if (!user) { router.push('/login'); return }
+    // The free Live Game Logger requires a CONFIRMED email: that verified address is
+    // the lead we capture. An unverified coach is sent back to finish onboarding
+    // (which starts on the email-verify step). Only redirect on an explicit false, so a
+    // cached /me response that predates the field never locks anyone out.
+    if (user.email_verified === false) { router.push('/onboarding') }
+  }, [isLoading, user, router])
   useEffect(() => {
     if (!user) return
     api.get('/live/sessions').then(r => setSessions(r.data.sessions || [])).catch(() => {})
