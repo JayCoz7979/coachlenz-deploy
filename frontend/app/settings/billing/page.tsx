@@ -181,7 +181,7 @@ export default function BillingPage() {
                 </div>
               )}
               <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 14 }}>
-                Purchased credits never expire while your subscription is active. Standard football is {credits.analysis_costs?.standard?.football ?? 29} credits, deep + grade is {credits.analysis_costs?.deep_grade?.football ?? 55}, a re-analysis is {credits.analysis_costs?.reanalysis ?? 9}. The Live Game Logger is always free.
+                Purchased credits never expire while your subscription is active. Standard football is {credits.analysis_costs?.standard?.football ?? 29} credits, deep + grade is {credits.analysis_costs?.deep_grade?.football ?? 55}. Regenerating a report from an analysis you already ran is free; re-analyzing the film runs a new analysis at full price. The Live Game Logger is always free.
               </div>
               <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' as const }}>
                 {(credits.bundles || []).map((b: any) => (

@@ -54,8 +54,11 @@ def test_locked_credit_costs():
     # Deep + grade by sport
     assert C.credits_for(sport="football", deep=True, is_rerun=False) == 55
     assert C.credits_for(sport="basketball", deep=True, is_rerun=False) == 60  # provisional
-    # Re-analysis is flat regardless of sport/depth
-    assert C.credits_for(sport="football", deep=True, is_rerun=True) == 9
+    # A re-run is NOT discounted: re-detection re-executes the full pipeline, so it
+    # costs the full price of its type (never a flat 9 that would sell it below cost).
+    # Regenerating the report from stored events is the free path, not this.
+    assert C.credits_for(sport="football", deep=True, is_rerun=True) == 55
+    assert C.credits_for(sport="football", deep=False, is_rerun=True) == 29
     # Unknown sport falls back to the football cost (safe, highest)
     assert C.credits_for(sport="soccer", deep=False, is_rerun=False) == 29
     assert C.credits_for(sport=None, deep=True, is_rerun=False) == 55

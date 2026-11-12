@@ -36,16 +36,25 @@ SUBSCRIPTION_TIERS = {
 #    a validation run, treat as TBD, not final. ──
 STANDARD_CREDITS = {"football": 29, "basketball": 27, "flag": 22}
 DEEP_GRADE_CREDITS = {"football": 55, "basketball": 60}   # basketball TBD (provisional)
-REANALYSIS_CREDITS = 9
+# Minimum credits for any real run (guards the fixed per-run overhead on a tiny
+# segment). This is NOT a "re-analysis discount": re-running detection costs the full
+# price below, because a re-run re-executes the whole vision pipeline at full compute.
+# The only cheap path is regenerating the REPORT from stored events, and that is free.
+MIN_RUN_CREDITS = 9
 _DEFAULT_STANDARD = 29    # safe fallback for an unlisted sport (highest standard)
 _DEFAULT_DEEP = 55
 
 
-def credits_for(sport: Optional[str], deep: bool, is_rerun: bool) -> int:
-    """Credit cost of one analysis. Re-analysis is flat; otherwise by sport and whether
-    it is the deep+grade path. Unknown sports fall back to the football cost."""
-    if is_rerun:
-        return REANALYSIS_CREDITS
+def credits_for(sport: Optional[str], deep: bool, is_rerun: bool = False) -> int:
+    """Credit cost of one analysis, by sport and whether it is the deep+grade path.
+    Unknown sports fall back to the football cost.
+
+    ``is_rerun`` does NOT change the price. A re-run re-executes the full detection
+    pipeline, so it costs exactly as much as a fresh run of the same type, never a flat
+    discount (that mismatch would sell a full-compute run below cost). The flag is kept
+    only so callers can require confirmation and staff notification before a second full
+    charge on already-analyzed film. Regenerating the REPORT from stored events is a
+    separate, free action (no re-detection)."""
     s = (sport or "football").strip().lower()
     if deep:
         return DEEP_GRADE_CREDITS.get(s, _DEFAULT_DEEP)
@@ -53,8 +62,8 @@ def credits_for(sport: Optional[str], deep: bool, is_rerun: bool) -> int:
 
 
 # A segment run is charged at least this much (guards the fixed per-run overhead on a
-# tiny slice). A segment analysis is at least as costly as a re-analysis.
-SEGMENT_MIN_CREDITS = REANALYSIS_CREDITS
+# tiny slice), never less than the minimum real-run cost.
+SEGMENT_MIN_CREDITS = MIN_RUN_CREDITS
 
 
 def segment_credits(sport: Optional[str], deep: bool,
