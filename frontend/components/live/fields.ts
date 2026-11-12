@@ -35,6 +35,18 @@ export function gapLabel(value: string, sys: TermSystem): string {
   return sys === 'hole_numbers' ? g.holes : sys === 'zones' ? g.zones : g.letters
 }
 
+// A game may use one or several terminology systems at once (the coach selects all
+// that apply at setup; stored comma-joined). Parse that stored value into a clean,
+// de-duped list, always returning at least gap_letters so gap labels never go blank.
+const _VALID_TERMS = new Set<TermSystem>(['gap_letters', 'hole_numbers', 'zones'])
+export function parseTermSystems(raw?: string | null): TermSystem[] {
+  const list = (raw || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter((s): s is TermSystem => _VALID_TERMS.has(s as TermSystem))
+  return list.length ? Array.from(new Set(list)) : ['gap_letters']
+}
+
 // Flag football rush lanes (no interior blocking, replaces the OL gap diagram).
 export const RUSH_LANES = [
   { value: 'left_outside', label: 'Left Outside' },
@@ -102,6 +114,6 @@ export const GAME_TYPES = [
   { value: 'playoff', label: 'Playoff' },
   { value: 'scrimmage', label: 'Scrimmage' },
 ]
-export const WEATHER = ['Clear', 'Overcast', 'Rain', 'Wind', 'Cold']
+export const WEATHER = ['Clear', 'Overcast', 'Rain', 'Wind', 'Cold', 'Hot', 'Humid']
 export const SURFACES = ['Grass', 'Turf']
 export const LEAGUE_FORMATS = ['5-on-5', '7-on-7', '8-on-8']

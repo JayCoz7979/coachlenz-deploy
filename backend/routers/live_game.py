@@ -169,10 +169,10 @@ class SessionCreate(BaseModel):
     team_id: Optional[str] = None
 
     # football / flag football setup
-    weather: Optional[str] = None            # clear | overcast | rain | wind | cold
+    weather: Optional[str] = None            # one or more of clear|overcast|rain|wind|cold|hot|humid, comma-joined
     field_surface: Optional[str] = None      # grass | turf
     starting_possession: Optional[str] = None
-    terminology_system: Optional[str] = None  # gap_letters | hole_numbers | zones
+    terminology_system: Optional[str] = None  # one or more of gap_letters|hole_numbers|zones, comma-joined
     custom_routes: Optional[List[str]] = None
     league_format: Optional[str] = None      # flag football: 5on5 | 7on7 | 8on8
 
