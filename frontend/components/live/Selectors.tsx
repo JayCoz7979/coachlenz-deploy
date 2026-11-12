@@ -39,9 +39,12 @@ export function TapGroup({ options, value, onChange, cols }: {
 }
 
 /** 5-man offensive-line gap/hole selector. Labels adapt to the chosen system. */
-export function GapSelector({ value, onChange, system }: {
-  value?: string | null; onChange: (v: string) => void; system: TermSystem
+export function GapSelector({ value, onChange, systems }: {
+  value?: string | null; onChange: (v: string) => void; systems: TermSystem[]
 }) {
+  // The coach may pick several terminology systems. Show the first on each gap box,
+  // and any others on a small second line, so the diagram stays readable.
+  const sys: TermSystem[] = systems.length ? systems : ['gap_letters']
   // 8 gaps across; center the line. OL boxes sit between the inner gaps.
   const W = 360, H = 150
   const gapW = W / 8
@@ -62,8 +65,12 @@ export function GapSelector({ value, onChange, system }: {
             <rect x={x + 2} y={8} width={gapW - 4} height={olY - 12} rx={5}
               fill={on ? 'rgba(201,168,76,0.22)' : 'var(--bg3)'}
               stroke={on ? GOLD : 'var(--border2)'} />
-            <text x={x + gapW / 2} y={40} textAnchor="middle" fontSize="12" fontWeight="700"
-              fill={on ? GOLD : 'var(--text2)'}>{gapLabel(g.value, system)}</text>
+            <text x={x + gapW / 2} y={sys.length > 1 ? 32 : 40} textAnchor="middle" fontSize="12" fontWeight="700"
+              fill={on ? GOLD : 'var(--text2)'}>{gapLabel(g.value, sys[0])}</text>
+            {sys.length > 1 && (
+              <text x={x + gapW / 2} y={48} textAnchor="middle" fontSize="8.5" fontWeight="600"
+                fill={on ? GOLD : 'var(--text3)'}>{sys.slice(1).map(s => gapLabel(g.value, s)).join(' · ')}</text>
+            )}
           </g>
         )
       })}

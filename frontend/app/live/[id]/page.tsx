@@ -16,7 +16,7 @@ import {
   DEF_FRONTS, DEF_COVERAGES, OPP_FORMATIONS, OPP_PLAY_TYPES, DEF_RESULTS, DEF_OUTCOMES,
   ST_UNITS, ST_RESULTS, BB_BALL_ENTRY, BB_PRIMARY_ACTION, BB_SHOT_RESULT, BB_TURNOVER_TYPE,
   BB_POSS_RESULT, BB_DEF_SET, BB_OPP_ACTION, BB_DEF_RESULT, BB_SPECIAL, BB_INTENDED,
-  type TermSystem,
+  parseTermSystems, type TermSystem,
 } from '@/components/live/fields'
 import { TapGroup, GapSelector, RushLaneSelector, RouteTree, TargetAreaGrid, ShotZoneCourt } from '@/components/live/Selectors'
 import { Zap, Loader2, Undo2, FileBarChart, ClipboardList, Flag, Trash2, X, ChevronDown } from 'lucide-react'
@@ -24,7 +24,7 @@ import { Zap, Loader2, Undo2, FileBarChart, ClipboardList, Flag, Trash2, X, Chev
 type Cur = Record<string, any>
 type Play = { event_id?: string; client_uid?: string; synced?: boolean; _pending?: boolean; [k: string]: any }
 type Config = {
-  sport: string; team_name?: string; terminology_system?: TermSystem; custom_routes?: string[]
+  sport: string; team_name?: string; terminology_system?: string; custom_routes?: string[]
   league_format?: string; our_roster?: { jersey: string; name?: string }[]
   opponent_roster?: { jersey: string; name?: string }[]
 }
@@ -170,7 +170,7 @@ export default function LoggerPage() {
   const isFB = sport === 'football' || sport === 'flag_football'
   const isFlag = sport === 'flag_football'
   const isBB = sport === 'basketball'
-  const term: TermSystem = (config?.terminology_system as TermSystem) || 'gap_letters'
+  const systems: TermSystem[] = parseTermSystems(config?.terminology_system)
   const lateGame = isBB && (() => { const s = mmssToSec(clock); return s !== null && s < 120 })()
   // Numeric current period (OT -> 5 for football, 3 for basketball) for logging + report scope.
   const periodNum = period === 'OT' ? (isBB ? 3 : 5) : (Number(period) || 1)
@@ -356,7 +356,7 @@ export default function LoggerPage() {
           ) : isBB ? (
             <BasketballPanel mode={mode} cur={cur} set={set} lateGame={lateGame} roster={roster} />
           ) : (
-            <FootballPanel mode={mode} sport={sport} isFlag={isFlag} term={term} customRoutes={config.custom_routes} cur={cur} set={set} roster={roster} />
+            <FootballPanel mode={mode} sport={sport} isFlag={isFlag} systems={systems} customRoutes={config.custom_routes} cur={cur} set={set} roster={roster} />
           )}
 
           <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
@@ -467,7 +467,7 @@ function Situational({ cur, set }: { cur: Cur; set: (k: string, v: any) => void 
 }
 
 // ── FOOTBALL / FLAG panel ────────────────────────────────────────────────────
-function FootballPanel({ mode, sport, isFlag, term, customRoutes, cur, set, roster }: any) {
+function FootballPanel({ mode, sport, isFlag, systems, customRoutes, cur, set, roster }: any) {
   if (mode === 'st') {
     return (
       <>
@@ -497,7 +497,7 @@ function FootballPanel({ mode, sport, isFlag, term, customRoutes, cur, set, rost
               <Field label={isFlag ? 'Rush lane' : 'Gap / Hole'}>
                 {isFlag
                   ? <RushLaneSelector value={cur.rush_lane} onChange={v => set('rush_lane', v)} />
-                  : <GapSelector value={cur.run_gap} onChange={v => set('run_gap', v)} system={term} />}
+                  : <GapSelector value={cur.run_gap} onChange={v => set('run_gap', v)} systems={systems} />}
               </Field>
               <div style={{ display: 'flex', gap: 14, marginBottom: 12 }}>
                 <Jersey label="Ball carrier #" value={cur.ball_carrier_jersey} onChange={v => set('ball_carrier_jersey', v)} />
@@ -536,7 +536,7 @@ function FootballPanel({ mode, sport, isFlag, term, customRoutes, cur, set, rost
             <>
               <Field label={isFlag ? 'Opp rush lane' : 'Opp gap / hole'}>
                 {isFlag ? <RushLaneSelector value={cur.opp_run_gap} onChange={v => set('opp_run_gap', v)} />
-                  : <GapSelector value={cur.opp_run_gap} onChange={v => set('opp_run_gap', v)} system={term} />}
+                  : <GapSelector value={cur.opp_run_gap} onChange={v => set('opp_run_gap', v)} systems={systems} />}
               </Field>
               <div style={{ marginTop: 12 }}>
                 <Jersey label="Opp ball carrier #" value={cur.opp_ball_carrier} onChange={v => set('opp_ball_carrier', v)} />

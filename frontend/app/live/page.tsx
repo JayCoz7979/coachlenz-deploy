@@ -38,6 +38,31 @@ function Chips({ options, value, onChange }: { options: { value: string; label: 
   )
 }
 
+// Multi-select variant of Chips: tap to toggle each option on or off. Used where more
+// than one value can apply at once (weather, run-gap terminology).
+function MultiChips({ options, values, onToggle }: { options: { value: string; label: string }[]; values: string[]; onToggle: (v: string) => void }) {
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+      {options.map(o => {
+        const on = values.includes(o.value)
+        return (
+          <button key={o.value} type="button" onClick={() => onToggle(o.value)} style={{
+            minHeight: 44, padding: '9px 14px', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer',
+            border: '1px solid ' + (on ? 'var(--gold)' : 'var(--border2)'),
+            background: on ? 'rgba(201,168,76,0.18)' : 'var(--bg3)',
+            color: on ? 'var(--gold)' : 'var(--text2)',
+          }}>{o.label}</button>
+        )
+      })}
+    </div>
+  )
+}
+
+// Toggle a value's membership in a list (add if absent, remove if present).
+function toggleIn<T>(arr: T[], v: T): T[] {
+  return arr.includes(v) ? arr.filter(x => x !== v) : [...arr, v]
+}
+
 // Parse pasted roster lines: "12 Smith" / "12, Smith" / "12" per line.
 function parseRoster(text: string): { jersey: string; name?: string }[] {
   return text.split('\n').map(l => l.trim()).filter(Boolean).map(l => {
@@ -62,9 +87,9 @@ export default function LiveSetupPage() {
   const [location, setLocation] = useState('')
   const [homeAway, setHomeAway] = useState('home')
   const [gameType, setGameType] = useState('regular_season')
-  const [weather, setWeather] = useState('')
+  const [weather, setWeather] = useState<string[]>([])
   const [surface, setSurface] = useState('')
-  const [termSystem, setTermSystem] = useState<TermSystem>('gap_letters')
+  const [termSystems, setTermSystems] = useState<TermSystem[]>(['gap_letters'])
   const [customRoutes, setCustomRoutes] = useState('')
   const [leagueFormat, setLeagueFormat] = useState('7-on-7')
   const [ourRoster, setOurRoster] = useState('')
@@ -109,9 +134,9 @@ export default function LiveSetupPage() {
         sport, team_name: teamName.trim(), opponent: opponent.trim(),
         game_date: gameDate || null, location: location || null,
         is_home: homeAway === 'home', game_type: gameType,
-        weather: isFootball ? (weather || null) : null,
+        weather: isFootball && weather.length ? weather.join(', ') : null,
         field_surface: isFootball ? (surface || null) : null,
-        terminology_system: isFootball ? termSystem : null,
+        terminology_system: isFootball ? (termSystems.length ? termSystems.join(',') : 'gap_letters') : null,
         custom_routes: isFootball ? customRoutes.split(',').map(s => s.trim()).filter(Boolean) : [],
         league_format: sport === 'flag_football' ? leagueFormat : null,
         our_roster: parseRoster(ourRoster),
@@ -217,10 +242,10 @@ export default function LiveSetupPage() {
           <div style={card}>
             <div style={section}>Field & Terminology</div>
             <div style={{ display: 'grid', gap: 12 }}>
-              <div><span style={lbl}>Weather</span><Chips options={WEATHER.map(w => ({ value: w, label: w }))} value={weather} onChange={setWeather} /></div>
+              <div><span style={lbl}>Weather (select all that apply)</span><MultiChips options={WEATHER.map(w => ({ value: w, label: w }))} values={weather} onToggle={v => setWeather(w => toggleIn(w, v))} /></div>
               <div><span style={lbl}>Field surface</span><Chips options={SURFACES.map(s => ({ value: s, label: s }))} value={surface} onChange={setSurface} /></div>
-              <div><span style={lbl}>Run gap / hole terminology</span>
-                <Chips options={TERM_SYSTEMS.map(t => ({ value: t.value, label: t.label }))} value={termSystem} onChange={v => setTermSystem(v as TermSystem)} />
+              <div><span style={lbl}>Run gap / hole terminology (select all that apply)</span>
+                <MultiChips options={TERM_SYSTEMS.map(t => ({ value: t.value, label: t.label }))} values={termSystems} onToggle={v => setTermSystems(s => toggleIn(s, v as TermSystem))} />
               </div>
               <div><span style={lbl}>Custom routes (comma separated)</span><input style={input} value={customRoutes} onChange={e => setCustomRoutes(e.target.value)} placeholder="Sluggo, Smash, Dagger" /></div>
               {sport === 'flag_football' && (
