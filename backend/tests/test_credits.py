@@ -86,6 +86,24 @@ def test_margin_floor_ceilings():
     assert C.MARGIN_FAIL == 0.40
 
 
+def test_run_cost_cap_is_breakeven_at_cheapest_bundle():
+    # The per-run cost cap is the BREAK-EVEN line: credits x the cheapest credit price.
+    # A run may spend up to this and still not lose money for a Department-bundle buyer.
+    assert C.run_cost_cap_usd(60) == 42.0   # deep basketball
+    assert C.run_cost_cap_usd(27) == 18.9   # standard basketball
+    assert C.run_cost_cap_usd(29) == 20.3   # standard football
+    assert C.run_cost_cap_usd(55) == 38.5   # deep+grade football
+    # Zero / negative credits = no cap.
+    assert C.run_cost_cap_usd(0) == 0.0
+    assert C.run_cost_cap_usd(-5) == 0.0
+    # The cap (break-even) must be ABOVE the 50%-margin ceiling, so it clamps only the
+    # loss-making tail, never the normal runs that max_cogs_at_floor would clip.
+    for cr in (22, 27, 29, 55, 60):
+        assert C.run_cost_cap_usd(cr) > C.max_cogs_at_floor(cr)
+    # And it equals credits x the floor credit price exactly.
+    assert C.run_cost_cap_usd(100) == round(100 * C.FLOOR_CREDIT_PRICE, 2)
+
+
 def test_margin_verdict_bands():
     # Deep+grade football = 55 credits -> $38.50 revenue at the $0.70 floor.
     # pass >= 50%, watch 40-50%, fail < 40%.
