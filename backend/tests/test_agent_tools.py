@@ -39,6 +39,7 @@ def test_credit_costs_tool_returns_locked_numbers():
     out = asyncio.run(T.by_name("credit_costs").handler(ctx, {}))
     assert out["standard"]["football"] == 29
     assert out["deep_grade"]["football"] == 55
+    assert out["report_regeneration"] == 0  # report regen is free (no re-detection)
     assert out["margin_floor"] == 0.50
 
 

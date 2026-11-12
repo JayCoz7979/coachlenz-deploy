@@ -40,7 +40,9 @@ async def my_credits(user: User = Depends(get_current_user),
     costs = {
         "standard": credit_svc.STANDARD_CREDITS,
         "deep_grade": credit_svc.DEEP_GRADE_CREDITS,
-        "reanalysis": credit_svc.REANALYSIS_CREDITS,
+        # Regenerating a report from stored events costs nothing; re-analyzing the
+        # film runs a new analysis at full price (no discounted "re-analysis" line).
+        "report_regeneration": 0,
     }
     # The tier's monthly INCLUDED allotment (F1), so the UI can show what the base fee
     # funds each cycle, not just the raw balance.

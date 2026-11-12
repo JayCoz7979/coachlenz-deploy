@@ -41,7 +41,7 @@ async def _credit_costs(ctx: ToolContext, args: Dict[str, Any]) -> Dict[str, Any
     return {
         "standard": c.STANDARD_CREDITS,
         "deep_grade": c.DEEP_GRADE_CREDITS,
-        "reanalysis": c.REANALYSIS_CREDITS,
+        "report_regeneration": 0,  # regenerating a report from stored events is free
         "bundles": {k: {"credits": cr, "price_cents": p} for k, (cr, p) in c.BUNDLES.items()},
         "margin_floor": c.MARGIN_FLOOR,
         "floor_credit_price": c.FLOOR_CREDIT_PRICE,
