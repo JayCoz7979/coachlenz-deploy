@@ -1095,30 +1095,40 @@ class AiDetectWorker(BaseWorker):
                             deduped, getattr(self, "_bb_score_reads", []),
                             has_scoreboard=self._has_scoreboard, enabled=True,
                             suppress_deadball=getattr(settings, "DETECT_DEADBALL_SUPPRESS_ENABLED", True),
-                            freeze_s=getattr(settings, "DETECT_DEADBALL_FREEZE_S", 25.0))
+                            freeze_s=getattr(settings, "DETECT_DEADBALL_FREEZE_S", 25.0),
+                            synthesize=getattr(settings, "DETECT_SCORE_SYNTHESIZE_ENABLED", True))
                         # Drop dead-ball phantom field goals (inbounds / warmup shooting the
                         # detector confabulated during a stopped clock) so they are never saved
                         # as plays. The scoreboard, not a per-frame guess, is the spine.
                         if rec.get("suppressed"):
                             deduped = [p for p in deduped if not p.get("suppressed")]
                         if any(rec[k] for k in ("deltas_accepted", "made_set", "missed_set",
-                                                "ft_type_fixed", "suppressed", "unclear_points")):
+                                                "ft_type_fixed", "suppressed", "unclear_points",
+                                                "relaxed_mapped", "synthesized_made")):
                             await log_agent_action(
                                 game_id=game_id, organization_id=str(org_id), job_id=job_id,
                                 phase="score_reconcile", level="info",
                                 action=(f"Locked {rec['made_set']} make(s) and {rec['missed_set']} "
-                                        f"miss(es) to the scoreboard; fixed {rec['ft_type_fixed']} "
-                                        f"free-throw label(s); dropped {rec['suppressed']} dead-ball "
-                                        f"phantom(s); flagged {rec['unclear_points']} point(s) as play-unclear"),
+                                        f"miss(es) to the scoreboard ({rec['relaxed_mapped']} mapped on "
+                                        f"the widened window); fixed {rec['ft_type_fixed']} "
+                                        f"free-throw label(s); logged {rec['synthesized_made']} "
+                                        f"scoreboard-confirmed make(s) with no detected shot; dropped "
+                                        f"{rec['suppressed']} dead-ball phantom(s); flagged "
+                                        f"{rec['unclear_points']} point(s) as play-unclear"),
                                 reason=("Read the score bug across the whole game and set shot "
                                         "outcomes from the real score change instead of a per-frame "
                                         "guess: up 1 is a made free throw, up 2 or 3 a made field "
-                                        "goal, no change plus a possession flip a miss. A field goal "
-                                        "tagged while the clock was stopped can't be a live shot, so "
-                                        "it's dropped; a point that posts during a long dead ball is "
-                                        "kept as 'play unclear' rather than a made shot invented on a "
-                                        "stopped-clock frame. Shots with no readable score stay flagged "
-                                        "for your eyes, never guessed."),
+                                        "goal, no change plus a possession flip a miss. Each point is "
+                                        "attributed to a detected shot on a strict then a widened time "
+                                        "window; a point with no detected shot is logged as a "
+                                        "scoreboard-confirmed make of the right value with the location "
+                                        "and shooter left blank for you to confirm, so the make count is "
+                                        "accurate without inventing a play. A field goal tagged while "
+                                        "the clock was stopped can't be a live shot, so it's dropped; a "
+                                        "point that posts during a long dead ball is kept as 'play "
+                                        "unclear' rather than a made shot invented on a stopped-clock "
+                                        "frame. Shots with no readable score stay flagged for your eyes, "
+                                        "never guessed."),
                                 detail=rec,
                             )
 
@@ -1147,7 +1157,9 @@ class AiDetectWorker(BaseWorker):
                 # Gray-band plays (kept but below the confident threshold) are flagged
                 # for human review — the agent never presents them as fact.
                 needs_review_count = sum(
-                    1 for p in deduped if p.get("confidence", 0.8) < ESCALATION_THRESHOLD
+                    1 for p in deduped
+                    if (p["needs_review"] if p.get("needs_review") is not None
+                        else p.get("confidence", 0.8) < ESCALATION_THRESHOLD)
                 )
 
                 # ── DRY RUN: simulate, never write (UATP staging mode) ─────
@@ -1281,6 +1293,10 @@ class AiDetectWorker(BaseWorker):
                             # Scoreboard score-delta reconciliation provenance: how the
                             # make/miss was determined and the point value it locked.
                             "result_source", "result_verified", "points", "and_one",
+                            # A point the board confirmed during a dead ball (play_unclear)
+                            # or with no detected shot (synthesized). Persisted so the UI can
+                            # badge them and the coach can confirm the detail.
+                            "play_unclear", "synthesized",
                             # Basketball inbound plays
                             "inbound_type", "inbound_side", "inbound_set", "inbound_primary_action",
                             "inbound_scorer_position", "inbound_defense_coverage",
@@ -1381,8 +1397,12 @@ class AiDetectWorker(BaseWorker):
                                     "auto_detected": True,
                                     "confidence": p.get("confidence", 0.8),
                                     # UATP human-escalation: low-confidence reads are
-                                    # surfaced for verification, not asserted as fact.
-                                    "needs_review": p.get("confidence", 0.8) < ESCALATION_THRESHOLD,
+                                    # surfaced for verification, not asserted as fact. A play
+                                    # can also ask for review explicitly even at high
+                                    # confidence (a scoreboard-confirmed make whose shooter
+                                    # and location still need the coach's eyes).
+                                    "needs_review": (p["needs_review"] if p.get("needs_review") is not None
+                                                     else p.get("confidence", 0.8) < ESCALATION_THRESHOLD),
                                     **{k: p[k] for k in DEEP_FIELDS if p.get(k) is not None},
                                 },
                             )

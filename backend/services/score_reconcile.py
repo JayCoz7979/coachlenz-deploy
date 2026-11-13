@@ -26,6 +26,11 @@ from __future__ import annotations
 
 MIN_READ_CONF = 0.5          # ignore shaky OCR reads below this confidence
 WINDOW_BEFORE = 8.0          # a made basket posts on the bug 0-8s after the shot
+RELAXED_BEFORE = 18.0        # second-pass window: the dedicated score pass timestamps a
+RELAXED_AFTER = 2.0          #   delta at the first frame the new total appeared, which
+#                              lags the real shot by the sampling gap, so a real make can
+#                              sit just outside the strict window. Relaxed mapping reclaims
+#                              those before anything is synthesized.
 MISS_AFTER_WINDOW = 12.0     # only confirm a miss if the board is read again this soon
 AND_ONE_GAP = 15.0           # the bonus free throw after an and-1 lands within this window
 SCOREBOARD_CONF = 0.95       # confidence stamped on a scoreboard-confirmed outcome
@@ -230,8 +235,46 @@ def plan_timeline_batches(frame_paths, cadence, bsz, max_calls):
     return batches, len(picked)
 
 
+def _synthesize_make(t, pts):
+    """Build a scoreboard-CONFIRMED made-shot play for a scoring event that no detected
+    shot could be mapped to. The board objectively ticked up by `pts`, so a make of that
+    value happened at time `t`; that is ground truth, not a per-frame guess. We stamp only
+    what the scoreboard proves — the outcome (Made) and the point value (1 = free throw,
+    3 = three, 2 = field goal) — and deliberately leave the location and shooter BLANK and
+    flagged for review rather than invent them. The coach confirming that detail is exactly
+    the signal the learning loop compounds."""
+    if pts == 1:
+        stype, zone = "Free Throw", "Free Throw Line"
+        desc = ("Made free throw (+1) confirmed by the scoreboard. The shooter could not be "
+                "identified on single-camera film. Confirm to log who took it.")
+    elif pts == 3:
+        stype, zone = "3-Pointer", None
+        desc = ("Made 3-pointer (+3) confirmed by the scoreboard. The shot location and "
+                "shooter could not be identified on single-camera film. Confirm to log the detail.")
+    else:
+        stype, zone = "Field Goal", None
+        desc = ("Made field goal (+2) confirmed by the scoreboard. The shot location and "
+                "shooter could not be identified on single-camera film. Confirm to log the detail.")
+    p = {
+        "event_type": "shot",
+        "time_seconds": round(float(t), 2),
+        "result": "Made",
+        "shot_type": stype,
+        "points": pts,
+        "result_source": "scoreboard_synthesized",
+        "result_verified": True,
+        "synthesized": True,
+        "needs_review": True,
+        "confidence": SCOREBOARD_CONF,
+        "play_description": desc,
+    }
+    if zone:
+        p["shot_zone"] = zone
+    return p
+
+
 def reconcile(plays, reads, *, has_scoreboard=True, enabled=True,
-              suppress_deadball=True, freeze_s=DEADBALL_FREEZE_S):
+              suppress_deadball=True, freeze_s=DEADBALL_FREEZE_S, synthesize=True):
     """Rewrite basketball shot outcomes from the scoreboard score-delta timeline.
 
     Returns (plays, stats). `plays` is mutated in place and also returned. When the film has
@@ -251,7 +294,8 @@ def reconcile(plays, reads, *, has_scoreboard=True, enabled=True,
     """
     stats = {"deltas_accepted": 0, "made_set": 0, "missed_set": 0,
              "ft_type_fixed": 0, "and_one": 0, "left_null": 0,
-             "suppressed": 0, "unclear_points": 0}
+             "suppressed": 0, "unclear_points": 0,
+             "relaxed_mapped": 0, "synthesized_made": 0}
     if not enabled or not has_scoreboard:
         return plays, stats
 
@@ -277,36 +321,73 @@ def reconcile(plays, reads, *, has_scoreboard=True, enabled=True,
             p["shot_type"] = "Free Throw"
             stats["ft_type_fixed"] += 1
 
-    # 2) Map each scoring event to the most recent unused shot 0-8s before it, and lock the
-    #    outcome and point value from the score change.
+    # 2) Attribute each scoring event to a detected shot, then lock the outcome and point
+    #    value from the score change. Mapping runs in TWO passes so sampling lag doesn't
+    #    orphan a real make:
+    #      strict  [t-8, t+0.5]  — the normal post lag;
+    #      relaxed [t-18, t+2]   — reclaim a real shot the dedicated score pass timestamped
+    #                              late (the delta posts at the first frame the new total
+    #                              appeared, up to a sampling gap after the shot).
+    #    Anything still unmapped is a real point with NO detected shot: we synthesize a
+    #    scoreboard-CONFIRMED make for it (correct point value + FT/FG/3) with the location
+    #    and shooter left blank and flagged for review, rather than drop a real point or
+    #    invent a play.
     used = set()
-    prev_event = None
-    for ev in events:
-        t, pts = ev["t"], ev["points"]
-        cand = None
-        for p in reversed(shots):
-            if id(p) in used:
+    mapping = [[ev, None] for ev in events]   # [event, mapped_shot_or_None], event order
+
+    def _try_map(before_w, after_w):
+        n = 0
+        for pair in mapping:
+            ev, cur = pair
+            if cur is not None:
                 continue
-            ts = p["time_seconds"]
-            if t - WINDOW_BEFORE <= ts <= t + 0.5:
-                cand = p
-                break
+            t = ev["t"]
+            for p in reversed(shots):
+                if id(p) in used:
+                    continue
+                ts = p["time_seconds"]
+                if t - before_w <= ts <= t + after_w:
+                    used.add(id(p))
+                    pair[1] = p
+                    n += 1
+                    break
+        return n
+
+    _try_map(WINDOW_BEFORE, 0.5)
+    stats["relaxed_mapped"] = _try_map(RELAXED_BEFORE, RELAXED_AFTER)
+
+    prev_event = None
+    for ev, cand in mapping:
+        t, pts = ev["t"], ev["points"]
         if cand is None:
-            # The board moved but no detected shot aligns — a real point we can't attribute
-            # to a specific play. Keep the score fact; never invent a shot.
-            stats["unclear_points"] += 1
+            # The board moved but no detected shot aligns, after both passes. A +2/+3 that
+            # posts during a PROLONGED frozen clock is suspicious (a live field goal can't
+            # happen at a long dead ball), so keep it as 'play unclear'; otherwise the
+            # scoreboard is ground truth that a make of this value happened — synthesize it.
+            prolonged_fg = (suppress_deadball and pts >= 2
+                            and _clock_context(norm, t, freeze_s) == "prolonged")
+            if synthesize and not prolonged_fg:
+                new_p = _synthesize_make(t, pts)
+                if (prev_event and pts == 1 and prev_event["points"] == 2
+                        and 0 < (t - prev_event["t"]) <= AND_ONE_GAP):
+                    new_p["and_one"] = True
+                    stats["and_one"] += 1
+                plays.append(new_p)
+                stats["synthesized_made"] += 1
+            else:
+                stats["unclear_points"] += 1
             prev_event = ev
             continue
         # Rule B: the mapped shot sits inside a PROLONGED frozen-clock window (timeout /
         # extended dead ball). The detector's specific shot read there is unreliable, so
         # preserve the point but do NOT assert a made free throw/layup on a dead-ball frame.
         if suppress_deadball and _clock_context(norm, cand["time_seconds"], freeze_s) == "prolonged":
-            used.add(id(cand))
             cand["result"] = None
             cand["shot_type"] = "Unclear"
             cand["points"] = pts
             cand["result_source"] = "scoreboard_unconfirmed_play"
             cand["play_unclear"] = True
+            cand["needs_review"] = True
             cand["confidence"] = min(float(cand.get("confidence") or 0), 0.4)
             cand["play_description"] = (
                 f"Point scored (+{pts}) during a stopped-clock dead ball; the specific "
@@ -314,7 +395,6 @@ def reconcile(plays, reads, *, has_scoreboard=True, enabled=True,
             stats["unclear_points"] += 1
             prev_event = ev
             continue
-        used.add(id(cand))
         cand["result"] = "Made"
         cand["points"] = pts
         cand["result_source"] = "scoreboard"
