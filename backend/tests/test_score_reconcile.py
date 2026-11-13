@@ -151,3 +151,27 @@ def test_non_shot_events_are_ignored():
     _, stats = SR.reconcile([reb], reads)
     assert reb["result"] is None
     assert stats["made_set"] == 0
+
+
+# ── second-look candidate selection (Stage 2) ────────────────────────────────
+
+def test_second_look_skips_scoreboard_locked_and_confident():
+    locked = _shot(10, stype="Layup", result="Made"); locked["result_source"] = "scoreboard"
+    confident = _shot(20, stype="Pull-Up Jumper", result="Made", conf=0.95)
+    null_shot = _shot(30, stype="Pull-Up Jumper", result=None, conf=0.6)
+    shaky = _shot(40, stype="Floater", result="Missed", conf=0.5)
+    picks = SR.needs_second_look([locked, confident, null_shot, shaky], conf=0.75, max_n=30)
+    assert locked not in picks and confident not in picks
+    assert null_shot in picks and shaky in picks
+
+
+def test_second_look_prioritizes_paint_then_low_confidence():
+    jumper = _shot(10, zone="Mid-Range Center", stype="Pull-Up Jumper", result=None, conf=0.7)
+    layup = _shot(20, zone="Restricted Area", stype="Layup", result=None, conf=0.7)
+    picks = SR.needs_second_look([jumper, layup], conf=0.75, max_n=30)
+    assert picks[0] is layup   # paint/rim re-checked first
+
+
+def test_second_look_respects_cap():
+    shots = [_shot(t, stype="Pull-Up Jumper", result=None, conf=0.6) for t in range(5, 100, 5)]
+    assert len(SR.needs_second_look(shots, conf=0.75, max_n=5)) == 5

@@ -139,6 +139,32 @@ def _is_shot(p):
     return (p.get("event_type") or "") == "shot" and isinstance(p.get("time_seconds"), (int, float))
 
 
+def needs_second_look(plays, conf=0.75, max_n=30):
+    """After the first-pass reconciliation, pick the ambiguous shots worth a targeted
+    second look: a shot whose outcome was NOT already locked to the scoreboard and is
+    either unknown (null) or low confidence. Paint / restricted-area / rim shots (the ones
+    a single camera most often misreads) are re-checked first, then the lowest confidence.
+    Capped at `max_n` to bound cost. Returns the selected play dicts (most worth it first).
+
+    Pure selection so it can be unit-tested without extracting a single frame.
+    """
+    cand = []
+    for p in plays:
+        if not _is_shot(p):
+            continue
+        if p.get("result_source") == "scoreboard":
+            continue  # already ground-truth locked, no point re-reading
+        c = float(p.get("confidence") or 0)
+        if p.get("result") is not None and c > conf:
+            continue  # confident non-scoreboard call: leave it
+        zone = (p.get("shot_zone") or "").lower()
+        paint = ("paint" in zone or "restricted" in zone or "rim" in zone
+                 or "layup" in (p.get("shot_type") or "").lower())
+        cand.append((not paint, c, p))   # paint/rim first, then lowest confidence
+    cand.sort(key=lambda t: (t[0], t[1]))
+    return [p for _paint, _c, p in cand[:max_n]]
+
+
 def reconcile(plays, reads, *, has_scoreboard=True, enabled=True):
     """Rewrite basketball shot outcomes from the scoreboard score-delta timeline.
 

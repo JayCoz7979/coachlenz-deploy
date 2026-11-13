@@ -469,6 +469,20 @@ For EACH shot index in the USER MESSAGE, decide the RESULT:
 Return ONLY JSON: {"results":[{"i":<index>,"result":"Made"},{"i":<index>,"result":null}, ...]} with one entry per shot index given."""
 
 
+# Targeted second-look (Stage 2): for ONE ambiguous shot, re-read ONLY the scoreboard off
+# a short burst of frames straddling the shot (before + after). We do NOT ask the model to
+# judge made/miss here — the deterministic reconciler does that from the score change. The
+# model's only job is to read the digits it can actually see.
+SECOND_LOOK_PROMPT_BB = """You re-read ONLY the scoreboard/score bug on a few frames of basketball film. The frames are moments just BEFORE and just AFTER one shot, each with two zoomed crops of the score-bug region.
+
+For EACH frame, report the score you can read: {"frame": N, "home": <integer on one side>, "away": <integer on the other side>, "clock_running": true if the game clock is counting down else false, "conf": 0.0-1.0 for both digits}.
+- Keep the two sides CONSISTENT across frames (same side = same key).
+- Include a frame ONLY if you can actually read BOTH numbers; omit the ones you cannot.
+- Do NOT judge whether the shot went in. Just read the digits. The score change tells the rest.
+
+Return ONLY JSON: {"reads":[{"frame":1,"home":0,"away":0,"clock_running":true,"conf":0.9}, ...]} (empty list if nothing is legible)."""
+
+
 # Deep-basketball technique grading (Opus, opt-in), the basketball analog of the
 # football grade pass.
 GRADE_PROMPT_BASKETBALL = """You are a college basketball quality-control coach grading EXECUTION on one possession. The frames are HIGH-RESOLUTION moments of a single possession; the known context (action, result) is in the USER MESSAGE.
@@ -1080,6 +1094,35 @@ class AiDetectWorker(BaseWorker):
                                         "no readable score stay flagged for your eyes, never guessed."),
                                 detail=rec,
                             )
+
+                        # ── Targeted second-look (Stage 2) ──────────────────
+                        # For the shots the first pass left unresolved, re-extract a burst
+                        # of frames straddling the shot, read ONLY the scoreboard, feed the
+                        # reads back, and re-run the SAME deterministic reconciler. Bounded
+                        # Sonnet spend, cost-cap aware, OFF by default.
+                        if (getattr(settings, "DETECT_SECOND_LOOK_ENABLED", False)
+                                and not dry_run and not self._cost_cap_reached()):
+                            try:
+                                sl = await self._second_look_bb_outcomes(
+                                    video_source, deduped, game_id, org_id, job_id)
+                                if sl.get("new_reads"):
+                                    deduped, rec2 = score_reconcile.reconcile(
+                                        deduped, getattr(self, "_bb_score_reads", []),
+                                        has_scoreboard=self._has_scoreboard, enabled=True)
+                                    await log_agent_action(
+                                        game_id=game_id, organization_id=str(org_id), job_id=job_id,
+                                        phase="second_look", level="success",
+                                        action=(f"Second look settled more shots — now "
+                                                f"{rec2['made_set']} make(s), {rec2['missed_set']} "
+                                                f"miss(es) locked to the scoreboard"),
+                                        reason=("Fetched the before/after-shot score on the "
+                                                "unresolved shots and re-ran the deterministic "
+                                                "check. Any still without a readable score stay "
+                                                "flagged for your eyes."),
+                                        detail={**sl, **rec2},
+                                    )
+                            except Exception as e:
+                                logger.warning(f"[ai_detect] second-look pass failed: {e}")
 
                 # EAGLE EYE jersey pass (football): re-read jersey numbers off high-res
                 # player crops so personnel is actually usable. Skipped on dry runs.
@@ -2357,6 +2400,97 @@ class AiDetectWorker(BaseWorker):
             if r in ("Made", "Missed"):   # overwrite only with a positive-evidence call
                 p["result"] = r
                 p["result_verified"] = True
+
+    # Offsets (seconds, relative to the shot timestamp) for the second-look burst: two
+    # before, two after, so the reconciler has both the pre-shot and post-shot score.
+    _SECOND_LOOK_OFFSETS = (-2.0, 1.0, 3.0, 6.0)
+
+    async def _second_look_one_shot(self, client, video_source: str, shot: dict,
+                                    tmpdir: str, idx: int) -> list:
+        """Re-extract a short burst of frames straddling ONE shot and read ONLY the
+        scoreboard off them (one cheap Sonnet call). Returns raw score reads
+        {t, home, away, clock_running, conf} to feed back into the reconciler. No make/miss
+        judgment here — the deterministic reconciler decides from the score change."""
+        ts = shot.get("time_seconds")
+        if ts is None:
+            return []
+        content, offs = [], []
+        for k, off in enumerate(self._SECOND_LOOK_OFFSETS):
+            when = float(ts) + off
+            if when < 0:
+                continue
+            fp = os.path.join(tmpdir, f"sl_{idx}_{k}.jpg")
+            if await self._extract_hires_frame(video_source, when, fp,
+                                               width=settings.DETECT_SECOND_LOOK_WIDTH):
+                label = f"+{off:g}s after" if off >= 0 else f"{off:g}s before"
+                content.append({"type": "text", "text": f"Frame {len(offs) + 1} ({label} the shot):"})
+                content.extend(self._frame_blocks(fp, len(offs) + 1))
+                offs.append(when)
+                try:
+                    os.remove(fp)
+                except OSError:
+                    pass
+        if not offs:
+            return []
+        try:
+            v = await self._vision_json(client, DETECT_MODEL, content, max_tokens=400,
+                                        system=self._cached_system(SECOND_LOOK_PROMPT_BB))
+        except Exception as e:
+            logger.warning(f"[ai_detect] second-look shot {idx} failed: {e}")
+            return []
+        out = []
+        for r in (v.get("reads") or []):
+            if not isinstance(r, dict):
+                continue
+            fr = r.get("frame")
+            if not (isinstance(fr, (int, float)) and 1 <= int(fr) <= len(offs)):
+                continue
+            out.append({"t": float(round(offs[int(fr) - 1])), "home": r.get("home"),
+                        "away": r.get("away"), "clock_running": r.get("clock_running"),
+                        "conf": r.get("conf", 1.0)})
+        return out
+
+    async def _second_look_bb_outcomes(self, video_source: str, plays: list,
+                                       game_id, org_id, job_id) -> dict:
+        """Targeted second-look pass: for the ambiguous shots the first pass left unresolved,
+        fetch the before/after-shot scoreboard reads and append them to the run timeline.
+        The caller then re-runs the deterministic reconciler over the enriched timeline.
+        Bounded (cap + run-cost-cap aware); failures never sink the run."""
+        from backend.services import score_reconcile
+        import tempfile
+        import anthropic
+        cand = score_reconcile.needs_second_look(
+            plays, settings.DETECT_SECOND_LOOK_CONF, settings.DETECT_SECOND_LOOK_MAX)
+        if not cand:
+            return {"checked": 0, "new_reads": 0, "incremental_usd": 0.0}
+        before_usd = self._cost_summary().get("total_usd", 0.0)
+        await log_agent_action(
+            game_id=game_id, organization_id=str(org_id), job_id=job_id,
+            phase="second_look", level="info",
+            action=f"Second look at {len(cand)} unresolved shot(s)",
+            reason="Re-reading just the scoreboard on a few frames before and after each shot "
+                   "the first pass could not resolve, so the deterministic score check can settle "
+                   "made/miss. No guessing — only the digits that are actually legible.",
+            detail={"candidates": len(cand)},
+        )
+        new_reads = 0
+        async with anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY,
+                                            timeout=DETECT_TIMEOUT_S, max_retries=DETECT_MAX_RETRIES) as client:
+            sem = asyncio.Semaphore(GRADE_PARALLEL)
+            with tempfile.TemporaryDirectory() as tmp:
+                async def run(i, p):
+                    nonlocal new_reads
+                    if self._cost_cap_reached():
+                        return
+                    async with sem:
+                        reads = await self._second_look_one_shot(client, video_source, p, tmp, i)
+                        if reads:
+                            self._bb_score_reads.extend(reads)  # safe: no await before extend
+                            new_reads += len(reads)
+                await asyncio.gather(*[run(i, p) for i, p in enumerate(cand)],
+                                     return_exceptions=True)
+        incr = round(self._cost_summary().get("total_usd", 0.0) - before_usd, 4)
+        return {"checked": len(cand), "new_reads": new_reads, "incremental_usd": incr}
 
     # Pre-snap fields handed to the post-snap pass as alignment context.
     _PRESNAP_CTX_KEYS = (

@@ -89,6 +89,20 @@ class Settings(BaseSettings):
     # DB-overridable so it can be toggled live without a redeploy (see feature toggles).
     DETECT_SCORE_RECONCILE_ENABLED: bool = True
 
+    # Targeted second-look (Stage 2 of the no-Opus accuracy plan). The first pass may miss
+    # the AFTER-shot score read (the shot and the score tick can fall in different frame
+    # batches), leaving a shot's outcome unresolved. For only the ambiguous minority of
+    # shots (not already scoreboard-locked, and null or low confidence), re-extract a short
+    # burst of frames straddling the shot (before + after), read ONLY the scoreboard off
+    # them with one cheap Sonnet call, and feed those reads back into the SAME deterministic
+    # reconciler. No model make/miss guess: the second look just fetches the missing score.
+    # OFF by default (adds a bounded Sonnet cost); validate the lift + cost on a test run,
+    # then enable. Capped so the spend is bounded, and skipped once the run cost cap is hit.
+    DETECT_SECOND_LOOK_ENABLED: bool = False
+    DETECT_SECOND_LOOK_MAX: int = 30            # most shots re-checked per game (cost guard)
+    DETECT_SECOND_LOOK_CONF: float = 0.75       # a non-locked shot at/below this is re-checked
+    DETECT_SECOND_LOOK_WIDTH: int = 1280        # frame width for the burst (enough to read the bug)
+
     # Stripe
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
