@@ -100,6 +100,15 @@ class Settings(BaseSettings):
     DETECT_SCORE_TIMELINE_CADENCE_S: float = 5.0   # target one scoreboard read per this many seconds
     DETECT_SCORE_TIMELINE_MAX_CALLS: int = 180     # hard cap on scoreboard-only vision calls per run
     DETECT_SCORE_TIMELINE_BATCH: int = 6           # frames per scoreboard-only call
+    # Dead-ball suppression: wide single-cam film can't support frame-accurate event
+    # tagging (vision confabulates shots during stoppages), so the scoreboard is the
+    # spine. A field goal can't be shot with the clock stopped (suppress it), and a
+    # point that posts inside a PROLONGED frozen-clock window (timeout/dead ball) is
+    # reported as "point scored, play unclear" instead of a fabricated made shot.
+    DETECT_DEADBALL_SUPPRESS_ENABLED: bool = True
+    DETECT_DEADBALL_FREEZE_S: float = 35.0         # clock frozen this long = prolonged dead ball
+    # (set above a normal two-shot free-throw trip ~25-30s so real made FTs still lock;
+    #  only clearly abnormal freezes — timeouts, extended stoppages — read as 'play unclear')
 
     # Stripe
     STRIPE_SECRET_KEY: str = ""

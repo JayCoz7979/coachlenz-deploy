@@ -134,7 +134,8 @@ def test_no_scoreboard_changes_nothing():
     plays, stats = SR.reconcile([shot], reads, has_scoreboard=False)
     assert shot["result"] is None
     assert stats == {"deltas_accepted": 0, "made_set": 0, "missed_set": 0,
-                     "ft_type_fixed": 0, "and_one": 0, "left_null": 0}
+                     "ft_type_fixed": 0, "and_one": 0, "left_null": 0,
+                     "suppressed": 0, "unclear_points": 0}
 
 
 def test_disabled_changes_nothing():
@@ -150,6 +151,87 @@ def test_non_shot_events_are_ignored():
     reads = [_read(5, 5, 5), _read(8, 5, 5), _read(13, 7, 5), _read(16, 7, 5)]
     _, stats = SR.reconcile([reb], reads)
     assert reb["result"] is None
+    assert stats["made_set"] == 0
+
+
+# ── dead-ball suppression (clock-aware) ──────────────────────────────────────
+
+def _readc(t, home, away, clockval, conf=1.0, running=False):
+    return {"t": t, "home": home, "away": away, "clock": clockval,
+            "clock_running": running, "conf": conf}
+
+
+def test_prolonged_deadball_point_is_play_unclear():
+    # clock frozen at 13.5 for 50s (a timeout / extended dead ball); a +1 posts and the
+    # detector tagged a "free throw" in that window -> report the point but NOT a made shot.
+    reads = ([_readc(t, 20, 24, "13.5") for t in (2490, 2495, 2500, 2505, 2510, 2515)]
+             + [_readc(t, 21, 24, "13.5") for t in (2520, 2525, 2530, 2535, 2540)])
+    shot = _shot(2515, zone="Free Throw Line", stype="Free Throw", result=None)
+    _, stats = SR.reconcile([shot], reads)
+    assert shot["result"] is None
+    assert shot["shot_type"] == "Unclear"
+    assert shot.get("play_unclear") is True
+    assert shot["result_source"] == "scoreboard_unconfirmed_play"
+    assert stats["unclear_points"] >= 1
+    assert stats["made_set"] == 0
+
+
+def test_field_goal_at_stopped_clock_is_suppressed():
+    # a layup tagged while the clock is stopped, with no score change -> dead-ball phantom
+    # (inbound / warmup shooting). Suppress it; never call it a make or a miss.
+    reads = [_readc(t, 10, 10, "5.0") for t in (112, 116, 120, 124, 128)]
+    shot = _shot(120, zone="Restricted Area", stype="Layup", result=None)
+    _, stats = SR.reconcile([shot], reads)
+    assert shot.get("suppressed") is True
+    assert shot["result"] is None
+    assert shot["result_source"] == "dead_ball_suppressed"
+    assert stats["suppressed"] == 1
+    assert stats["missed_set"] == 0
+
+
+def test_live_field_goal_running_clock_not_suppressed_and_miss_still_works():
+    # clock counting down (live play); a jumper that did not score stays a real Missed.
+    reads = [_readc(200, 30, 28, "7:30", running=True),
+             _readc(205, 30, 28, "7:25", running=True),
+             _readc(210, 30, 28, "7:20", running=True),
+             _readc(214, 30, 28, "7:16", running=True)]
+    shot = _shot(206, zone="Mid-Range Center", stype="Pull-Up Jumper", result=None)
+    _, stats = SR.reconcile([shot], reads)
+    assert shot.get("suppressed") is not True
+    assert shot["result"] == "Missed"
+    assert stats["suppressed"] == 0
+    assert stats["missed_set"] == 1
+
+
+def test_short_stoppage_made_free_throw_still_locks():
+    # a normal made free throw is a BRIEF stoppage (not prolonged) -> still locked Made.
+    reads = ([_readc(t, 5, 5, "4.0") for t in (300, 303)]
+             + [_readc(t, 6, 5, "4.0") for t in (306, 309)])
+    shot = _shot(305, zone="Free Throw Line", stype="Free Throw", result=None)
+    _, stats = SR.reconcile([shot], reads)
+    assert shot["result"] == "Made"
+    assert shot["points"] == 1
+    assert shot["shot_type"] == "Free Throw"
+    assert shot.get("play_unclear") is not True
+    assert stats["made_set"] == 1
+    assert stats["unclear_points"] == 0
+
+
+def test_deadball_suppression_can_be_disabled():
+    reads = [_readc(t, 10, 10, "5.0") for t in (112, 116, 120, 124, 128)]
+    shot = _shot(120, zone="Restricted Area", stype="Layup", result=None)
+    _, stats = SR.reconcile([shot], reads, suppress_deadball=False)
+    assert shot.get("suppressed") is not True
+    assert stats["suppressed"] == 0
+    assert shot["result"] == "Missed"   # falls back to the old positive-evidence miss
+
+
+def test_unattributed_point_counts_but_invents_no_shot():
+    # board moves but no detected shot is near it -> record the point, never fabricate a shot.
+    reads = ([_readc(t, 10, 10, "7:00", running=True) for t in (400, 404)]
+             + [_readc(t, 12, 10, "6:58", running=True) for t in (408, 412)])
+    _, stats = SR.reconcile([], reads)
+    assert stats["unclear_points"] >= 1
     assert stats["made_set"] == 0
 
 

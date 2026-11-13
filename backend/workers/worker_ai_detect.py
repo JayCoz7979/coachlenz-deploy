@@ -637,11 +637,12 @@ SCORE_TIMELINE_PROMPT_BB = """You read ONLY the scoreboard / score bug on basket
 Each frame below is given as two zoomed crops of the top and bottom overlay strips. For EACH frame, report the two team point totals you can read and whether the game clock is counting down.
 
 Return ONLY JSON:
-{"reads":[{"frame":N,"home":<integer on one side>,"away":<integer on the other side>,"clock_running":true if the game clock is counting down else false,"conf":0.0-1.0 for how sure you are of BOTH numbers}, ...]}
+{"reads":[{"frame":N,"home":<integer on one side>,"away":<integer on the other side>,"clock":"<the game clock exactly as shown, e.g. 7:12 or 13.5, or null if not legible>","clock_running":true if the game clock is counting down else false,"conf":0.0-1.0 for how sure you are of BOTH numbers}, ...]}
 
 Rules:
 - It does not matter which physical team is "home" vs "away" — be consistent frame to frame (the same side is always the same key).
 - Include an entry ONLY for frames where you can actually read BOTH scores. Omit a frame you cannot read rather than guessing a digit.
+- Read the game clock exactly as the digits show it; this pins when the clock is frozen (a stoppage). Use null if you cannot read it. Do not round or invent it.
 - Do not invent or extrapolate a score; if the bug is absent or illegible on a frame, leave that frame out.
 - Empty list if nothing is legible on any frame: {"reads": []}."""
 
@@ -1092,20 +1093,32 @@ class AiDetectWorker(BaseWorker):
                                 logger.warning(f"[ai_detect] score-timeline pass failed: {e}")
                         deduped, rec = score_reconcile.reconcile(
                             deduped, getattr(self, "_bb_score_reads", []),
-                            has_scoreboard=self._has_scoreboard, enabled=True)
-                        if any(rec[k] for k in ("deltas_accepted", "made_set",
-                                                "missed_set", "ft_type_fixed")):
+                            has_scoreboard=self._has_scoreboard, enabled=True,
+                            suppress_deadball=getattr(settings, "DETECT_DEADBALL_SUPPRESS_ENABLED", True),
+                            freeze_s=getattr(settings, "DETECT_DEADBALL_FREEZE_S", 25.0))
+                        # Drop dead-ball phantom field goals (inbounds / warmup shooting the
+                        # detector confabulated during a stopped clock) so they are never saved
+                        # as plays. The scoreboard, not a per-frame guess, is the spine.
+                        if rec.get("suppressed"):
+                            deduped = [p for p in deduped if not p.get("suppressed")]
+                        if any(rec[k] for k in ("deltas_accepted", "made_set", "missed_set",
+                                                "ft_type_fixed", "suppressed", "unclear_points")):
                             await log_agent_action(
                                 game_id=game_id, organization_id=str(org_id), job_id=job_id,
                                 phase="score_reconcile", level="info",
                                 action=(f"Locked {rec['made_set']} make(s) and {rec['missed_set']} "
                                         f"miss(es) to the scoreboard; fixed {rec['ft_type_fixed']} "
-                                        f"free-throw label(s)"),
+                                        f"free-throw label(s); dropped {rec['suppressed']} dead-ball "
+                                        f"phantom(s); flagged {rec['unclear_points']} point(s) as play-unclear"),
                                 reason=("Read the score bug across the whole game and set shot "
                                         "outcomes from the real score change instead of a per-frame "
                                         "guess: up 1 is a made free throw, up 2 or 3 a made field "
-                                        "goal, no change plus a possession flip a miss. Shots with "
-                                        "no readable score stay flagged for your eyes, never guessed."),
+                                        "goal, no change plus a possession flip a miss. A field goal "
+                                        "tagged while the clock was stopped can't be a live shot, so "
+                                        "it's dropped; a point that posts during a long dead ball is "
+                                        "kept as 'play unclear' rather than a made shot invented on a "
+                                        "stopped-clock frame. Shots with no readable score stay flagged "
+                                        "for your eyes, never guessed."),
                                 detail=rec,
                             )
 
@@ -2327,6 +2340,7 @@ class AiDetectWorker(BaseWorker):
                     local.append({
                         "t": float(round(batch[int(fr) - 1][1])),
                         "home": r.get("home"), "away": r.get("away"),
+                        "clock": r.get("clock"),
                         "clock_running": r.get("clock_running"),
                         "conf": r.get("conf", 1.0),
                     })
