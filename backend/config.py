@@ -117,6 +117,20 @@ class Settings(BaseSettings):
     # coach can trust. DB-overridable so it can be toggled live without a redeploy.
     DETECT_SCORE_SYNTHESIZE_ENABLED: bool = True
 
+    # Football scoreboard attribution (the football analog of the basketball reconciler
+    # above). When the film has a visible score bug (NFHS broadcast; most raw Hudl film has
+    # none), the dedicated score-timeline pass reads the bug and the deterministic
+    # reconciler locks scoring plays to the real score change: +6 touchdown, +3 field goal,
+    # +1 PAT, +2 safety or two-point, +7/+8 the touchdown plus its try. It also marks a
+    # field goal or extra point NO GOOD when the board did not move after the attempt, and
+    # strips a phantom touchdown the board never credited, both only on positive evidence.
+    # Shares the DETECT_SCORE_TIMELINE_* knobs. DB-overridable for a live toggle.
+    DETECT_FOOTBALL_SCORE_RECONCILE_ENABLED: bool = True
+    # When the board ticks up but no detected snap aligns, synthesize a scoreboard-confirmed
+    # score of the right value with the scorer and detail left blank and flagged for review,
+    # rather than drop a real score. Off = such points are counted as "unclear" only.
+    DETECT_FOOTBALL_SCORE_SYNTHESIZE_ENABLED: bool = True
+
     # Stripe
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
