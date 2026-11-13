@@ -109,6 +109,13 @@ class Settings(BaseSettings):
     DETECT_DEADBALL_FREEZE_S: float = 35.0         # clock frozen this long = prolonged dead ball
     # (set above a normal two-shot free-throw trip ~25-30s so real made FTs still lock;
     #  only clearly abnormal freezes — timeouts, extended stoppages — read as 'play unclear')
+    # Synthesize scoreboard-confirmed makes: when the board ticks up but no detected shot
+    # aligns (even after the relaxed mapping pass), the points are real, so log a
+    # scoreboard-CONFIRMED make with the correct value (FT/FG/3) and the location + shooter
+    # left blank and flagged for review, rather than drop a real point or invent a play.
+    # This is what turns scattered "unclear points" into an accurate make/point count the
+    # coach can trust. DB-overridable so it can be toggled live without a redeploy.
+    DETECT_SCORE_SYNTHESIZE_ENABLED: bool = True
 
     # Stripe
     STRIPE_SECRET_KEY: str = ""

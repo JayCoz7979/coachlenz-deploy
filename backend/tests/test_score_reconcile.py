@@ -135,7 +135,8 @@ def test_no_scoreboard_changes_nothing():
     assert shot["result"] is None
     assert stats == {"deltas_accepted": 0, "made_set": 0, "missed_set": 0,
                      "ft_type_fixed": 0, "and_one": 0, "left_null": 0,
-                     "suppressed": 0, "unclear_points": 0}
+                     "suppressed": 0, "unclear_points": 0,
+                     "relaxed_mapped": 0, "synthesized_made": 0}
 
 
 def test_disabled_changes_nothing():
@@ -226,13 +227,96 @@ def test_deadball_suppression_can_be_disabled():
     assert shot["result"] == "Missed"   # falls back to the old positive-evidence miss
 
 
-def test_unattributed_point_counts_but_invents_no_shot():
-    # board moves but no detected shot is near it -> record the point, never fabricate a shot.
+def test_unattributed_point_unclear_when_synthesis_off():
+    # board moves but no detected shot is near it, synthesis OFF -> record the point as
+    # unclear and never fabricate a shot (the old conservative behavior, still available).
     reads = ([_readc(t, 10, 10, "7:00", running=True) for t in (400, 404)]
              + [_readc(t, 12, 10, "6:58", running=True) for t in (408, 412)])
-    _, stats = SR.reconcile([], reads)
+    plays, stats = SR.reconcile([], reads, synthesize=False)
     assert stats["unclear_points"] >= 1
+    assert stats["synthesized_made"] == 0
     assert stats["made_set"] == 0
+    assert plays == []                       # nothing invented
+
+
+# ── relaxed mapping + honest synthesis ───────────────────────────────────────
+
+def test_relaxed_window_maps_shot_just_outside_strict():
+    # a real detected shot sits 14s before the posted delta (sampling lag put it outside
+    # the strict 8s window). The relaxed pass reclaims it and locks the full-detail make.
+    shot = _shot(10, zone="Mid-Range Center", stype="Pull-Up Jumper", result=None)
+    reads = [_readc(18, 10, 10, "7:02", running=True), _readc(20, 10, 10, "7:00", running=True),
+             _readc(24, 11, 11, "6:56", running=True), _readc(26, 11, 11, "6:54", running=True)]
+    plays, stats = SR.reconcile([shot], reads)
+    assert shot["result"] == "Made"
+    assert shot["points"] == 2
+    assert shot["result_source"] == "scoreboard"   # a real shot, full detail kept
+    assert stats["relaxed_mapped"] == 1
+    assert stats["synthesized_made"] == 0
+    assert len(plays) == 1                          # nothing synthesized
+
+
+def test_synthesize_free_throw_for_unmapped_plus_one():
+    # a +1 with no detected shot anywhere -> log a scoreboard-confirmed MADE FREE THROW,
+    # shooter blank + flagged for review, never a fabricated layup.
+    reads = ([_readc(t, 5, 5, "4.0") for t in (400, 403)]
+             + [_readc(t, 6, 5, "4.0") for t in (406, 409)])
+    plays, stats = SR.reconcile([], reads)
+    assert stats["synthesized_made"] == 1
+    assert stats["made_set"] == 0 and stats["unclear_points"] == 0
+    assert len(plays) == 1
+    p = plays[0]
+    assert p["result"] == "Made" and p["points"] == 1
+    assert p["shot_type"] == "Free Throw" and p["shot_zone"] == "Free Throw Line"
+    assert p["result_source"] == "scoreboard_synthesized"
+    assert p["synthesized"] is True and p["needs_review"] is True
+    assert p.get("shot_zone") == "Free Throw Line"   # only what the board proves
+
+
+def test_synthesize_three_for_unmapped_plus_three():
+    # a +3 with no detected shot -> scoreboard-confirmed MADE 3, location left blank.
+    reads = [_readc(500, 10, 10, "7:00", running=True), _readc(503, 10, 10, "6:57", running=True),
+             _readc(507, 13, 10, "6:53", running=True), _readc(510, 13, 10, "6:50", running=True)]
+    plays, stats = SR.reconcile([], reads)
+    assert stats["synthesized_made"] == 1
+    assert len(plays) == 1
+    p = plays[0]
+    assert p["result"] == "Made" and p["points"] == 3
+    assert p["shot_type"] == "3-Pointer"
+    assert p.get("shot_zone") is None               # zone not invented
+    assert p["needs_review"] is True
+
+
+def test_synthesized_make_is_flagged_for_review():
+    # a +2 field goal with no detected shot on a running clock -> synthesized make, blank zone.
+    reads = [_readc(600, 20, 18, "5:00", running=True), _readc(603, 20, 18, "4:57", running=True),
+             _readc(607, 22, 18, "4:53", running=True), _readc(610, 22, 18, "4:50", running=True)]
+    plays, stats = SR.reconcile([], reads)
+    assert stats["synthesized_made"] == 1
+    p = plays[0]
+    assert p["result"] == "Made" and p["points"] == 2
+    assert p["shot_type"] == "Field Goal" and p.get("shot_zone") is None
+    assert p["needs_review"] is True and p["synthesized"] is True
+
+
+def test_prolonged_deadball_unmapped_point_stays_unclear_not_synthesized():
+    # a +2 posts during a 45s frozen clock with NO detected shot. A live field goal can't
+    # happen at a long dead ball, so it stays 'play unclear' and is NOT synthesized as a make.
+    reads = ([_readc(t, 10, 10, "13.5") for t in (2600, 2605, 2610, 2615, 2620)]
+             + [_readc(t, 11, 11, "13.5") for t in (2625, 2630, 2635, 2640, 2645)])
+    plays, stats = SR.reconcile([], reads)
+    assert stats["unclear_points"] >= 1
+    assert stats["synthesized_made"] == 0
+    assert plays == []
+
+
+def test_synthesis_off_by_flag():
+    reads = ([_readc(t, 5, 5, "4.0") for t in (400, 403)]
+             + [_readc(t, 6, 5, "4.0") for t in (406, 409)])
+    plays, stats = SR.reconcile([], reads, synthesize=False)
+    assert stats["synthesized_made"] == 0
+    assert stats["unclear_points"] >= 1
+    assert plays == []
 
 
 # ── dedicated scoreboard-timeline planner ────────────────────────────────────
