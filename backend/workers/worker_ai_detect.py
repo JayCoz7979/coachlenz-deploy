@@ -647,6 +647,26 @@ Rules:
 - Empty list if nothing is legible on any frame: {"reads": []}."""
 
 
+# Football score-bug reader. Same job as the basketball one — report ONLY the two team
+# point totals and whether the clock is running, make NO judgment about plays — but on
+# football film the totals rise by a touchdown (6), a field goal (3), an extra point (1),
+# a safety or two-point (2), or a touchdown plus its try together (7 or 8). It reads the
+# numbers; the deterministic reconciler turns the timeline into locked scoring plays.
+SCORE_TIMELINE_PROMPT_FB = """You read ONLY the scoreboard / score bug on football film frames. You make NO judgment about plays, scores, or results — only the numbers the score graphic shows.
+
+Each frame below is given as two zoomed crops of the top and bottom overlay strips. For EACH frame, report the two team point totals you can read and whether the game clock is counting down.
+
+Return ONLY JSON:
+{"reads":[{"frame":N,"home":<integer on one side>,"away":<integer on the other side>,"clock":"<the game clock exactly as shown, e.g. 7:12, or null if not legible>","clock_running":true if the game clock is counting down else false,"conf":0.0-1.0 for how sure you are of BOTH numbers}, ...]}
+
+Rules:
+- It does not matter which physical team is "home" vs "away" — be consistent frame to frame (the same side is always the same key).
+- Include an entry ONLY for frames where you can actually read BOTH scores. Omit a frame you cannot read rather than guessing a digit.
+- Read the game clock exactly as the digits show it. Use null if you cannot read it. Do not round or invent it.
+- Do not invent or extrapolate a score; if the bug is absent or illegible on a frame, leave that frame out.
+- Empty list if nothing is legible on any frame: {"reads": []}."""
+
+
 class AiDetectWorker(BaseWorker):
     job_type = "ai_detect"
 
@@ -1038,6 +1058,65 @@ class AiDetectWorker(BaseWorker):
                 if sport in ("football", "flag_football"):
                     deduped = self._derive_from_sequence(deduped)
                     deduped = self._derive_field_position(deduped)
+
+                    # ── Scoreboard score-delta reconciliation (football) ──────────
+                    # Deterministic, no play-judging model call: lock scoring plays to the
+                    # real score change the bug shows (+6 touchdown, +3 field goal, +1 PAT,
+                    # +2 safety/two-point, +7/+8 the touchdown plus its try), mark a kick
+                    # NO GOOD when the board stayed flat after it, and strip a phantom
+                    # touchdown the board never credited. Only when a scoreboard is present
+                    # (most raw Hudl film has none); plays with no readable score around them
+                    # stay exactly as the model left them.
+                    if (getattr(settings, "DETECT_FOOTBALL_SCORE_RECONCILE_ENABLED", True)
+                            and self._has_scoreboard):
+                        from backend.services import football_score_reconcile
+                        # Read the score bug on its own off the frames already on disk (no
+                        # re-extraction), cap-bounded. Fills self._bb_score_reads.
+                        if (getattr(settings, "DETECT_SCORE_TIMELINE_ENABLED", True)
+                                and not dry_run and frame_paths):
+                            try:
+                                await self._build_score_timeline(
+                                    frame_paths, game_id, org_id, job_id,
+                                    prompt=SCORE_TIMELINE_PROMPT_FB)
+                            except Exception as e:
+                                logger.warning(f"[ai_detect] football score-timeline pass failed: {e}")
+                        deduped, frec = football_score_reconcile.reconcile(
+                            deduped, getattr(self, "_bb_score_reads", []),
+                            has_scoreboard=self._has_scoreboard, enabled=True,
+                            synthesize=getattr(settings, "DETECT_FOOTBALL_SCORE_SYNTHESIZE_ENABLED", True))
+                        if any(frec[k] for k in ("deltas_accepted", "touchdowns_set",
+                                                 "field_goals_set", "pats_set", "two_point_set",
+                                                 "safeties_set", "missed_kicks_set",
+                                                 "phantom_td_fixed", "relaxed_mapped",
+                                                 "synthesized", "unclear_points")):
+                            _scores = (frec["touchdowns_set"] + frec["field_goals_set"]
+                                       + frec["pats_set"] + frec["two_point_set"]
+                                       + frec["safeties_set"])
+                            await log_agent_action(
+                                game_id=game_id, organization_id=str(org_id), job_id=job_id,
+                                phase="score_reconcile", level="info",
+                                action=(f"Locked {_scores} scoring play(s) to the scoreboard "
+                                        f"({frec['touchdowns_set']} TD, {frec['field_goals_set']} FG, "
+                                        f"{frec['pats_set']} PAT, {frec['two_point_set']} two-point, "
+                                        f"{frec['safeties_set']} safety; {frec['relaxed_mapped']} on the "
+                                        f"widened window); marked {frec['missed_kicks_set']} kick(s) no "
+                                        f"good; corrected {frec['phantom_td_fixed']} phantom touchdown(s); "
+                                        f"logged {frec['synthesized']} scoreboard-confirmed score(s) with "
+                                        f"no detected play"),
+                                reason=("Read the score bug across the whole game and set scoring "
+                                        "outcomes from the real score change instead of a per-frame "
+                                        "guess: up 6 is a touchdown, up 3 a field goal, up 1 an extra "
+                                        "point, up 2 a safety or two-point try, up 7 or 8 the touchdown "
+                                        "plus its try. Each score is attributed to a detected play on a "
+                                        "strict then a widened window; a score with no detected play is "
+                                        "logged as a scoreboard-confirmed score of the right value with "
+                                        "the scorer left blank for you to confirm. A field goal or extra "
+                                        "point the board did not credit is marked no good, and a play "
+                                        "tagged a touchdown the board never credited is logged as a gain, "
+                                        "both only when the board was read right after and stayed flat. "
+                                        "Plays with no readable score stay exactly as detected."),
+                                detail=frec,
+                            )
                 logger.info(f"[ai_detect] {len(all_plays)} raw → {len(deduped)} after dedup")
 
                 # Basketball detection-artifact scrub: single-cam over-tags stoppages
@@ -1297,6 +1376,10 @@ class AiDetectWorker(BaseWorker):
                             # or with no detected shot (synthesized). Persisted so the UI can
                             # badge them and the coach can confirm the detail.
                             "play_unclear", "synthesized",
+                            # Football scoreboard attribution: the kind of score the board
+                            # locked (scoring_type), that it is a confirmed scoring play, and
+                            # a touchdown the board contradicted (logged as a gain).
+                            "scoring_play", "scoring_type", "scoreboard_contradicted",
                             # Basketball inbound plays
                             "inbound_type", "inbound_side", "inbound_set", "inbound_primary_action",
                             "inbound_scorer_position", "inbound_defense_coverage",
@@ -2312,10 +2395,13 @@ class AiDetectWorker(BaseWorker):
             })
         buf.extend(local)  # single extend, no await: safe under the concurrent gather
 
-    async def _build_score_timeline(self, frame_paths: list, game_id, org_id, job_id) -> dict:
-        """Dedicated scoreboard-only pass (basketball). Reads ONLY the score bug off the
-        frames already extracted for detection — no re-extraction, no make/miss judgment —
-        and appends the raw reads to self._bb_score_reads for the deterministic reconciler.
+    async def _build_score_timeline(self, frame_paths: list, game_id, org_id, job_id,
+                                    prompt: str = SCORE_TIMELINE_PROMPT_BB) -> dict:
+        """Dedicated scoreboard-only pass. Reads ONLY the score bug off the frames already
+        extracted for detection — no re-extraction, no make/miss judgment — and appends the
+        raw reads to self._bb_score_reads for the deterministic reconciler. `prompt` selects
+        the sport wording (basketball by default, SCORE_TIMELINE_PROMPT_FB for football); the
+        read itself (two team totals + clock) is identical across sports.
 
         Why this exists: the full detection call, emitting 200+ plays in one JSON, silently
         drops the score_reads array, so the reconciler had no fuel. Asked on its own the
@@ -2346,7 +2432,7 @@ class AiDetectWorker(BaseWorker):
                 try:
                     v = await self._vision_json(
                         client, DETECT_MODEL, content, max_tokens=600,
-                        system=self._cached_system(SCORE_TIMELINE_PROMPT_BB))
+                        system=self._cached_system(prompt))
                 except Exception as e:
                     logger.warning(f"[ai_detect] score-timeline batch failed: {e}")
                     return
