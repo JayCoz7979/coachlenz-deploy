@@ -607,11 +607,25 @@ These fields are CRITICAL for coaching — extract as precisely as possible from
 ── EVERY EVENT ──
 - play_description: ONE sharp sentence describing the possession/action. Specific enough to reconstruct without film. For inbounds: name the set, the action, and what happened. Examples: "BLOB right baseline: Box set, back screen frees cutter at restricted area, lob over zone for layup (made)." | "SLOB left sideline after timeout: Stack set, cross screen action, shooter pops to left wing 3 (missed, long)." | "PG drives baseline, draws hard hedge from center on ball screen at elbow, kicks to corner shooter for open 3 (missed)."
 
+━━━ SCORE READ (only when a scoreboard/score bug IS visible) ━━━
+Separately from plays, report the SCORE the bug shows on each frame you can read it, as
+"score_reads". This drives a deterministic, no-guess make/miss check downstream, so the
+digits matter more than any conclusion you draw from them. One entry per READABLE frame:
+{"frame": N, "home": <integer points on one side>, "away": <integer points on the other
+side>, "clock_running": true if the GAME clock is counting down, false if it is stopped,
+"conf": 0.0-1.0 how sure you are of BOTH numbers}.
+- Read the digits off the two zoomed score-bug crops. It does not matter which physical
+  team is "home" vs "away" — just be consistent frame to frame (same side = same key).
+- Include an entry ONLY for frames where you can actually read BOTH scores. Omit frames
+  you cannot read rather than guessing. If there is no score bug at all, return [].
+- Report the score even on frames with no play event — the running score between plays is
+  what pins each make.
+
 ━━━ JSON FORMAT ━━━
 Return ONLY this JSON:
-{"plays": [{"side": "offense", "attack_direction": null, "frame": 1, "event_type": "shot", "result": null, "score_margin": null, "quarter": null, "shot_clock_range": null, "confidence": 0.85, "blind_spot": null, "play_action": null, "shot_zone": null, "shot_type": null, "shot_distance_ft": null, "screen_type": null, "ball_screen_position": null, "transition_type": null, "paint_touch": false, "kick_out": false, "assist_type": null, "motion": false, "vs_zone": false, "zone_offense_action": null, "press_break_action": null, "clutch_situation": false, "foul_drawn_action": null, "inbound_type": null, "inbound_side": null, "inbound_set": null, "inbound_primary_action": null, "inbound_scorer_position": null, "inbound_defense_coverage": null, "inbound_situation": null, "inbound_result_zone": null, "defensive_scheme": null, "hedge_style": null, "help_defense": null, "deny_style": null, "press_trigger": null, "oob_defense_coverage": null, "players": [], "primary_player_jersey": null, "play_description": null}]}
+{"plays": [{"side": "offense", "attack_direction": null, "frame": 1, "event_type": "shot", "result": null, "score_margin": null, "quarter": null, "shot_clock_range": null, "confidence": 0.85, "blind_spot": null, "play_action": null, "shot_zone": null, "shot_type": null, "shot_distance_ft": null, "screen_type": null, "ball_screen_position": null, "transition_type": null, "paint_touch": false, "kick_out": false, "assist_type": null, "motion": false, "vs_zone": false, "zone_offense_action": null, "press_break_action": null, "clutch_situation": false, "foul_drawn_action": null, "inbound_type": null, "inbound_side": null, "inbound_set": null, "inbound_primary_action": null, "inbound_scorer_position": null, "inbound_defense_coverage": null, "inbound_situation": null, "inbound_result_zone": null, "defensive_scheme": null, "hedge_style": null, "help_defense": null, "deny_style": null, "press_trigger": null, "oob_defense_coverage": null, "players": [], "primary_player_jersey": null, "play_description": null}], "score_reads": [{"frame": 1, "home": 0, "away": 0, "clock_running": true, "conf": 0.9}]}
 
-Zero events: {"plays": []}"""
+Zero events: {"plays": [], "score_reads": []}"""
 
 
 class AiDetectWorker(BaseWorker):
@@ -681,6 +695,11 @@ class AiDetectWorker(BaseWorker):
         # frame are pure waste, so we stop sending them — a large token saving with no
         # quality cost (there is no bug to read). Default True = keep them (safe).
         self._has_scoreboard = True
+        # Raw per-frame scoreboard reads (basketball) collected during detection, fed to
+        # the deterministic score-delta reconciler after all batches. Each is
+        # {t, home, away, clock_running, conf}. Stays empty for non-basketball or when
+        # there is no scoreboard to read.
+        self._bb_score_reads = []
         # ── Load game ──────────────────────────────────────────────────────
         async with AsyncSessionLocal() as db:
             result = await db.execute(select(Game).where(Game.id == game_id))
@@ -1035,6 +1054,33 @@ class AiDetectWorker(BaseWorker):
                             detail={"corrected": side_fixed, "coach_direction": _anchored},
                         )
 
+                    # ── Scoreboard score-delta reconciliation (make/miss + FT type) ──
+                    # Deterministic, no model call: rewrite shot outcomes from the actual
+                    # score change the bug shows (up 1 = free throw, 2/3 = field goal, no
+                    # change = miss). Only when a scoreboard is present; shots with no
+                    # readable score stay exactly as the model left them (often null).
+                    if (getattr(settings, "DETECT_SCORE_RECONCILE_ENABLED", True)
+                            and self._has_scoreboard):
+                        from backend.services import score_reconcile
+                        deduped, rec = score_reconcile.reconcile(
+                            deduped, getattr(self, "_bb_score_reads", []),
+                            has_scoreboard=self._has_scoreboard, enabled=True)
+                        if any(rec[k] for k in ("deltas_accepted", "made_set",
+                                                "missed_set", "ft_type_fixed")):
+                            await log_agent_action(
+                                game_id=game_id, organization_id=str(org_id), job_id=job_id,
+                                phase="score_reconcile", level="info",
+                                action=(f"Locked {rec['made_set']} make(s) and {rec['missed_set']} "
+                                        f"miss(es) to the scoreboard; fixed {rec['ft_type_fixed']} "
+                                        f"free-throw label(s)"),
+                                reason=("Read the score bug across the whole game and set shot "
+                                        "outcomes from the real score change instead of a per-frame "
+                                        "guess: up 1 is a made free throw, up 2 or 3 a made field "
+                                        "goal, no change plus a possession flip a miss. Shots with "
+                                        "no readable score stay flagged for your eyes, never guessed."),
+                                detail=rec,
+                            )
+
                 # EAGLE EYE jersey pass (football): re-read jersey numbers off high-res
                 # player crops so personnel is actually usable. Skipped on dry runs.
                 # Mutates deduped in place before persist; failures never sink the run.
@@ -1191,6 +1237,9 @@ class AiDetectWorker(BaseWorker):
                             "paint_touch", "kick_out", "assist_type",
                             "defensive_scheme", "hedge_style", "help_defense", "deny_style", "press_trigger",
                             "score_margin", "quarter", "shot_clock_range",
+                            # Scoreboard score-delta reconciliation provenance: how the
+                            # make/miss was determined and the point value it locked.
+                            "result_source", "result_verified", "points", "and_one",
                             # Basketball inbound plays
                             "inbound_type", "inbound_side", "inbound_set", "inbound_primary_action",
                             "inbound_scorer_position", "inbound_defense_coverage",
@@ -2179,6 +2228,29 @@ class AiDetectWorker(BaseWorker):
             diffs.append(sum(abs(x - y) for x, y in zip(a, b)) / n)
         return (sum(diffs) / len(diffs)) if diffs else float("inf")
 
+    def _collect_score_reads(self, reads, batch) -> None:
+        """Stamp the model's raw per-frame scoreboard reads with the REAL timestamp of the
+        frame (same frame->time mapping as the plays), and append to the run buffer the
+        deterministic score-delta reconciler consumes after all batches. Frames without a
+        legible score are simply omitted upstream."""
+        buf = getattr(self, "_bb_score_reads", None)
+        if buf is None or not isinstance(reads, list):
+            return
+        local = []
+        for r in reads:
+            if not isinstance(r, dict):
+                continue
+            fr = r.get("frame")
+            if not (isinstance(fr, (int, float)) and 1 <= int(fr) <= len(batch)):
+                continue
+            local.append({
+                "t": float(round(batch[int(fr) - 1][1])),
+                "home": r.get("home"), "away": r.get("away"),
+                "clock_running": r.get("clock_running"),
+                "conf": r.get("conf", 1.0),
+            })
+        buf.extend(local)  # single extend, no await: safe under the concurrent gather
+
     def _assign_times(self, plays: list, batch) -> list:
         """Confidence-gate plays and stamp each with the REAL timestamp of the frame
         the model picked — never an AI-estimated time."""
@@ -2227,6 +2299,11 @@ class AiDetectWorker(BaseWorker):
                                              max_tokens=DETECT_MAX_TOKENS,
                                              system=self._cached_system(sys_text))
             plays = parsed.get("plays", [])
+            if sport == "basketball":
+                # Stamp the raw scoreboard reads with real frame timestamps for the
+                # global score-delta reconciler. Sync + no await before the extend, so
+                # the shared buffer is safe under the concurrent batch gather.
+                self._collect_score_reads(parsed.get("score_reads"), batch)
             if fast_verify and plays:
                 await self._fast_bb_result_verify(client, content, plays)
             return self._assign_times(plays, batch)

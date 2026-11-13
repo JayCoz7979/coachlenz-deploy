@@ -79,6 +79,16 @@ class Settings(BaseSettings):
     DETECT_DEADTIME_SKIP: bool = False
     DETECT_DEADTIME_MOTION_MIN: float = 2.0   # mean abs 64x64 grayscale frame-diff below this = static
 
+    # Scoreboard score-delta reconciliation (basketball accuracy fix without Opus). The
+    # score bug is ground truth: the total only ticks up on a make, by the exact point
+    # value (1 = free throw, 2/3 = field goal). When enabled, the model reports a raw
+    # per-frame score read (score_reads) and a deterministic post-pass rewrites shot
+    # make/miss and free-throw-vs-field-goal from the actual score change instead of a
+    # per-frame guess. It only acts when a scoreboard is present and only on positive
+    # evidence; an unreadable board leaves the shot untouched (never a guessed "Missed").
+    # DB-overridable so it can be toggled live without a redeploy (see feature toggles).
+    DETECT_SCORE_RECONCILE_ENABLED: bool = True
+
     # Stripe
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
