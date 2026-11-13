@@ -29,8 +29,71 @@ WINDOW_BEFORE = 8.0          # a made basket posts on the bug 0-8s after the sho
 MISS_AFTER_WINDOW = 12.0     # only confirm a miss if the board is read again this soon
 AND_ONE_GAP = 15.0           # the bonus free throw after an and-1 lands within this window
 SCOREBOARD_CONF = 0.95       # confidence stamped on a scoreboard-confirmed outcome
+DEADBALL_FREEZE_S = 35.0     # clock frozen at one value this long = a prolonged dead ball
 
 _THREE_ZONES = ("corner 3", "wing 3", "top of key 3", "half court")
+
+
+def _clock_seconds(v):
+    """Parse a game-clock string ('7:12', '13.5', '0:04.1') to seconds, or None."""
+    if v is None:
+        return None
+    s = str(v).strip()
+    if not s or s.lower() in ("null", "none"):
+        return None
+    try:
+        if ":" in s:
+            parts = s.split(":")
+            mm = int(parts[0])
+            ss = float(parts[1])
+            return mm * 60 + ss
+        return float(s)
+    except (ValueError, IndexError):
+        return None
+
+
+def _is_free_throw(p):
+    st = (p.get("shot_type") or "").strip().lower()
+    zone = (p.get("shot_zone") or "").strip().lower()
+    return st == "free throw" or "free throw" in zone
+
+
+def _clock_context(norm, t, freeze_s=DEADBALL_FREEZE_S, tol=0.6):
+    """Classify the game-clock state around time t from the score reads. Returns one of
+    'prolonged' (clock frozen at one value for >= freeze_s = timeout/dead ball),
+    'stopped' (clock appears stopped but not that long), 'running', or 'unknown'.
+
+    The clock VALUE being constant across consecutive reads is the reliable tell on wide
+    single-cam film: a live shot happens with the clock counting down; a point that posts
+    while the clock is frozen for a long stretch is a stoppage, not a live make."""
+    cv = [r for r in norm if r.get("clock") is not None]
+    if not cv:
+        near = [r for r in norm if abs(r["t"] - t) <= 8.0 and r.get("clock_running") is not None]
+        if not near:
+            return "unknown"
+        if all(r.get("clock_running") is False for r in near):
+            return "stopped"
+        if any(r.get("clock_running") is True for r in near):
+            return "running"
+        return "unknown"
+    nearest = min(cv, key=lambda r: abs(r["t"] - t))
+    if abs(nearest["t"] - t) > 12.0:
+        return "unknown"
+    val = nearest["clock"]
+    i = cv.index(nearest)
+    lo = hi = i
+    while lo - 1 >= 0 and abs(cv[lo - 1]["clock"] - val) <= tol:
+        lo -= 1
+    while hi + 1 < len(cv) and abs(cv[hi + 1]["clock"] - val) <= tol:
+        hi += 1
+    dur = cv[hi]["t"] - cv[lo]["t"]
+    if dur >= freeze_s:
+        return "prolonged"
+    stopped_near = any(abs(r["t"] - t) <= 6.0 and r.get("clock_running") is False for r in norm)
+    if hi > lo or stopped_near:
+        return "stopped"
+    # a single read matches and the clock is changing on either side -> it's running
+    return "running"
 
 
 def _norm_reads(reads):
@@ -58,6 +121,7 @@ def _norm_reads(reads):
         if conf < MIN_READ_CONF:
             continue
         out.append({"t": t, "total": total,
+                    "clock": _clock_seconds(r.get("clock")),
                     "clock_running": r.get("clock_running"), "conf": conf})
     out.sort(key=lambda x: x["t"])
     return out
@@ -166,16 +230,28 @@ def plan_timeline_batches(frame_paths, cadence, bsz, max_calls):
     return batches, len(picked)
 
 
-def reconcile(plays, reads, *, has_scoreboard=True, enabled=True):
+def reconcile(plays, reads, *, has_scoreboard=True, enabled=True,
+              suppress_deadball=True, freeze_s=DEADBALL_FREEZE_S):
     """Rewrite basketball shot outcomes from the scoreboard score-delta timeline.
 
     Returns (plays, stats). `plays` is mutated in place and also returned. When the film has
     no scoreboard or the feature is disabled, nothing changes. A corrected shot is stamped
     result_source='scoreboard' and result_verified=True so the UI and the learning loop can
     see it was locked to ground truth rather than guessed.
+
+    Dead-ball suppression (suppress_deadball): wide single-cam film cannot support
+    frame-accurate event tagging — the detector confabulates shots during stoppages
+    (warmup shooting, inbounds). The scoreboard is the only reliable spine, so:
+      A) a detected FIELD GOAL at a stopped clock is impossible (you cannot shoot a live
+         field goal with the clock stopped) and is suppressed as a dead-ball phantom,
+         unless a real +2/+3 aligns to it.
+      B) a point that posts while the clock is frozen for a PROLONGED stretch (a timeout /
+         extended dead ball) is reported as "point scored, play unclear" rather than a
+         fabricated made shot stamped on a dead-ball frame.
     """
     stats = {"deltas_accepted": 0, "made_set": 0, "missed_set": 0,
-             "ft_type_fixed": 0, "and_one": 0, "left_null": 0}
+             "ft_type_fixed": 0, "and_one": 0, "left_null": 0,
+             "suppressed": 0, "unclear_points": 0}
     if not enabled or not has_scoreboard:
         return plays, stats
 
@@ -216,6 +292,26 @@ def reconcile(plays, reads, *, has_scoreboard=True, enabled=True):
                 cand = p
                 break
         if cand is None:
+            # The board moved but no detected shot aligns — a real point we can't attribute
+            # to a specific play. Keep the score fact; never invent a shot.
+            stats["unclear_points"] += 1
+            prev_event = ev
+            continue
+        # Rule B: the mapped shot sits inside a PROLONGED frozen-clock window (timeout /
+        # extended dead ball). The detector's specific shot read there is unreliable, so
+        # preserve the point but do NOT assert a made free throw/layup on a dead-ball frame.
+        if suppress_deadball and _clock_context(norm, cand["time_seconds"], freeze_s) == "prolonged":
+            used.add(id(cand))
+            cand["result"] = None
+            cand["shot_type"] = "Unclear"
+            cand["points"] = pts
+            cand["result_source"] = "scoreboard_unconfirmed_play"
+            cand["play_unclear"] = True
+            cand["confidence"] = min(float(cand.get("confidence") or 0), 0.4)
+            cand["play_description"] = (
+                f"Point scored (+{pts}) during a stopped-clock dead ball; the specific "
+                f"play could not be confirmed on single-camera film.")
+            stats["unclear_points"] += 1
             prev_event = ev
             continue
         used.add(id(cand))
@@ -240,12 +336,26 @@ def reconcile(plays, reads, *, has_scoreboard=True, enabled=True):
             stats["and_one"] += 1
         prev_event = ev
 
-    # 3) Misses: only on positive evidence — the board was read right after the shot and the
-    #    total did not move. Never a guess; an unreadable board leaves the shot untouched.
+    # 3) Remaining (unmapped) shots.
     for p in shots:
         if id(p) in used:
             continue
         ts = p["time_seconds"]
+        # Rule A: a detected FIELD GOAL at a stopped clock with no supporting score change
+        # is a dead-ball phantom (inbound, warmup shooting). You cannot shoot a live field
+        # goal with the clock stopped — suppress it instead of calling it a make or a miss.
+        if suppress_deadball and not _is_free_throw(p):
+            ctx = _clock_context(norm, ts, freeze_s)
+            if ctx in ("stopped", "prolonged"):
+                p["result"] = None
+                p["suppressed"] = True
+                p["result_source"] = "dead_ball_suppressed"
+                p["suppressed_reason"] = "field goal during a stopped clock (dead ball)"
+                p["confidence"] = min(float(p.get("confidence") or 0), 0.3)
+                stats["suppressed"] += 1
+                continue
+        # Misses: only on positive evidence — the board was read right after the shot and the
+        # total did not move. Never a guess; an unreadable board leaves the shot untouched.
         before = _running_total_before(confirmed, ts)
         after = _stable_total_after(norm, ts, MISS_AFTER_WINDOW)
         if before is not None and after is not None and after == before:
