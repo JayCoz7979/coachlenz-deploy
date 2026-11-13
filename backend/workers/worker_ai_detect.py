@@ -628,6 +628,24 @@ Return ONLY this JSON:
 Zero events: {"plays": [], "score_reads": []}"""
 
 
+# Dedicated scoreboard-only pass. The full detection prompt, busy emitting 200+ plays,
+# drops the score_reads array; asked on its own the model reads the bug at ~0.97. This
+# reads ONLY the score bug off a batch of frames (zoomed crops), tiny JSON out, and the
+# deterministic reconciler turns the resulting score timeline into make/miss + FT labels.
+SCORE_TIMELINE_PROMPT_BB = """You read ONLY the scoreboard / score bug on basketball film frames. You make NO judgment about makes, misses, fouls, or plays — only what the score graphic shows.
+
+Each frame below is given as two zoomed crops of the top and bottom overlay strips. For EACH frame, report the two team point totals you can read and whether the game clock is counting down.
+
+Return ONLY JSON:
+{"reads":[{"frame":N,"home":<integer on one side>,"away":<integer on the other side>,"clock_running":true if the game clock is counting down else false,"conf":0.0-1.0 for how sure you are of BOTH numbers}, ...]}
+
+Rules:
+- It does not matter which physical team is "home" vs "away" — be consistent frame to frame (the same side is always the same key).
+- Include an entry ONLY for frames where you can actually read BOTH scores. Omit a frame you cannot read rather than guessing a digit.
+- Do not invent or extrapolate a score; if the bug is absent or illegible on a frame, leave that frame out.
+- Empty list if nothing is legible on any frame: {"reads": []}."""
+
+
 class AiDetectWorker(BaseWorker):
     job_type = "ai_detect"
 
@@ -1062,6 +1080,16 @@ class AiDetectWorker(BaseWorker):
                     if (getattr(settings, "DETECT_SCORE_RECONCILE_ENABLED", True)
                             and self._has_scoreboard):
                         from backend.services import score_reconcile
+                        # Dedicated scoreboard-timeline pass: the busy detection call drops
+                        # the per-frame score reads, so read the score bug on its own off the
+                        # frames already on disk (no re-extraction), cap-bounded. Fills
+                        # self._bb_score_reads that the reconciler below consumes.
+                        if (getattr(settings, "DETECT_SCORE_TIMELINE_ENABLED", True)
+                                and not dry_run and frame_paths):
+                            try:
+                                await self._build_score_timeline(frame_paths, game_id, org_id, job_id)
+                            except Exception as e:
+                                logger.warning(f"[ai_detect] score-timeline pass failed: {e}")
                         deduped, rec = score_reconcile.reconcile(
                             deduped, getattr(self, "_bb_score_reads", []),
                             has_scoreboard=self._has_scoreboard, enabled=True)
@@ -2250,6 +2278,79 @@ class AiDetectWorker(BaseWorker):
                 "conf": r.get("conf", 1.0),
             })
         buf.extend(local)  # single extend, no await: safe under the concurrent gather
+
+    async def _build_score_timeline(self, frame_paths: list, game_id, org_id, job_id) -> dict:
+        """Dedicated scoreboard-only pass (basketball). Reads ONLY the score bug off the
+        frames already extracted for detection — no re-extraction, no make/miss judgment —
+        and appends the raw reads to self._bb_score_reads for the deterministic reconciler.
+
+        Why this exists: the full detection call, emitting 200+ plays in one JSON, silently
+        drops the score_reads array, so the reconciler had no fuel. Asked on its own the
+        model reads the bug reliably (~0.97). Frames are sampled to roughly one read per
+        CADENCE_S seconds, batched, and the number of vision calls is hard-capped so the
+        extra spend is bounded and predictable. Failures never sink the run."""
+        import anthropic
+        cadence = max(1.0, float(getattr(settings, "DETECT_SCORE_TIMELINE_CADENCE_S", 5.0)))
+        max_calls = max(1, int(getattr(settings, "DETECT_SCORE_TIMELINE_MAX_CALLS", 180)))
+        bsz = max(1, int(getattr(settings, "DETECT_SCORE_TIMELINE_BATCH", 6)))
+
+        from backend.services import score_reconcile
+        batches, picked_n = score_reconcile.plan_timeline_batches(frame_paths, cadence, bsz, max_calls)
+        if not batches:
+            return {"reads": 0, "calls": 0}
+
+        before = len(self._bb_score_reads)
+        sem = asyncio.Semaphore(PARALLEL_VISION_FAST)
+
+        async def _one(batch):
+            async with anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY,
+                                                timeout=DETECT_TIMEOUT_S,
+                                                max_retries=DETECT_MAX_RETRIES) as client:
+                content = []
+                for i, (path, t) in enumerate(batch):
+                    content.append({"type": "text", "text": f"Frame {i + 1} (t={int(t)}s):"})
+                    content.extend(self._overlay_crop_blocks(path, i + 1))
+                try:
+                    v = await self._vision_json(
+                        client, DETECT_MODEL, content, max_tokens=600,
+                        system=self._cached_system(SCORE_TIMELINE_PROMPT_BB))
+                except Exception as e:
+                    logger.warning(f"[ai_detect] score-timeline batch failed: {e}")
+                    return
+                local = []
+                for r in (v.get("reads") or []):
+                    if not isinstance(r, dict):
+                        continue
+                    fr = r.get("frame")
+                    if not (isinstance(fr, (int, float)) and 1 <= int(fr) <= len(batch)):
+                        continue
+                    local.append({
+                        "t": float(round(batch[int(fr) - 1][1])),
+                        "home": r.get("home"), "away": r.get("away"),
+                        "clock_running": r.get("clock_running"),
+                        "conf": r.get("conf", 1.0),
+                    })
+                # Single extend, no await between build and extend: safe under the gather.
+                self._bb_score_reads.extend(local)
+
+        async def _guarded(b):
+            async with sem:
+                await _one(b)
+
+        await asyncio.gather(*(_guarded(b) for b in batches))
+        added = len(self._bb_score_reads) - before
+
+        await log_agent_action(
+            game_id=game_id, organization_id=str(org_id), job_id=job_id,
+            phase="score_timeline", level="info",
+            action=f"Read the scoreboard on its own across {len(batches)} slice(s) — {added} legible score read(s)",
+            reason=("The main breakdown doesn't reliably report the score while it's tracking every "
+                    "play, so I read ONLY the score bug off the frames already pulled (no extra film "
+                    "work) to build the real score timeline the make/miss check runs on."),
+            detail={"reads_added": added, "calls": len(batches),
+                    "sampled_frames": picked_n, "cadence_s": cadence},
+        )
+        return {"reads": added, "calls": len(batches)}
 
     def _assign_times(self, plays: list, batch) -> list:
         """Confidence-gate plays and stamp each with the REAL timestamp of the frame

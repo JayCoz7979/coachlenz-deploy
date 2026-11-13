@@ -139,6 +139,33 @@ def _is_shot(p):
     return (p.get("event_type") or "") == "shot" and isinstance(p.get("time_seconds"), (int, float))
 
 
+def plan_timeline_batches(frame_paths, cadence, bsz, max_calls):
+    """Plan the dedicated scoreboard-only pass from the frames already extracted for
+    detection. Keep roughly one frame per `cadence` seconds (so two consecutive kept
+    reads can confirm a total via the debounce in confirmed_totals), split into batches
+    of `bsz` frames, and if that exceeds `max_calls` thin the batches EVENLY so the whole
+    game is still covered while the vision-call count stays hard-capped. `frame_paths` is
+    a list of (path, timestamp). Returns (batches, picked_count).
+
+    Pure + network-free so the sampling cadence and the call cap are unit-tested without
+    extracting a single frame or making a model call."""
+    picked, last_t = [], None
+    for item in sorted(frame_paths, key=lambda x: x[1]):
+        t = item[1]
+        if last_t is None or (t - last_t) >= cadence:
+            picked.append(item)
+            last_t = t
+    if not picked:
+        return [], 0
+    bsz = max(1, int(bsz))
+    batches = [picked[i:i + bsz] for i in range(0, len(picked), bsz)]
+    max_calls = max(1, int(max_calls))
+    if len(batches) > max_calls:
+        step = len(batches) / max_calls
+        batches = [batches[int(i * step)] for i in range(max_calls)]
+    return batches, len(picked)
+
+
 def reconcile(plays, reads, *, has_scoreboard=True, enabled=True):
     """Rewrite basketball shot outcomes from the scoreboard score-delta timeline.
 

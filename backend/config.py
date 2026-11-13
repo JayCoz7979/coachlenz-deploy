@@ -89,6 +89,18 @@ class Settings(BaseSettings):
     # DB-overridable so it can be toggled live without a redeploy (see feature toggles).
     DETECT_SCORE_RECONCILE_ENABLED: bool = True
 
+    # Dedicated scoreboard-timeline pass (basketball). The busy detection call, juggling
+    # 200+ plays in one JSON, drops the per-frame score reads the reconciler needs. This
+    # runs a SEPARATE cheap pass that reads ONLY the score bug off frames sampled across
+    # the game (tiny JSON out, cached crops), builds the real score timeline, and feeds
+    # the deterministic reconciler above. Proven: the bug reads at ~0.97 confidence when
+    # asked on its own. Cadence = one read roughly every N seconds of film; capped calls
+    # bound the extra spend. DB-overridable for live toggle.
+    DETECT_SCORE_TIMELINE_ENABLED: bool = True
+    DETECT_SCORE_TIMELINE_CADENCE_S: float = 5.0   # target one scoreboard read per this many seconds
+    DETECT_SCORE_TIMELINE_MAX_CALLS: int = 180     # hard cap on scoreboard-only vision calls per run
+    DETECT_SCORE_TIMELINE_BATCH: int = 6           # frames per scoreboard-only call
+
     # Stripe
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""

@@ -151,3 +151,39 @@ def test_non_shot_events_are_ignored():
     _, stats = SR.reconcile([reb], reads)
     assert reb["result"] is None
     assert stats["made_set"] == 0
+
+
+# ── dedicated scoreboard-timeline planner ────────────────────────────────────
+
+def _frames(times):
+    return [(f"f_{t}.jpg", float(t)) for t in times]
+
+
+def test_plan_timeline_samples_by_cadence():
+    # frames every 1s for 20s, cadence 5 -> keep ~one per 5s (0,5,10,15,20)
+    frames = _frames(range(0, 21))
+    batches, picked = SR.plan_timeline_batches(frames, cadence=5.0, bsz=6, max_calls=180)
+    assert picked == 5
+    kept_times = [t for b in batches for (_p, t) in b]
+    assert kept_times == [0.0, 5.0, 10.0, 15.0, 20.0]
+
+
+def test_plan_timeline_batches_split_by_size():
+    frames = _frames(range(0, 100, 5))   # 20 frames, 5s apart, cadence 5 keeps all 20
+    batches, picked = SR.plan_timeline_batches(frames, cadence=5.0, bsz=6, max_calls=180)
+    assert picked == 20
+    assert [len(b) for b in batches] == [6, 6, 6, 2]
+
+
+def test_plan_timeline_hard_caps_calls_but_keeps_coverage():
+    frames = _frames(range(0, 6000, 5))   # a long game: ~1200 reads
+    batches, picked = SR.plan_timeline_batches(frames, cadence=5.0, bsz=6, max_calls=50)
+    assert len(batches) == 50               # never exceeds the cap
+    # coverage spans start to end of the game, not just the opening
+    first_t = batches[0][0][1]
+    last_t = batches[-1][-1][1]
+    assert first_t < 100 and last_t > 5000
+
+
+def test_plan_timeline_empty_is_safe():
+    assert SR.plan_timeline_batches([], cadence=5.0, bsz=6, max_calls=180) == ([], 0)
