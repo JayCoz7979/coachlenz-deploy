@@ -1052,7 +1052,7 @@ class AiDetectWorker(BaseWorker):
                 await asyncio.gather(*[process_batch(i, b) for i, b in enumerate(batches)])
 
                 # ── Deduplicate by time (within 5s = same play) ───────────
-                deduped = self._deduplicate_plays(all_plays)
+                deduped = self._dedupe_for_sport(all_plays, sport)
                 # Derive yards/result from the down-and-distance progression — far more
                 # reliable than reading yardage off a still frame.
                 if sport in ("football", "flag_football"):
@@ -2914,6 +2914,25 @@ class AiDetectWorker(BaseWorker):
             elif y is None:
                 cur = None  # unknown gain → can't place the next spot
         return plays
+
+    def _dedupe_for_sport(self, plays: list[dict], sport: str) -> list[dict]:
+        """Pick the dedup strategy for this sport.
+
+        Basketball, flag-gated only: the action-aware dedup keeps distinct sub-window
+        actions (a putback right after a miss) that the time-only window would merge
+        and drop. The flag defaults off, so every sport uses the shipped time-only
+        path (_deduplicate_plays) until BB_POSSESSION_CONTEXT_ENABLED is set. Kept as
+        its own method so the flag-gated choice is unit-testable without running the
+        detection loop. With the flag off, this is byte-identical to the shipped call.
+        """
+        if (sport or "").lower() == "basketball":
+            from backend.services.tendency_engine.possession_context import (
+                possession_context_enabled,
+                dedup_basketball_actions,
+            )
+            if possession_context_enabled():
+                return dedup_basketball_actions(plays)
+        return self._deduplicate_plays(plays)
 
     def _deduplicate_plays(self, plays: list[dict]) -> list[dict]:
         """Merge plays within 8s of each other (likely the same play seen across adjacent frames)."""
