@@ -129,6 +129,18 @@ def max_cogs_at_floor(credits: int) -> float:
     return round(revenue * (1 - MARGIN_FLOOR), 4)
 
 
+def run_cost_cap_usd(credits_charged: int) -> float:
+    """The most a single analysis may cost before it would LOSE money at the cheapest
+    bundle ($0.70/credit). This is the break-even line (revenue at floor), NOT the 50%
+    margin line (that is `max_cogs_at_floor`, which is far lower and would clip normal
+    runs). The detector stops its discretionary Opus passes once a run's measured spend
+    reaches this, so a pathological game degrades to break-even instead of a loss while
+    normal runs (well under it) are untouched. 0 or negative credits -> 0.0 (no cap)."""
+    if not credits_charged or credits_charged <= 0:
+        return 0.0
+    return round(credits_charged * FLOOR_CREDIT_PRICE, 2)
+
+
 def margin_verdict(avg_cost_usd: float, credits: int) -> str:
     """Compare a measured average per-run cost to the credit revenue at the cheapest
     bundle price. 'pass' holds the 50% floor, 'watch' is 40-50% (thin), 'fail' is below
