@@ -15,14 +15,17 @@ def test_empty_reads_no_data_not_a_fake_pass():
 
 
 def test_recall_proxy_counts_coach_added_as_misses():
-    # 90 of 100 plays auto-detected, 10 the coach added back -> 90% recall (pass).
+    # 90 of 100 plays auto-detected, 10 the coach added back -> 90% recall.
     sc = dq.build_scorecard([{"game_id": "g1", "sport": "football",
                               "auto_plays": 90, "coach_added_plays": 10,
                               "film_height": 1080}])
     g = sc["games"][0]
     assert g["recall"] == 0.9
     assert g["measurement"] == "proxy"
-    assert g["recall_verdict"] == "pass"
+    # A proxy is only an upper bound on true recall (there may be misses nobody added
+    # back), so a 90% proxy cannot confirm a pass: it reads unverified until a true
+    # count backs it.
+    assert g["recall_verdict"] == "unverified"
     assert g["film_quality"] == "hd"
 
 
@@ -75,8 +78,10 @@ def test_film_quality_cut_pools_recall_play_weighted():
     ])
     by = {b["label"]: b for b in sc["by_film_quality"]}
     assert by["HD film (>=720p)"]["recall"] == 0.95
-    assert by["HD film (>=720p)"]["recall_verdict"] == "pass"
+    # HD proxy is high but unconfirmed, so it reads unverified, not a green pass.
+    assert by["HD film (>=720p)"]["recall_verdict"] == "unverified"
     assert by["SD film (<720p)"]["recall"] == 0.66
+    # SD proxy is already below the bar; an upper bound that low is real bad news.
     assert by["SD film (<720p)"]["recall_verdict"] == "stop"
     # Overall pools both: 161 found of 200 total = 80.5%.
     assert sc["overall"]["recall"] == 0.805
@@ -109,3 +114,48 @@ def test_unknown_resolution_bucketed_separately():
                               "film_height": None}])
     assert sc["games"][0]["film_quality"] == "unknown"
     assert [b["label"] for b in sc["by_film_quality"]] == ["Unknown resolution"]
+
+
+def test_high_proxy_with_no_coach_adds_is_unverified_not_pass():
+    # The core bug this gate must never repeat: a 100% proxy floor (nobody added a
+    # missed play) must NOT read as a green pass. It only means no one checked, not
+    # that nothing was missed. The label rate with zero review is unverified too.
+    g = dq.build_scorecard([{"game_id": "g", "sport": "basketball",
+                             "auto_plays": 200, "coach_added_plays": 0,
+                             "film_height": 1080}])["games"][0]
+    assert g["recall"] == 1.0
+    assert g["measurement"] == "proxy"
+    assert g["recall_verdict"] == "unverified"
+    assert g["label_verdict"] == "unverified"
+
+
+def test_labeled_true_count_still_earns_a_real_pass():
+    # Verification is the whole point: a confirmed true count at or above the bar is
+    # a trusted pass, unlike a proxy.
+    g = dq.build_scorecard([{"game_id": "g", "auto_plays": 95, "coach_added_plays": 0,
+                             "true_plays": 100, "film_height": 1080}])["games"][0]
+    assert g["measurement"] == "labeled"
+    assert g["recall"] == 0.95
+    assert g["recall_verdict"] == "pass"
+
+
+def test_reviewed_game_still_grades_label_quality():
+    # A coach touched this game, so a low edit rate is a real pass. Corrections OR
+    # coach-added plays both count as review.
+    good = dq.build_scorecard([{"game_id": "g", "auto_plays": 100, "coach_added_plays": 0,
+                                "corrections": 5}])["games"][0]
+    assert good["label_verdict"] == "pass"
+    coached = dq.build_scorecard([{"game_id": "g", "auto_plays": 100,
+                                   "coach_added_plays": 3, "corrections": 0}])["games"][0]
+    assert coached["label_verdict"] == "pass"
+
+
+def test_overall_all_proxy_rolls_up_unverified():
+    # A whole board of unconfirmed 100% floors must not roll up to a green pass.
+    sc = dq.build_scorecard([
+        {"game_id": "a", "auto_plays": 180, "coach_added_plays": 0, "film_height": 1080},
+        {"game_id": "b", "auto_plays": 200, "coach_added_plays": 0, "film_height": 720},
+    ])
+    assert sc["overall"]["recall"] == 1.0
+    assert sc["overall"]["recall_verdict"] == "unverified"
+    assert sc["overall"]["label_verdict"] == "unverified"
