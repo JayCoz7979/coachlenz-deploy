@@ -44,6 +44,7 @@ export default function AdminPage() {
     pass: 'bg-brand-500/15 text-brand-400',
     watch: 'bg-yellow-500/15 text-yellow-400',
     stop: 'bg-red-500/15 text-red-400',
+    unverified: 'bg-gray-600 text-gray-200',
     maturing: 'bg-gray-700 text-gray-400',
     no_data: 'bg-gray-700 text-gray-400',
   }
@@ -341,7 +342,7 @@ export default function AdminPage() {
                       </tbody>
                     </table>
                     {detection.games.length === 0 && <div className="text-center text-gray-500 py-12">No analyzed film yet. This fills in as coaches run film breakdowns. Recall reads as a floor until you set a true play count on a labeled game.</div>}
-                    <p className="text-xs text-gray-500 mt-3">* recall measured against a confirmed true play count. Unmarked recall is a floor from coach-added plays.</p>
+                    <p className="text-xs text-gray-500 mt-3">* recall measured against a confirmed true play count. Unmarked recall is a floor from coach-added plays. An "unverified" verdict means no true count has been entered, so a high score proves nothing yet. Enter a true play or FGA count to earn a real pass.</p>
                   </div>
                 </>
               )}

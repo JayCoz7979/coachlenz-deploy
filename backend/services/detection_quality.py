@@ -69,6 +69,34 @@ def _label_verdict(edit_rate: Optional[float], auto_plays: int) -> str:
     return "stop"
 
 
+def _recall_gate(recall: Optional[float], denom: int, labeled: bool) -> str:
+    """The verdict shown to a human. A labeled recall (a confirmed true count) is
+    trusted outright. A proxy recall is only an UPPER BOUND on true recall, because
+    a coach adds back only the misses they happened to catch, so there may be more.
+    That means a high proxy proves nothing and must read 'unverified', never a green
+    pass, while a proxy already below the pass bar is a real ceiling (it can only be
+    worse) and keeps its watch/stop. This is what stops the gate from showing green
+    on film nobody has actually checked."""
+    if not denom or recall is None:
+        return "no_data"
+    if labeled:
+        return _recall_verdict(recall, denom)
+    if recall >= RECALL_PASS:
+        return "unverified"
+    return _recall_verdict(recall, denom)
+
+
+def _label_gate(edit_rate: Optional[float], auto_plays: int, reviewed: bool) -> str:
+    """Label quality is only real once a human has looked. With zero corrections AND
+    no coach-added plays, nobody reviewed this game, so a 0% edit rate is the absence
+    of data, not a clean bill: read it 'unverified', not a pass."""
+    if not auto_plays or edit_rate is None:
+        return "no_data"
+    if not reviewed:
+        return "unverified"
+    return _label_verdict(edit_rate, auto_plays)
+
+
 def _score_game(g: Dict[str, Any]) -> Dict[str, Any]:
     auto = int(g.get("auto_plays") or 0)
     coach_added = int(g.get("coach_added_plays") or 0)
@@ -113,14 +141,14 @@ def _score_game(g: Dict[str, Any]) -> Dict[str, Any]:
         "true_plays": true_plays if labeled else None,
         "measurement": "labeled" if labeled else "proxy",
         "recall": recall,
-        "recall_verdict": _recall_verdict(recall, denom or 0),
+        "recall_verdict": _recall_gate(recall, denom or 0, labeled),
         "shots_detected": shots_detected,
         "true_shots": true_shots if shot_labeled else None,
         "shot_recall": shot_recall,
         "shot_recall_verdict": shot_verdict,
         "corrections": corrections,
         "label_edit_rate": edit_rate,
-        "label_verdict": _label_verdict(edit_rate, auto),
+        "label_verdict": _label_gate(edit_rate, auto, (coach_added > 0 or corrections > 0)),
         "needs_review": needs_review,
         "needs_review_rate": round(needs_review / auto, 4) if auto else None,
         "avg_confidence": g.get("avg_confidence"),
@@ -161,13 +189,13 @@ def _aggregate(games: List[Dict[str, Any]], label: str) -> Dict[str, Any]:
         "total_plays": auto + coach_added,
         "measurement": "labeled" if any_labeled else "proxy",
         "recall": recall,
-        "recall_verdict": _recall_verdict(recall, denom),
+        "recall_verdict": _recall_gate(recall, denom, any_labeled),
         "shots_detected": shots_detected,
         "shot_recall": shot_recall,
         "shot_recall_verdict": _recall_verdict(shot_recall, shot_true),
         "corrections": corrections,
         "label_edit_rate": edit_rate,
-        "label_verdict": _label_verdict(edit_rate, auto),
+        "label_verdict": _label_gate(edit_rate, auto, (coach_added > 0 or corrections > 0)),
         "needs_review": needs_review,
         "needs_review_rate": round(needs_review / auto, 4) if auto else None,
         "avg_confidence": round(sum(confs) / len(confs), 3) if confs else None,
