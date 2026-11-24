@@ -101,9 +101,12 @@ def test_flag_off_makes_no_gateway_calls(monkeypatch):
     fake = _Gateway()
     mail.set_gateway(fake)
     lead = _lead()
-    status = asyncio.run(mail.after_stored(_DB(), lead, {}))
+    db = _DB()
+    meta = {"ip": "203.0.113.8", "ua": "CoachBrowser"}
+    status = asyncio.run(mail.after_stored(db, lead, meta))
     assert status == "stored_no_email"
     assert fake.sends == [] and fake.contacts == [] and fake.unsubs == []
+    assert lead.confirm_token_hash is None and lead.confirm_sent_at is None
     mail.set_gateway(None)
 
 
@@ -340,6 +343,54 @@ def test_resend_payload_has_no_ip_or_user_agent():
     assert "ip_address" not in clean and "user_agent" not in clean
     assert mail._from_address() == "Jay Cosby <support@coachlenz.com>"
     assert mail._reply_to() == "support@coachlenz.com"
+
+
+@pytest.mark.unit
+def test_consent_event_is_stored_when_email_is_off(monkeypatch):
+    monkeypatch.setattr(settings, "WAITLIST_EMAIL_ENABLED", False)
+    fake = _Gateway()
+    mail.set_gateway(fake)
+    lead = _lead()
+    db = _DB()
+    meta = {"ip": "203.0.113.10", "ua": "WaitlistBrowser"}
+    assert asyncio.run(mail.after_stored(db, lead, meta)) == "stored_no_email"
+    events = [obj for obj in db.added if isinstance(obj, MarketingConsentEvent)]
+    assert len(events) == 1
+    event = events[0]
+    assert event.event_type == "signup"
+    assert event.ip_address == "203.0.113.10"
+    assert event.user_agent == "WaitlistBrowser"
+    pair = active_consent()
+    assert event.consent_text == pair["text"]
+    assert "Button: Send me the Halftime Sheet" in event.consent_text
+    assert event.occurred_at is not None
+    assert lead.confirm_token_hash is None
+    assert fake.sends == []
+    assert asyncio.run(mail.after_stored(db, lead, meta)) == "stored_no_email"
+    assert len([obj for obj in db.added if isinstance(obj, MarketingConsentEvent) and obj.event_type == "signup"]) == 1
+    mail.set_gateway(None)
+
+
+@pytest.mark.unit
+def test_confirm_link_uses_public_app_url(monkeypatch):
+    from backend.config import Settings
+    assert Settings.model_fields["PUBLIC_APP_URL"].default == "https://app.coachlenz.com"
+    monkeypatch.setattr(settings, "PUBLIC_APP_URL", "https://app.coachlenz.com")
+    assert mail.confirm_url("token=abc") == "https://app.coachlenz.com/waitlist/confirm?token=abc"
+    monkeypatch.setattr(settings, "PUBLIC_APP_URL", "https://staging.example.com/")
+    assert mail.public_app_base() == "https://staging.example.com"
+    assert mail.confirm_url("token=abc") == "https://staging.example.com/waitlist/confirm?token=abc"
+    assert mail.confirm_url("token=abc") in mail.c0_text("abc")
+
+
+@pytest.mark.unit
+def test_rendered_waitlist_emails_have_no_placeholder_brackets():
+    copies = mail.rendered_waitlist_emails()
+    assert mail.c1_subject() == "Your free Halftime Sheet"
+    assert mail.c1_text().startswith("Your free Halftime Sheet is ready.")
+    assert copies
+    for text in copies:
+        assert "[" not in text and "]" not in text
 
 
 @pytest.mark.unit

@@ -62,7 +62,12 @@ STUDENT_DATA_ATTESTATION = (
 )
 
 
-async def record_acceptance(db, organization_id, user_id, document: str, ip: str | None = None) -> None:
+def _clip_user_agent(user_agent: str | None) -> str | None:
+    text = (user_agent or "").strip()
+    return text[:512] or None
+
+
+async def record_acceptance(db, organization_id, user_id, document: str, ip: str | None = None, user_agent: str | None = None) -> None:
     """Log an acceptance of `document` at its current version. Caller commits.
 
     Idempotent: the insert is wrapped in a savepoint so a duplicate (the accept
@@ -77,6 +82,7 @@ async def record_acceptance(db, organization_id, user_id, document: str, ip: str
             db.add(LegalAcceptance(
                 organization_id=organization_id, user_id=user_id,
                 document=document, version=DOCUMENT_VERSIONS[document], ip_address=ip,
+                user_agent=_clip_user_agent(user_agent),
             ))
     except IntegrityError:
         pass  # already recorded at this version — idempotent

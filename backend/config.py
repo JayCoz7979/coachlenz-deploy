@@ -186,6 +186,9 @@ class Settings(BaseSettings):
 
     # App
     APP_URL: str = "https://coachlenz.com"
+    # Public frontend the coach opens. Waitlist confirm links use this.
+    # Unset keeps the production app host, so those links stay byte-identical.
+    PUBLIC_APP_URL: str = "https://app.coachlenz.com"
     ENVIRONMENT: str = "production"
     # Optional comma-separated browser origins added to CORS. Empty means the
     # allow-list is exactly the historical one. Exact origins only: wildcards

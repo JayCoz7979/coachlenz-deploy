@@ -62,13 +62,13 @@ def _request():
     return SimpleNamespace(client=SimpleNamespace(host="203.0.113.5"))
 
 
-def _register(body, db, monkeypatch):
+def _register(body, db, monkeypatch, request=None):
     async def _no_email(*_a, **_k):
         return None
 
     monkeypatch.setattr("backend.routers.auth.send_welcome_email", _no_email)
     fn = inspect.unwrap(register)
-    return asyncio.run(fn(body, _request(), db))
+    return asyncio.run(fn(body, request or _request(), db))
 
 
 @pytest.fixture
@@ -152,6 +152,30 @@ def test_signup_without_marketing_opt_in_succeeds_and_records_no_marketing(monke
     docs = [obj.document for obj in db.added if isinstance(obj, LegalAcceptance)]
     assert "marketing" not in docs
     assert set(docs) == {"terms", "privacy"}
+
+
+@pytest.mark.unit
+def test_signup_stores_the_user_agent_on_legal_acceptances(monkeypatch, signups_open):
+    db = _RegDB()
+    long_ua = "CoachBrowser/" + ("x" * 600)
+    request = SimpleNamespace(
+        client=SimpleNamespace(host="203.0.113.9"),
+        headers={"user-agent": long_ua},
+    )
+    _register(RegisterRequest(
+        name="John Hasler",
+        email="coach-ua@example.com",
+        password="pw12345678",
+        org_name="Broken Bow",
+        accepted_terms=True,
+        marketing_opt_in=True,
+    ), db, monkeypatch, request=request)
+    rows = [obj for obj in db.added if isinstance(obj, LegalAcceptance)]
+    assert {row.document for row in rows} == {"terms", "privacy", "marketing"}
+    assert rows
+    assert all(row.ip_address == "203.0.113.9" for row in rows)
+    assert all(row.user_agent == long_ua[:512] for row in rows)
+    assert all(len(row.user_agent) == 512 for row in rows)
 
 
 @pytest.mark.unit

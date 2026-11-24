@@ -139,9 +139,11 @@ async def register(body: RegisterRequest, request: Request, db: AsyncSession = D
     # Log the Terms + Privacy acceptance the user made at signup (with the IP).
     # uvicorn --proxy-headers makes request.client.host the real end-user IP.
     ip = request.client.host if request.client else None
+    headers = getattr(request, "headers", None)
+    user_agent = headers.get("user-agent") if headers is not None and hasattr(headers, "get") else None
     user.signup_ip = ip  # persisted on commit below — chargeback/dispute evidence
-    await record_acceptance(db, org.id, user.id, "terms", ip=ip)
-    await record_acceptance(db, org.id, user.id, "privacy", ip=ip)
+    await record_acceptance(db, org.id, user.id, "terms", ip=ip, user_agent=user_agent)
+    await record_acceptance(db, org.id, user.id, "privacy", ip=ip, user_agent=user_agent)
 
     # Marketing permission (opt-IN only). If the coach ticked the box, record the
     # consent + timestamp and log it with the IP for the audit trail, same as terms.
@@ -150,7 +152,7 @@ async def register(body: RegisterRequest, request: Request, db: AsyncSession = D
     if body.marketing_opt_in:
         user.marketing_opt_in = True
         user.marketing_opt_in_at = datetime.utcnow()
-        await record_acceptance(db, org.id, user.id, "marketing", ip=ip)
+        await record_acceptance(db, org.id, user.id, "marketing", ip=ip, user_agent=user_agent)
     else:
         user.marketing_opt_in = False
 

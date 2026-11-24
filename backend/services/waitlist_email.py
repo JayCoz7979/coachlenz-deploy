@@ -42,7 +42,7 @@ TEMPLATE_L1M = "L1-M"
 CONFIRM_DAYS = 7
 REMINDER_AFTER = timedelta(hours=48)
 PENDING_TTL = timedelta(days=7)
-MAGNET_NAME = "[LEAD MAGNET NAME]"
+MAGNET_NAME = "Halftime Sheet"
 
 # Tests replace this. The default gateway is the only place that would talk to Resend.
 _gateway = None
@@ -261,8 +261,65 @@ def confirmation_footer() -> str:
     )
 
 
+def public_app_base() -> str:
+    """Frontend origin for confirm links. The default is the production app host."""
+    raw = (getattr(settings, "PUBLIC_APP_URL", None) or "https://app.coachlenz.com").strip().rstrip("/")
+    return raw or "https://app.coachlenz.com"
+
+
+def confirm_url(query: str) -> str:
+    return f"{public_app_base()}/waitlist/confirm?{query}"
+
+
+def c0_text(token: str) -> str:
+    return (
+        "Tap the confirm button to join the CoachLenz waitlist. "
+        "This link works once and expires in 7 days.\n"
+        f"{confirm_url(f'token={token}')}\n\n"
+        + confirmation_footer()
+    )
+
+
+def c1_subject() -> str:
+    return f"Your free {MAGNET_NAME}"
+
+
+def c1_text() -> str:
+    return f"Your free {MAGNET_NAME} is ready.\n\n" + standard_footer()
+
+
+def reminder_text() -> str:
+    return "Your confirm link is still open.\n\n" + confirmation_footer()
+
+
+def nurture_text() -> str:
+    return "A coaching note.\n\n" + standard_footer()
+
+
+def launch_text() -> str:
+    return "CoachLenz is opening.\n\n" + standard_footer()
+
+
+def rendered_waitlist_emails(token: str = "sample-token") -> list[str]:
+    """Every subject and body this module can send. Used to catch leftover placeholders."""
+    return [
+        "Confirm your CoachLenz waitlist spot",
+        c0_text(token),
+        c1_subject(),
+        c1_text(),
+        "Still want on the CoachLenz waitlist?",
+        reminder_text(),
+        "A coaching note from CoachLenz",
+        nurture_text(),
+        "CoachLenz is opening",
+        launch_text(),
+        l1m_text(),
+        confirm_url(f"unsubscribe={token}"),
+    ]
+
+
 def _headers(token: str) -> dict:
-    link = f"https://app.coachlenz.com/waitlist/confirm?unsubscribe={token}"
+    link = confirm_url(f"unsubscribe={token}")
     reply = (settings.WAITLIST_REPLY_TO or "").strip()
     mailto = f"<mailto:{reply}?subject=unsubscribe>" if reply else ""
     value = f"<{link}>" + (f", {mailto}" if mailto else "")
@@ -301,29 +358,57 @@ def contact_properties(lead) -> dict:
     }
 
 
-async def after_stored(db, lead, meta: dict | None = None) -> str:
-    """Send C0 only when email is enabled. Otherwise return before any gateway call.
+async def _signup_already_recorded(db, lead) -> bool:
+    """True when this email already has a signup consent row in this session or the table."""
+    email = (getattr(lead, "email", None) or "").lower()
+    pending = list(getattr(db, "added", []) or []) + list(getattr(db, "new", []) or [])
+    for obj in pending:
+        if isinstance(obj, MarketingConsentEvent) and obj.event_type == "signup" and (obj.email or "").lower() == email:
+            return True
+    try:
+        from sqlalchemy import select
+        res = await db.execute(
+            select(MarketingConsentEvent.id).where(
+                MarketingConsentEvent.email == email,
+                MarketingConsentEvent.event_type == "signup",
+            ).limit(1)
+        )
+    except Exception:
+        return False
+    getter = getattr(res, "scalar_one_or_none", None)
+    if getter is None:
+        return False
+    return getter() is not None
 
-    A confirmed lead who submits again gets no new C0 and no second C1.
-    An unsubscribed lead who submits again is a fresh opt-in and gets one C0.
-    Under-19 players get this same C0. C1 and L1-M wait until they confirm.
+
+async def after_stored(db, lead, meta: dict | None = None) -> str:
+    """Record signup consent on every submit. Send C0 only when email is enabled.
+
+    A confirmed lead who submits again gets no new consent row, no new C0, and no second C1.
+    An unsubscribed lead who submits again is a fresh opt-in and gets one new consent row.
+    Token creation and the confirmation email stay off while WAITLIST_EMAIL_ENABLED is false.
     """
     meta = meta or {}
-    if not emails_enabled():
-        return "stored_no_email"
     if lead is None or not getattr(lead, "role", None):
         return "skipped"
     now = meta.get("now") or datetime.utcnow()
-    if getattr(lead, "confirmed_at", None) and not getattr(lead, "unsubscribed_at", None):
-        return "already_confirmed"
-    if getattr(lead, "unsubscribed_at", None):
+    fresh_opt_in = bool(getattr(lead, "unsubscribed_at", None))
+    if fresh_opt_in:
         lead.unsubscribed_at = None
         lead.confirmed_at = None
         lead.confirm_sent_at = None
         lead.confirm_token_hash = None
         lead.a1_sent_at = None
         lead.l1m_sent_at = None
-    elif getattr(lead, "confirm_sent_at", None):
+    if getattr(lead, "confirmed_at", None):
+        return "already_confirmed"
+    event = None
+    if fresh_opt_in or not await _signup_already_recorded(db, lead):
+        event = _event(lead, "signup", meta)
+        db.add(event)
+    if not emails_enabled():
+        return "stored_no_email"
+    if getattr(lead, "confirm_sent_at", None):
         return "c0_already_sent"
     token = secrets.token_urlsafe(32)
     lead.confirm_token_hash = token_hash(token)
@@ -333,17 +418,14 @@ async def after_stored(db, lead, meta: dict | None = None) -> str:
         "reply_to": _reply_to(),
         "to": lead.email,
         "subject": "Confirm your CoachLenz waitlist spot",
-        "text": (
-            "Tap the confirm button to join the CoachLenz waitlist. "
-            "This link works once and expires in 7 days.\n"
-            f"https://app.coachlenz.com/waitlist/confirm?token={token}\n\n"
-            + confirmation_footer()
-        ),
+        "text": c0_text(token),
         "headers": _headers(getattr(lead, "unsubscribe_token", "") or ""),
         "kind": "C0",
     }
     result = gateway().send(payload) or {}
-    db.add(_event(lead, "signup", meta, doi_sent_at=now, resend_message_id=result.get("id")))
+    if event is not None:
+        event.doi_sent_at = now
+        event.resend_message_id = result.get("id")
     return "c0_sent"
 
 
@@ -355,8 +437,8 @@ def _send_c1(lead, now) -> None:
         "from": _from_address(),
         "reply_to": _reply_to(),
         "to": lead.email,
-        "subject": f"Your free {MAGNET_NAME}",
-        "text": f"Your free {MAGNET_NAME} is ready.\n\n" + standard_footer(),
+        "subject": c1_subject(),
+        "text": c1_text(),
         "headers": _headers(getattr(lead, "unsubscribe_token", "") or ""),
         "kind": TEMPLATE_C1,
         "template_key": TEMPLATE_C1,
@@ -440,7 +522,7 @@ async def send_nurture_step(db, lead, step: str = "n1") -> str:
         "reply_to": _reply_to(),
         "to": lead.email,
         "subject": "A coaching note from CoachLenz",
-        "text": "A coaching note.\n\n" + standard_footer(),
+        "text": nurture_text(),
         "kind": "nurture",
         "step": step,
     })
@@ -456,7 +538,7 @@ def broadcast(kind: str, segment: str) -> str:
         "kind": kind,
         "segment": segment,
         "broadcast": True,
-        "text": l1m_text() if kind == "L1-M" else "CoachLenz is opening.\n\n" + standard_footer(),
+        "text": l1m_text() if kind == "L1-M" else launch_text(),
     })
     return "sent"
 
@@ -530,9 +612,9 @@ async def send_general_launch(db, lead) -> str:
         "reply_to": _reply_to(),
         "to": lead.email,
         "subject": "CoachLenz is opening",
-        "text": "CoachLenz is opening.\n\n" + standard_footer(),
+        "text": launch_text(),
         "kind": "general_launch",
-        "segment": GENERAL_LAUNCH,
+        "segment": LAUNCH_GENERAL,
     })
     return "sent"
 
@@ -574,7 +656,7 @@ async def send_reminder(db, lead, now: datetime) -> str:
         "reply_to": _reply_to(),
         "to": lead.email,
         "subject": "Still want on the CoachLenz waitlist?",
-        "text": "Your confirm link is still open.\n\n" + confirmation_footer(),
+        "text": reminder_text(),
         "headers": _headers(getattr(lead, "unsubscribe_token", "") or ""),
         "kind": "reminder",
     })

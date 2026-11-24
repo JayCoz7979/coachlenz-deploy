@@ -27,4 +27,6 @@ class LegalAcceptance(Base):
     document = Column(String, nullable=False)
     version = Column(String, nullable=False)
     ip_address = Column(String)
+    # Nullable. Rows written before migration 060 stay null. Nothing reads this yet.
+    user_agent = Column(String)
     accepted_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
