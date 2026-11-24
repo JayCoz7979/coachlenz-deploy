@@ -8,6 +8,7 @@ import {
   LayoutDashboard, Users, Film, FileText, Settings,
   Share2, ShieldCheck, LogOut, Upload, Link2, Target, ClipboardList, Award, UserPlus, BarChart3, UserCircle, ShieldAlert,
 } from 'lucide-react'
+import { trialDaysLeftText } from '@/lib/trialText'
 
 const NAV_SECTIONS = [
   {
@@ -60,6 +61,7 @@ const TIER_LABELS: Record<string, string> = {
 export default function Sidebar() {
   const pathname = usePathname()
   const { user, logout } = useAuth()
+  const trialText = trialDaysLeftText(user?.organization)
 
   return (
     <aside
@@ -71,14 +73,14 @@ export default function Sidebar() {
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={logo.src} alt="CoachLenz" style={{ width: '100%', maxWidth: 210, height: 'auto', display: 'block' }} />
         </Link>
-        {user?.organization?.is_trial && (
+        {trialText && (
           <div style={{
             marginTop: 10, background: 'var(--goldl)', border: '1px solid rgba(201,168,76,0.25)',
             borderRadius: 7, padding: '5px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           }}>
             <span style={{ fontFamily: 'var(--font-syne,sans-serif)', fontSize: 11, fontWeight: 700, color: 'var(--gold)' }}>Trial Active</span>
             <span style={{ fontFamily: 'var(--font-dm-mono,monospace)', fontSize: 10, color: 'var(--text3)' }}>
-              {user.organization.trial_days_remaining}d left
+              {trialText}
             </span>
           </div>
         )}
@@ -142,7 +144,11 @@ export default function Sidebar() {
             <div style={{ fontFamily: 'var(--font-syne,sans-serif)', fontSize: 12, fontWeight: 700, color: 'var(--green3)' }}>
               {TIER_LABELS[user.organization.subscription_tier] || user.organization.subscription_tier}
             </div>
-            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{user.organization.name}</div>
+            {/* A trial card shows the same days-left text as the top pill (or
+                nothing), never the org name, which can be a placeholder. */}
+            {user.organization.is_trial
+              ? (trialText && <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{trialText}</div>)
+              : <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{user.organization.name}</div>}
           </div>
         )}
         <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

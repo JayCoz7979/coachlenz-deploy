@@ -15,6 +15,7 @@ import { SPORTS, SPORT_META } from '@/lib/sports'
 // standalone build); the public/ folder is not bundled with output:'standalone'.
 import logo from '../../public/coachlenz-logo.png'
 import ThemeMenu from '@/components/theme/ThemeMenu'
+import { trialDaysLeftText } from '@/lib/trialText'
 
 const NAV: { section: string; items: NavItem[] }[] = [
   {
@@ -142,7 +143,7 @@ export default function OSShell({ title, children }: { title: string; children: 
           <div className="plan-chip">
             <div className="pn">{TIER_LABELS[org.subscription_tier] || 'CoachLenz'} Plan</div>
             <div className="pi">
-              {org.is_trial ? `Trial · ${org.trial_days_remaining} days left` : org.name}
+              {org.is_trial ? (trialDaysLeftText(org) ? `Trial · ${org.trial_days_remaining} days left` : 'Trial') : org.name}
             </div>
           </div>
           <div className="signed-as">{user.email}</div>
