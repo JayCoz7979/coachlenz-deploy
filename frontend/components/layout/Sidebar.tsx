@@ -8,7 +8,7 @@ import {
   LayoutDashboard, Users, Film, FileText, Settings,
   Share2, ShieldCheck, LogOut, Upload, Link2, Target, ClipboardList, Award, UserPlus, BarChart3, UserCircle, ShieldAlert,
 } from 'lucide-react'
-import { trialDaysLeftText } from '@/lib/trialText'
+import { planTitle, trialDaysLeftText } from '@/lib/trialText'
 
 const NAV_SECTIONS = [
   {
@@ -50,13 +50,6 @@ const NAV_SECTIONS = [
   },
 ]
 
-const TIER_LABELS: Record<string, string> = {
-  trial: 'Trial',
-  coach: 'Coach',
-  athletic_dept: 'Athletic Dept',
-  district: 'District',
-  enterprise: 'Enterprise',
-}
 
 export default function Sidebar() {
   const pathname = usePathname()
@@ -142,7 +135,7 @@ export default function Sidebar() {
             borderRadius: 9, padding: '10px 12px', marginBottom: 8,
           }}>
             <div style={{ fontFamily: 'var(--font-syne,sans-serif)', fontSize: 12, fontWeight: 700, color: 'var(--green3)' }}>
-              {TIER_LABELS[user.organization.subscription_tier] || user.organization.subscription_tier}
+              {planTitle(user.organization.subscription_tier)}
             </div>
             {/* A trial card shows the same days-left text as the top pill (or
                 nothing), never the org name, which can be a placeholder. */}

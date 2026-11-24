@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { trialDaysLeftText } from './trialText.js'
+import { planTitle, trialDaysLeftText } from './trialText.js'
 
 test('a trial with a day count shows one wording everywhere', () => {
   assert.equal(trialDaysLeftText({ is_trial: true, trial_days_remaining: 13 }), '13 days left')
@@ -24,5 +24,17 @@ test('the sidebar and the OS shell both render the helper, not their own wording
     const src = await readFile(new URL(file, import.meta.url), 'utf8')
     assert.match(src, /trialDaysLeftText\(/, file)
     assert.doesNotMatch(src, /days left`|d left`/, file)
+  }
+})
+
+test('one plan card title on the sidebar and the OS shell', async () => {
+  assert.equal(planTitle('trial'), 'Trial Plan')
+  assert.equal(planTitle('athletic_dept'), 'Athletic Dept Plan')
+  assert.equal(planTitle('mystery'), 'CoachLenz Plan')
+  const { readFile } = await import('node:fs/promises')
+  for (const file of ['../components/layout/Sidebar.tsx', '../components/os/OSShell.tsx']) {
+    const src = await readFile(new URL(file, import.meta.url), 'utf8')
+    assert.match(src, /planTitle\(/, file)
+    assert.doesNotMatch(src, /TIER_LABELS/, file)
   }
 })
