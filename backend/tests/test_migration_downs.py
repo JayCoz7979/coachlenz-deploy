@@ -1,8 +1,8 @@
 """F3: hand-run down migrations back up what they drop and clear their
 schema_migrations row, so the migrator re-applies them on the next deploy.
 
-The unit tests read the SQL. The integration test runs every down file
-against a throwaway database on the CI Postgres.
+The unit tests read the SQL. The integration test runs every down file twice
+against a throwaway database on the CI Postgres, then migrates back up.
 """
 import asyncio
 import os
@@ -44,6 +44,15 @@ def test_lossy_downs_back_up_first_inside_one_transaction(name, backups):
     for prefix in backups:
         assert 0 <= body.find(prefix) < first_drop
     assert "WARNING" in sql or "Drops" in sql
+
+
+@pytest.mark.unit
+def test_059_down_only_renames_while_role_branch_exists():
+    sql = (MIG / "059_role_branch_minor_track.down.sql").read_text(encoding="utf-8")
+    body = "\n".join(line for line in sql.splitlines() if not line.lstrip().startswith("--"))
+    assert "column_name = 'role_branch'" in body
+    assert body.find("IF EXISTS") < body.find("UPDATE marketing_leads")
+    assert body.strip().startswith("BEGIN;") and body.strip().endswith("COMMIT;")
 
 
 _URL = os.environ.get(
@@ -119,6 +128,17 @@ def test_downs_back_up_data_and_the_migrator_reapplies(tmp_path):
             ev = await conn.fetchrow(f'SELECT ip_address, user_agent FROM "{events_bak}"')
             supp = await conn.fetchval(f'SELECT count(*) FROM "{supp_bak}"')
             ld = await conn.fetchrow(f'SELECT unsubscribe_token, unsubscribed_at FROM "{leads_bak}"')
+            # Every down must be safe to run a second time on an already-down
+            # schema (round 3: 059 failed here once 057 had dropped role_branch).
+            for name in DOWNS:
+                await conn.execute((MIG / f"{name}.down.sql").read_text(encoding="utf-8"))
+            names_after = [r["tablename"] for r in await conn.fetch(
+                "SELECT tablename FROM pg_tables WHERE tablename LIKE '%\\_bak\\_%' ORDER BY 1")]
+            assert names_after == names, "a second run must not make new backups"
+            left_again = await conn.fetchval(
+                "SELECT count(*) FROM schema_migrations WHERE filename = ANY($1::text[])",
+                [f"{n}.sql" for n in DOWNS])
+            assert left_again == 0
             return left, ev, supp, ld
         finally:
             await conn.close()
