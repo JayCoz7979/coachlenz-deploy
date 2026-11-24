@@ -10,3 +10,13 @@ export function trialDaysLeftText(org) {
   const n = Math.floor(days)
   return `${n} ${n === 1 ? 'day' : 'days'} left`
 }
+
+// Plan card title, the same on the sidebar card and the OS shell plan card:
+// "Trial Plan", "Coach Plan", and so on. Unknown tiers read "CoachLenz Plan".
+export const TIER_LABELS = {
+  trial: 'Trial', coach: 'Coach', athletic_dept: 'Athletic Dept', district: 'District', enterprise: 'Enterprise',
+}
+
+export function planTitle(tier) {
+  return `${TIER_LABELS[tier] || 'CoachLenz'} Plan`
+}

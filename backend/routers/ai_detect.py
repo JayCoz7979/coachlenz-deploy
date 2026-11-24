@@ -50,7 +50,10 @@ async def accuracy_benchmark(
 
     Ground truth = manually tagged plays. Prediction = AI auto-detected plays.
     Returns recall, precision, and per-attribute agreement on matched plays.
+    A game that doesn't exist (or is another org's) is 404, like every other
+    game route, not "ready: false".
     """
+    await _require_game(game_id, user, db)
     res = await db.execute(
         select(Event).where(Event.game_id == game_id, Event.organization_id == user.organization_id)
     )
@@ -319,10 +322,9 @@ async def coverage_scorecard(
     """Instant detection scorecard, no manual tagging required. Reports how complete
     the AI reads are (fill rate per field) and how confident (confident vs flagged),
     so a coach can judge a game's data quality before game-planning around it."""
-    gres = await db.execute(
-        select(Game).where(Game.id == game_id, Game.organization_id == user.organization_id))
-    game = gres.scalar_one_or_none()
-    sport = (game.sport if game else "football").lower()
+    # A missing or foreign game is 404, like every other game route.
+    game = await _require_game(game_id, user, db)
+    sport = (game.sport or "football").lower()
     is_bb = sport == "basketball"
 
     res = await db.execute(
