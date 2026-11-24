@@ -37,7 +37,7 @@ still sign in." Keep the real Sign in link on `https://app.coachlenz.com/login`.
 Paste `waitlist-section.html` in front of the footer. It is a section, not a
 full document. It posts to the same `POST /leads` endpoint as the app. First
 name, email, and role are required. There is no consent checkbox. The sentence
-above the button is pair A (`cl-waitlist-v1-a`), and Privacy Policy links to
+above the button is the locked Halftime Sheet line (`cl-halftime-v1`), and Privacy Policy links to
 `https://app.coachlenz.com/privacy`. School and sport are optional. Player is
 left out of this static snippet because `WAITLIST_PLAYER_ROLE_ENABLED` defaults
 off. On the first page load it stores `utm_source`, `utm_medium`,
@@ -45,11 +45,8 @@ off. On the first page load it stores `utm_source`, `utm_medium`,
 `lead_magnet`, and `ref` in `sessionStorage` (`cl_wl_attr`) and sends them with
 the form. Success copy, with email still off, is "You're on the list."
 
-The button and the consent sentence are one pair, chosen with
-`WAITLIST_CONSENT_PAIR` (`a` or `b`, default `a`). Pair A is "Join the
-waitlist" and version `cl-waitlist-v1-a`. Pair B is "Send me the Halftime
-Sheet" and version `cl-waitlist-v1-b`. The snippet starts on pair A and
-replaces both strings from `GET /auth/signups` when that call succeeds.
+The live button and sentence are locked: "Send me the Halftime Sheet" and
+version `cl-halftime-v1`. There is no Player option and no age question.
 
 `ref` is stored as `ref_code` and does not grant a referral reward.
 

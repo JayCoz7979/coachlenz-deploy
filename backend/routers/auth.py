@@ -79,7 +79,6 @@ async def signup_status(db: AsyncSession = Depends(get_db)):
     pair = active_consent()
     return {
         "signups_enabled": bool(await feature_flags.is_enabled(db, "signups_enabled")),
-        "player_role_enabled": bool(settings.WAITLIST_PLAYER_ROLE_ENABLED),
         "consent_pair": pair["id"],
         "consent_version": pair["version"],
         "consent_button": pair["button"],

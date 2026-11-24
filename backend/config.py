@@ -243,14 +243,9 @@ class Settings(BaseSettings):
     # Login, password reset, email verification, and staff invites ignore this.
     SIGNUPS_ENABLED: bool = False
 
-    # Player on the waitlist role list. Jason has not decided. DEFAULT FALSE hides
-    # Player. When true, a player must say they are 19 or older. Under 19 is
-    # role_branch minor_track. 19 or older follows the general path.
-    WAITLIST_PLAYER_ROLE_ENABLED: bool = False
-
-    # Waitlist button and consent sentence, switched together. "a" or "b".
-    # Anything else falls back to pair A. See waitlist_capture.CONSENT_PAIRS.
-    WAITLIST_CONSENT_PAIR: str = "a"
+    # Locked live pair is B (Halftime Sheet, version cl-halftime-v1). Pair A stays
+    # in code and is not rendered. Anything other than "a" uses B.
+    WAITLIST_CONSENT_PAIR: str = "b"
 
     class Config:
         env_file = ".env"

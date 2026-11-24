@@ -10,7 +10,6 @@ COLUMNS = (
     "first_name",
     "role",
     "role_branch",
-    "is_19_or_older",
     "school",
     "sport",
     "source",

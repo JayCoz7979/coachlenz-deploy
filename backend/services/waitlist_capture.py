@@ -8,14 +8,14 @@ from datetime import datetime
 
 from sqlalchemy import func, select
 
-# Button label and the sentence above it are one pair. Jason picks A or B later.
-# consent_text stores the sentence and the button label. Each pair has its own version.
+# The live form is locked to the Halftime Sheet line. Pair A stays in code and is not rendered.
+# consent_text stores the sentence and the button label. cl-halftime-v1 replaces cl-waitlist-v1-b.
 _LINE_A = (
     "By joining, you agree that CoachLenz can email you about the waitlist, "
     "free coaching resources, launch news, and pricing when we open. "
     "You can unsubscribe anytime with one click. See our Privacy Policy."
 )
-_LINE_B = (
+_LINE_LOCKED = (
     "By clicking Send me the Halftime Sheet, you join the CoachLenz waitlist and agree "
     "that CoachLenz can email you about the waitlist, free coaching resources, launch news, "
     "and pricing when we open. You can unsubscribe anytime with one click. See our Privacy Policy."
@@ -27,9 +27,9 @@ CONSENT_PAIRS = {
         "line": _LINE_A,
     },
     "b": {
-        "version": "cl-waitlist-v1-b",
+        "version": "cl-halftime-v1",
         "button": "Send me the Halftime Sheet",
-        "line": _LINE_B,
+        "line": _LINE_LOCKED,
     },
 }
 
@@ -41,7 +41,6 @@ WAITLIST_ROLES = (
     "principal_admin",
     "video_coordinator",
     "parent",
-    "player",
     "other",
 )
 
@@ -52,7 +51,6 @@ ROLE_LABELS = {
     "principal_admin": "Principal or Admin",
     "video_coordinator": "Video Coordinator",
     "parent": "Parent",
-    "player": "Player",
     "other": "Other",
 }
 
@@ -94,24 +92,16 @@ def canonicalize_source(raw: str | None) -> str:
     return cleaned or "landing"
 
 
-# player_hold was the stored name before minor_track. Readers accept both.
-ROLE_BRANCH_ALIASES = {"player_hold": "minor_track"}
-
-
 def canonical_role_branch(value: str | None) -> str | None:
-    if value is None:
-        return None
-    return ROLE_BRANCH_ALIASES.get(value, value)
+    return value
 
 
-def role_branch_for(role: str | None, is_19_or_older: bool | None = None) -> str | None:
+def role_branch_for(role: str | None) -> str | None:
     if role in ("head_coach", "assistant_coach", "video_coordinator"):
         return "coach"
     if role in ("athletic_director", "principal_admin"):
         return "admin"
-    if role == "player":
-        # Under 19 is minor_track. 19 or older follows the general path.
-        return "general" if is_19_or_older is True else "minor_track"
+    # No signup role maps to minor_track. Reclassification sets that branch.
     if role in ("parent", "other"):
         return "general"
     return None
@@ -120,7 +110,7 @@ def role_branch_for(role: str | None, is_19_or_older: bool | None = None) -> str
 def active_pair_id() -> str:
     from backend.config import settings
     raw = (getattr(settings, "WAITLIST_CONSENT_PAIR", None) or "a").strip().lower()
-    return raw if raw in CONSENT_PAIRS else "a"
+    return raw if raw in CONSENT_PAIRS else "b"
 
 
 def active_consent() -> dict:
@@ -161,11 +151,6 @@ def nurture_eligible(row) -> bool:
     )
 
 
-def is_minor_player(role: str | None, is_19_or_older: bool | None) -> bool:
-    """Alabama age of majority is 19. Under 19 is the minor track."""
-    return role == "player" and is_19_or_older is not True
-
-
 def apply_repeat(row, body, source: str) -> None:
     """Fill empty columns only. Never blank a value, never downgrade consent,
     never touch confirm or unsubscribe state."""
@@ -175,10 +160,8 @@ def apply_repeat(row, body, source: str) -> None:
         incoming = getattr(body, field, None)
         if incoming and not getattr(row, field, None):
             setattr(row, field, incoming)
-    if body.role == "player" and getattr(row, "is_19_or_older", None) is None:
-        row.is_19_or_older = body.is_19_or_older is True
     if getattr(row, "role", None) and not getattr(row, "role_branch", None):
-        row.role_branch = role_branch_for(row.role, getattr(row, "is_19_or_older", None))
+        row.role_branch = role_branch_for(row.role)
     # Joining is the consent. Never clear a version already stored.
     if not getattr(row, "consent_text_version", None) and body.role:
         row.consent_text_version = consent_version()
@@ -194,8 +177,7 @@ def new_lead_kwargs(email: str, source: str, body) -> dict:
         "school": body.school,
         "sport": body.sport,
         "role": role,
-        "role_branch": role_branch_for(role, body.is_19_or_older if role == "player" else None),
-        "is_19_or_older": (body.is_19_or_older is True) if role == "player" else None,
+        "role_branch": role_branch_for(role),
         "lead_magnet": body.lead_magnet,
         "utm_source": body.utm_source,
         "utm_medium": body.utm_medium,

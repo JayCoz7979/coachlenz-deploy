@@ -23,7 +23,6 @@ from backend.services.waitlist_capture import (
     WAITLIST_ROLES,
     apply_repeat,
     canonicalize_source,
-    is_minor_player,
     new_lead_kwargs,
 )
 
@@ -76,7 +75,6 @@ class LeadIn(BaseModel):
     school: Optional[str] = None
     sport: Optional[str] = None
     role: Optional[str] = None
-    is_19_or_older: Optional[bool] = None
     lead_magnet: Optional[str] = None
     utm_source: Optional[str] = None
     utm_medium: Optional[str] = None
@@ -131,6 +129,8 @@ class LeadIn(BaseModel):
         v = v.strip().lower()
         if not v:
             return None
+        if v == "player":
+            return v
         if v not in WAITLIST_ROLES:
             raise ValueError("Role is not one of the allowed values.")
         return v
@@ -164,9 +164,8 @@ async def capture_lead(body: LeadIn, request: Request, db: AsyncSession = Depend
     from backend.models.funnel import MarketingLead
     email = str(body.email).lower().strip()
     source = canonicalize_source(body.source)
-    if body.role == "player" and not settings.WAITLIST_PLAYER_ROLE_ENABLED:
-        raise HTTPException(status_code=422, detail="Player isn't available on the waitlist yet.")
-    minor = is_minor_player(body.role, body.is_19_or_older)
+    if (body.role or "") == "player":
+        raise HTTPException(status_code=422, detail="Player isn't available on the waitlist.")
     try:
         existing = (await db.execute(
             select(MarketingLead).where(func.lower(MarketingLead.email) == email)
@@ -202,6 +201,4 @@ async def capture_lead(body: LeadIn, request: Request, db: AsyncSession = Depend
             pass
         raise HTTPException(status_code=503, detail="Could not save that just now. Please try again.")
     # ref_code is stored on the row and does not create a referral or a reward.
-    if minor:
-        return {"ok": True, "stored": True, "minor": True}
     return {"ok": True}

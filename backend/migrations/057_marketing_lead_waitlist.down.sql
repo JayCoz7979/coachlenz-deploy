@@ -22,7 +22,6 @@ ALTER TABLE marketing_leads
     DROP COLUMN IF EXISTS utm_source,
     DROP COLUMN IF EXISTS lead_magnet,
     DROP COLUMN IF EXISTS consent_text_version,
-    DROP COLUMN IF EXISTS is_19_or_older,
     DROP COLUMN IF EXISTS role_branch,
     DROP COLUMN IF EXISTS role,
     DROP COLUMN IF EXISTS sport,
