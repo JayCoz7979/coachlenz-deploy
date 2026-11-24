@@ -109,6 +109,11 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
         working-directory: frontend
+      # Plain node:test unit tests for the small pure helpers in lib/ (upload
+      # retry policy, trial text, chunk transport). No extra dependencies.
+      - name: Unit tests (lib helpers)
+        run: node --experimental-detect-module --test lib/*.test.js
+        working-directory: frontend
       # `next build` runs TypeScript checking as part of the build (next.config forbids
       # ignoreBuildErrors) and generates next-env.d.ts, so it gates typecheck + build
       # exactly as the Railway deploy does. A standalone `tsc` fails on a fresh checkout

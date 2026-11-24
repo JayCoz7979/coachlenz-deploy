@@ -1,5 +1,6 @@
 import api from '@/lib/api'
 import { shouldTryDirect, transportAfterDirectAttempt } from '@/lib/chunkTransport'
+import { withBusyRetry } from '@/lib/uploadRetry'
 
 // Resume state for one in-progress film. The file bytes stay on the coach's
 // device; this only remembers which upload session to continue.
@@ -248,10 +249,15 @@ export async function uploadFilmChunked(opts: {
   })
 
   onDetail?.('Finishing the upload.')
-  const done = await api.post('/upload/multipart/complete', {
-    ...payload,
-    upload_token: token,
-  })
+  // A busy 409 (another tab is finishing this same upload) is retried a few
+  // times after Retry-After. Incomplete and every other error surface as before.
+  const done = await withBusyRetry(
+    () => api.post('/upload/multipart/complete', {
+      ...payload,
+      upload_token: token,
+    }),
+    { onWait: () => onDetail?.('Still finishing in another tab. Retrying shortly.') },
+  )
   clearSaved()
   onProgress(100)
   return { id: done.data.id }
