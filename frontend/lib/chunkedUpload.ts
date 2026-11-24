@@ -1,4 +1,5 @@
 import api from '@/lib/api'
+import { shouldTryDirect, transportAfterDirectAttempt } from '@/lib/chunkTransport'
 
 // Resume state for one in-progress film. The file bytes stay on the coach's
 // device; this only remembers which upload session to continue.
@@ -232,11 +233,10 @@ export async function uploadFilmChunked(opts: {
       emit()
     }
     let sent = false
-    if (directOk !== false) {
+    if (shouldTryDirect(directOk)) {
       const url = await urlFor(n)
       sent = await putDirect(url, body, report)
-      if (sent) directOk = true
-      else directOk = false
+      directOk = transportAfterDirectAttempt(sent) === 'direct'
     }
     if (!sent) {
       inflight.set(n, 0)

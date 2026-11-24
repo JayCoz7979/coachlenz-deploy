@@ -101,6 +101,7 @@ def test_signup_with_marketing_opt_in_succeeds_and_records_consent(monkeypatch):
         org_name="Broken Bow",
         accepted_terms=True,
         marketing_opt_in=True,
+        source="hudl",
     ), db, monkeypatch)
     assert out["access_token"] and out["token_type"] == "bearer"
     user = next(obj for obj in db.added if isinstance(obj, User))
@@ -112,6 +113,13 @@ def test_signup_with_marketing_opt_in_succeeds_and_records_consent(monkeypatch):
     assert marketing.version == DOCUMENT_VERSIONS["marketing"]
     assert marketing.ip_address == "203.0.113.5"
     assert marketing.user_id == user.id
+    from backend.models.organization import Organization
+    from backend.routers.auth import send_email_code, verify_email
+    org = next(obj for obj in db.added if isinstance(obj, Organization))
+    assert org.signup_source == "hudl"
+    # Email verification is a later step. Signup must not mark the address verified.
+    assert user.email_verified is not True
+    assert send_email_code and verify_email
 
 
 @pytest.mark.unit

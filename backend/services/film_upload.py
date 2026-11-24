@@ -18,6 +18,7 @@ from datetime import date, datetime, timedelta
 
 import jwt
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 
 log = logging.getLogger(__name__)
 
@@ -432,6 +433,13 @@ async def finish_upload(db, user, org, token: str, body) -> dict:
     if not title:
         raise HTTPException(status_code=422, detail="Give the game a title.")
     if not await reserve_trial_game_slot(db, org):
+        # The other request may have committed this same upload between our
+        # existence check and this reservation. Return that game. A different
+        # film that lost the trial race has no row here, so the slot stays put.
+        await db.rollback()
+        raced = await _existing_game(db, org.id, key)
+        if raced:
+            return {"id": str(raced.id), "key": key, "status": raced.status}
         raise HTTPException(status_code=403, detail=MSG_TRIAL_AFTER)
 
     game = Game(
@@ -456,7 +464,18 @@ async def finish_upload(db, user, org, token: str, body) -> dict:
     db.add(Job(
         organization_id=org.id,
         job_type="ingest",
+        # No source_url: the ingest worker takes the uploaded-file branch and
+        # presigns game.r2_key. A URL import sets source_url and is untouched.
         payload={"game_id": str(game.id)},
     ))
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Unique r2_key: the other worker inserted this object first. Its
+        # transaction holds the trial slot. Ours rolls back, slot included.
+        await db.rollback()
+        raced = await _existing_game(db, org.id, key)
+        if raced:
+            return {"id": str(raced.id), "key": key, "status": raced.status}
+        raise
     return {"id": str(game.id), "key": key, "status": "processing"}

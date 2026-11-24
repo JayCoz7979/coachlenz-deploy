@@ -85,6 +85,21 @@ def test_assert_student_consent_blocks_without_passes_with():
 
 
 @pytest.mark.unit
+def test_marketing_does_not_force_reconsent_for_existing_users():
+    # An existing user who already accepted the current terms and privacy, and
+    # who never ticked marketing, must not be prompted. The fake returns 0 only
+    # when the query is for the marketing document. If reconsent started walking
+    # every DOCUMENT_VERSIONS entry, marketing would show up here.
+    class _DB:
+        async def execute(self, stmt, *_a, **_k):
+            text = str(stmt)
+            return _Res(0 if "marketing" in text else 1)
+
+    assert "marketing" not in RECONSENT_DOCUMENTS
+    assert asyncio.run(user_reconsent_needed(_DB(), "u-existing")) == []
+
+
+@pytest.mark.unit
 def test_reconsent_documents_are_terms_and_privacy():
     # student_data is per-ORG (gated on actions); terms/privacy are the per-USER
     # agreements that must be re-accepted on a version bump.

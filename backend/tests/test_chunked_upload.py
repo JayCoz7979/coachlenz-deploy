@@ -240,6 +240,12 @@ def test_upload_larger_than_single_request_limit_completes_in_chunks_and_resumes
     assert games[0].file_size_bytes == len(data)
     assert games[0].title == "Broken Bow vs Sallisaw"
     assert games[0].duration_seconds == 3420
+    from backend.models.job import Job
+    jobs = [obj for obj in db.added if isinstance(obj, Job)]
+    assert len(jobs) == 1
+    assert jobs[0].job_type == "ingest"
+    assert jobs[0].payload == {"game_id": str(games[0].id)}
+    assert "source_url" not in (jobs[0].payload or {})
     assert reserve_calls == [str(org.id)]
     assert db.commits == 1
     assert r2.read_local_file(started["key"]) == data
@@ -330,6 +336,7 @@ def test_create_game_does_not_insert_a_row_or_reserve_a_trial(local_disk, monkey
     with pytest.raises(HTTPException) as exc:
         asyncio.run(create_game(body=_body(1000), user=user, org=org, db=db))
     assert exc.value.status_code == 409
+    assert "chunk" in exc.value.detail.lower()
     assert _games(db) == []
     assert reserve_calls == []
     assert db.commits == 0
@@ -351,3 +358,169 @@ def test_relay_accepts_one_chunk_and_rejects_a_body_over_the_part(local_disk):
         accept_relayed_part(org, token, 1, b"r" * 801)
     assert exc.value.status_code == 413
     assert _games(db) == []
+
+
+@pytest.mark.unit
+def test_retrying_the_same_chunk_overwrites_it_and_then_completes(local_disk, reserve_calls):
+    org, user, db = _org(), None, MemDB()
+    user = _user(org)
+    started = asyncio.run(start_upload(db, user, org, _body(1500), part_size=800))
+    session = film_upload.read_session(started["upload_token"], org)
+    key, upid = session["key"], session["upid"]
+    store.write_part(key, upid, 1, b"x" * 800)
+    # The connection died after a partial chunk. The retry sends the whole part again.
+    store.write_part(key, upid, 1, b"y" * 800)
+    listed = store.list_parts(key, upid)
+    assert [(p["part_number"], p["size"]) for p in listed] == [(1, 800)]
+    with open(store._part_path(upid, 1), "rb") as fh:
+        assert fh.read(1) == b"y"
+    store.write_part(key, upid, 2, b"z" * 700)
+    done = asyncio.run(finish_upload(db, user, org, started["upload_token"], _body(1500)))
+    assert r2.read_local_file(key) == (b"y" * 800) + (b"z" * 700)
+    assert len(_games(db)) == 1
+    assert reserve_calls == [str(org.id)]
+    assert done["id"]
+
+
+@pytest.mark.unit
+def test_assembled_size_must_match_the_declared_size(local_disk, monkeypatch, reserve_calls):
+    org, user, db = _org(), None, MemDB()
+    user = _user(org)
+    started = asyncio.run(start_upload(db, user, org, _body(1500), part_size=800))
+    session = film_upload.read_session(started["upload_token"], org)
+    store.write_part(session["key"], session["upid"], 1, b"a" * 800)
+    store.write_part(session["key"], session["upid"], 2, b"b" * 700)
+
+    def lie(*_a, **_k):
+        return 1500 + 10
+
+    monkeypatch.setattr(store, "complete_upload", lie)
+    deleted = []
+    monkeypatch.setattr(store, "delete_object", lambda key: deleted.append(key))
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(finish_upload(db, user, org, started["upload_token"], _body(1500)))
+    assert exc.value.status_code == 413
+    assert deleted == [session["key"]]
+    assert _games(db) == []
+    assert reserve_calls == []
+
+
+class _OneSlotDB(MemDB):
+    """The trial UPDATE succeeds once, then reports rowcount 0. Mirrors the
+    conditional UPDATE in reserve_trial_game_slot."""
+
+    def __init__(self):
+        super().__init__()
+        self.used = 0
+
+    async def execute(self, stmt, *_a, **_k):
+        from sqlalchemy.sql.dml import Update
+        if isinstance(stmt, Update) and "trial_games_used" in str(stmt):
+            if self.used < 1:
+                self.used += 1
+                return SimpleNamespace(rowcount=1, scalar_one=lambda: 1, scalar_one_or_none=lambda: None)
+            return SimpleNamespace(rowcount=0, scalar_one=lambda: 1, scalar_one_or_none=lambda: None)
+        # Existence lookups are per object key. The other film must not look
+        # like a duplicate of this one, or the second complete would return it.
+        return SimpleNamespace(rowcount=1, scalar_one=lambda: 1, scalar_one_or_none=lambda: None)
+
+
+@pytest.mark.unit
+def test_two_uploads_cannot_both_take_the_one_trial_slot(local_disk):
+    org, user = _org(), None
+    user = _user(org)
+    db = _OneSlotDB()
+    first = asyncio.run(start_upload(db, user, org, _body(1000, "a.mp4"), part_size=1000))
+    second = asyncio.run(start_upload(db, user, org, _body(1000, "b.mp4"), part_size=1000))
+    for token, byte in ((first, b"a"), (second, b"b")):
+        session = film_upload.read_session(token["upload_token"], org)
+        store.write_part(session["key"], session["upid"], 1, byte * 1000)
+
+    ok = asyncio.run(finish_upload(db, user, org, first["upload_token"], _body(1000, "a.mp4")))
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(finish_upload(db, user, org, second["upload_token"], _body(1000, "b.mp4")))
+    assert exc.value.status_code == 403
+    assert len(_games(db)) == 1
+    assert _games(db)[0].r2_key == first["key"]
+    assert ok["id"] == str(_games(db)[0].id)
+    assert db.used == 1
+
+
+@pytest.mark.unit
+def test_duplicate_complete_that_loses_the_insert_race_returns_the_same_game(local_disk, monkeypatch):
+    from sqlalchemy.exc import IntegrityError
+
+    org, user = _org(), None
+    user = _user(org)
+    db = MemDB()
+    started = asyncio.run(start_upload(db, user, org, _body(1000), part_size=1000))
+    session = film_upload.read_session(started["upload_token"], org)
+    store.write_part(session["key"], session["upid"], 1, b"q" * 1000)
+    first = asyncio.run(finish_upload(db, user, org, started["upload_token"], _body(1000)))
+    winner = _games(db)[0]
+
+    # The second request passed the "no row yet" check before the first commit
+    # became visible, then the unique key rejected its insert.
+    async def miss_then_hit(db_, org_id, key):
+        if not getattr(db_, "_race_seen", False):
+            db_._race_seen = True
+            return None
+        return winner
+
+    real_commit = db.commit
+
+    async def conflict_once():
+        if not getattr(db, "_conflicted", False):
+            db._conflicted = True
+            raise IntegrityError("INSERT", {}, Exception("games_r2_key_unique"))
+        await real_commit()
+
+    async def rollback():
+        db.added[:] = [obj for obj in db.added if obj is winner or not isinstance(obj, type(winner))]
+
+    monkeypatch.setattr(film_upload, "_existing_game", miss_then_hit)
+    monkeypatch.setattr(db, "commit", conflict_once)
+    monkeypatch.setattr(db, "rollback", rollback)
+    again = asyncio.run(finish_upload(db, user, org, started["upload_token"], _body(1000)))
+    assert again["id"] == first["id"]
+    assert len(_games(db)) == 1
+
+
+@pytest.mark.unit
+def test_presign_rejects_over_20gb_before_touching_the_database():
+    from backend.routers.upload import presign_upload, UploadRequest
+    import inspect
+
+    class BoomDB:
+        async def execute(self, *_a, **_k):
+            raise AssertionError("presign touched the database")
+
+    fn = inspect.unwrap(presign_upload)
+    body = UploadRequest(
+        game_id="g", file_name="huge.mp4",
+        file_size_bytes=film_upload.max_upload_bytes() + 1,
+    )
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(fn(body, user=SimpleNamespace(id="u"), org=SimpleNamespace(id="o"), db=BoomDB()))
+    assert exc.value.status_code == 413
+
+
+@pytest.mark.unit
+def test_link_import_and_live_logger_still_create_their_own_games():
+    import inspect
+    from backend.routers import ingest, live_game, scout_football
+
+    url_src = inspect.getsource(ingest.ingest_from_url)
+    assert "Game(" in url_src
+    assert "reserve_trial_game_slot" in url_src
+    assert 'job_type="ingest"' in url_src
+    assert "source_url" in url_src
+
+    live_src = inspect.getsource(live_game.create_session)
+    assert "Game(" in live_src
+    assert 'status="live"' in live_src
+    assert "reserve_trial_game_slot" not in live_src
+
+    scout_src = inspect.getsource(scout_football.create_session)
+    assert "Game(" in scout_src
+    assert "reserve_trial_game_slot" not in scout_src
