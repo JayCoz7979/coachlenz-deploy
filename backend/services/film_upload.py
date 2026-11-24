@@ -62,6 +62,33 @@ MSG_BUSY = (
     "This upload is still finishing in another tab or request. "
     "Wait a minute and try again. Nothing was lost and your trial game was not used."
 )
+# Machine-readable 409 codes. "busy" is retryable, "incomplete" is not. The
+# detail text is unchanged so older clients that show it keep working.
+UPLOAD_BUSY_CODE = "upload_busy"
+UPLOAD_INCOMPLETE_CODE = "upload_incomplete"
+BUSY_RETRY_AFTER_SECONDS = 5
+
+
+class UploadConflict(HTTPException):
+    """A 409 that also carries a code (body and X-Upload-Error) and, when the
+    request can simply be repeated, Retry-After."""
+
+    def __init__(self, detail: str, code: str, retry_after: int | None = None):
+        headers = {"X-Upload-Error": code}
+        if retry_after:
+            headers["Retry-After"] = str(int(retry_after))
+        super().__init__(status_code=409, detail=detail, headers=headers)
+        self.code = code
+        self.retry_after = retry_after
+
+
+def upload_conflict_body(exc: "UploadConflict") -> dict:
+    body = {"detail": exc.detail, "code": exc.code}
+    if exc.retry_after:
+        body["retry_after_seconds"] = int(exc.retry_after)
+    return body
+
+
 MSG_TRIAL = "Trial game limit reached. Upgrade to upload more games."
 MSG_TRIAL_AFTER = (
     "Trial game limit reached. This film was not added and your trial game was not used. "
@@ -407,7 +434,7 @@ def _assemble_checked(key: str, session: dict) -> None:
             # size, this is a late duplicate complete, not a broken upload.
             if store.uses_local_disk() and store.object_size(key) == session["size"]:
                 return
-            raise HTTPException(status_code=409, detail=MSG_INCOMPLETE)
+            raise UploadConflict(MSG_INCOMPLETE, UPLOAD_INCOMPLETE_CODE)
         if state == "too_big":
             try:
                 store.abort_upload(key, session["upid"])
@@ -421,7 +448,7 @@ def _assemble_checked(key: str, session: dict) -> None:
             # object is already the declared size, this complete succeeded.
             size = store.object_size(key)
             if size != session["size"]:
-                raise HTTPException(status_code=409, detail=MSG_INCOMPLETE)
+                raise UploadConflict(MSG_INCOMPLETE, UPLOAD_INCOMPLETE_CODE)
         except MultipartError:
             # Local storage: the other complete already assembled this object
             # and removed the part directory. The object is the upload.
@@ -449,7 +476,7 @@ def _assemble_locked(key: str, session: dict) -> None:
         with store.upload_lock(session["upid"]):
             _assemble_checked(key, session)
     except UploadBusy:
-        raise HTTPException(status_code=409, detail=MSG_BUSY)
+        raise UploadConflict(MSG_BUSY, UPLOAD_BUSY_CODE, BUSY_RETRY_AFTER_SECONDS)
 
 
 async def finish_upload(db, user, org, token: str, body) -> dict:

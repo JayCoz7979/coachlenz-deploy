@@ -28,6 +28,9 @@ from .workers.worker_reports import ReportsWorker
 from .observability import init_sentry
 init_sentry("api")
 
+from .log_redaction import install as _install_log_redaction
+_install_log_redaction()
+
 app = FastAPI(
     title="CoachLenz API",
     version="1.0.0",
@@ -37,6 +40,16 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+from fastapi.responses import JSONResponse
+from backend.services.film_upload import UploadConflict, upload_conflict_body
+
+
+@app.exception_handler(UploadConflict)
+async def _upload_conflict_handler(request: Request, exc: UploadConflict):
+    # Same status and detail as before, plus a code and Retry-After for "busy".
+    return JSONResponse(upload_conflict_body(exc), status_code=409, headers=exc.headers)
 
 # Every origin the browser app can be served from must be allowed, or the API
 # rejects it via CORS preflight. The app now lives at app.coachlenz.com (custom
@@ -55,7 +68,7 @@ app.add_middleware(
     allow_headers=["*"],
     # Chunk uploads read the part ETag when a browser talks to this API directly
     # (local storage). R2 uploads need the same header exposed on the bucket.
-    expose_headers=["ETag"],
+    expose_headers=["ETag", "Retry-After", "X-Upload-Error"],
 )
 
 

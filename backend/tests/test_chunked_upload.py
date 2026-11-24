@@ -1088,3 +1088,82 @@ def test_upload_lock_times_out_with_upload_busy_and_is_a_no_op_on_r2(local_disk,
     monkeypatch.setattr(store, "_acquire", boom)
     with store.upload_lock("anything", timeout=0.01):
         pass
+
+
+# ---- Round 2: busy vs incomplete 409 are distinguishable (code + Retry-After) ----
+
+@pytest.mark.unit
+def test_busy_409_carries_a_code_and_retry_after(local_disk, monkeypatch):
+    monkeypatch.setattr(r2.settings, "UPLOAD_LOCK_TIMEOUT_SECONDS", 0.2, raising=False)
+    org = _org()
+    org.is_trial = False
+    user = _user(org)
+    db = MemDB()
+    token, session, source = _prepared_upload(org, user, db, parts=2, part_size=1000)
+    holder = _hold_lock(session["upid"])
+    try:
+        with pytest.raises(film_upload.UploadConflict) as exc:
+            asyncio.run(finish_upload(db, user, org, token, _body(len(source), "busy.mp4")))
+    finally:
+        _release(holder)
+    err = exc.value
+    assert err.status_code == 409
+    assert err.detail == film_upload.MSG_BUSY  # unchanged text for older clients
+    assert err.code == film_upload.UPLOAD_BUSY_CODE
+    assert err.headers["Retry-After"] == str(film_upload.BUSY_RETRY_AFTER_SECONDS)
+    assert err.headers["X-Upload-Error"] == "upload_busy"
+    assert film_upload.upload_conflict_body(err) == {
+        "detail": film_upload.MSG_BUSY, "code": "upload_busy",
+        "retry_after_seconds": film_upload.BUSY_RETRY_AFTER_SECONDS,
+    }
+
+
+@pytest.mark.unit
+def test_incomplete_409_has_its_own_code_and_no_retry_after(local_disk):
+    org = _org()
+    org.is_trial = False
+    user = _user(org)
+    db = MemDB()
+    started = asyncio.run(start_upload(db, user, org, _body(2000), part_size=1000))
+    session = film_upload.read_session(started["upload_token"], org)
+    store.write_part(session["key"], session["upid"], 1, b"q" * 1000)  # part 2 missing
+    with pytest.raises(film_upload.UploadConflict) as exc:
+        asyncio.run(finish_upload(db, user, org, started["upload_token"], _body(2000)))
+    err = exc.value
+    assert err.status_code == 409
+    assert err.detail == film_upload.MSG_INCOMPLETE
+    assert err.code == film_upload.UPLOAD_INCOMPLETE_CODE
+    assert "Retry-After" not in err.headers
+    assert film_upload.upload_conflict_body(err) == {"detail": film_upload.MSG_INCOMPLETE, "code": "upload_incomplete"}
+    assert _games(db) == []
+
+
+@pytest.mark.unit
+def test_api_returns_the_conflict_body_and_headers_and_exposes_them_to_the_browser():
+    from backend import main
+    probe = FastAPI()
+    probe.add_exception_handler(film_upload.UploadConflict, main._upload_conflict_handler)
+
+    @probe.get("/busy")
+    async def _busy():
+        raise film_upload.UploadConflict(film_upload.MSG_BUSY, film_upload.UPLOAD_BUSY_CODE, 5)
+
+    @probe.get("/incomplete")
+    async def _incomplete():
+        raise film_upload.UploadConflict(film_upload.MSG_INCOMPLETE, film_upload.UPLOAD_INCOMPLETE_CODE)
+
+    client = TestClient(probe)
+    busy = client.get("/busy")
+    assert busy.status_code == 409
+    assert busy.json() == {"detail": film_upload.MSG_BUSY, "code": "upload_busy", "retry_after_seconds": 5}
+    assert busy.headers["retry-after"] == "5"
+    assert busy.headers["x-upload-error"] == "upload_busy"
+    inc = client.get("/incomplete")
+    assert inc.status_code == 409
+    assert inc.json() == {"detail": film_upload.MSG_INCOMPLETE, "code": "upload_incomplete"}
+    assert "retry-after" not in inc.headers
+    # The real app registers the handler and lets browser JS read the headers.
+    assert main.app.exception_handlers.get(film_upload.UploadConflict) is main._upload_conflict_handler
+    cors = [m for m in main.app.user_middleware if m.cls.__name__ == "CORSMiddleware"][0]
+    exposed = cors.kwargs.get("expose_headers") or cors.options.get("expose_headers")
+    assert {"ETag", "Retry-After", "X-Upload-Error"} <= set(exposed)
