@@ -94,13 +94,14 @@ def canonicalize_source(raw: str | None) -> str:
     return cleaned or "landing"
 
 
-def role_branch_for(role: str | None) -> str | None:
+def role_branch_for(role: str | None, is_19_or_older: bool | None = None) -> str | None:
     if role in ("head_coach", "assistant_coach", "video_coordinator"):
         return "coach"
     if role in ("athletic_director", "principal_admin"):
         return "admin"
     if role == "player":
-        return "player_hold"
+        # Under 19 stays on the minor track. 19 or older follows the general path.
+        return "general" if is_19_or_older is True else "player_hold"
     if role in ("parent", "other"):
         return "general"
     return None
@@ -163,10 +164,10 @@ def apply_repeat(row, body, source: str) -> None:
         incoming = getattr(body, field, None)
         if incoming and not getattr(row, field, None):
             setattr(row, field, incoming)
-    if getattr(row, "role", None) and not getattr(row, "role_branch", None):
-        row.role_branch = role_branch_for(row.role)
     if body.role == "player" and getattr(row, "is_19_or_older", None) is None:
         row.is_19_or_older = body.is_19_or_older is True
+    if getattr(row, "role", None) and not getattr(row, "role_branch", None):
+        row.role_branch = role_branch_for(row.role, getattr(row, "is_19_or_older", None))
     # Joining is the consent. Never clear a version already stored.
     if not getattr(row, "consent_text_version", None) and body.role:
         row.consent_text_version = consent_version()
@@ -182,7 +183,7 @@ def new_lead_kwargs(email: str, source: str, body) -> dict:
         "school": body.school,
         "sport": body.sport,
         "role": role,
-        "role_branch": role_branch_for(role),
+        "role_branch": role_branch_for(role, body.is_19_or_older if role == "player" else None),
         "is_19_or_older": (body.is_19_or_older is True) if role == "player" else None,
         "lead_magnet": body.lead_magnet,
         "utm_source": body.utm_source,

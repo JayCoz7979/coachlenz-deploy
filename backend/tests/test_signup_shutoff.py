@@ -405,6 +405,16 @@ def test_under_19_player_is_stored_on_the_minor_track(monkeypatch):
 
 
 @pytest.mark.unit
+def test_player_19_or_older_follows_the_general_path(monkeypatch):
+    monkeypatch.setattr(funnel.settings, "WAITLIST_PLAYER_ROLE_ENABLED", True)
+    db = _LeadDB()
+    out = _lead(_waitlist(role="player", is_19_or_older=True), db)
+    assert out["ok"] is True and out.get("minor") is not True
+    row = db.added[0]
+    assert row.role_branch == "general" and row.is_19_or_older is True
+
+
+@pytest.mark.unit
 def test_player_role_rejected_when_flag_is_off():
     db = _LeadDB()
     with pytest.raises(HTTPException) as exc:

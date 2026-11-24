@@ -51,8 +51,9 @@ export default function PrivacyPage() {
           If you join the waitlist we collect your first name, email, and role, plus an optional
           school and sport, and the IP address and browser (user agent) from that signup and from
           a later confirm click. We use this to email you about the waitlist, free coaching
-          resources, launch news, and pricing when we open. A player under 19 receives only a
-          launch notice, which does not include pricing. Resend sends those emails. Every message
+          resources, launch news, and pricing when we open. A player under 19 receives a
+          confirmation, the free Halftime Sheet after they confirm, and a launch notice. They do
+          not receive a resources series or a sales email. Resend sends those emails. Every message
           has a one-click unsubscribe that does not need a sign-in. How long we keep waitlist
           records is pending attorney review. The waitlist is not for children under 13.
         </p>

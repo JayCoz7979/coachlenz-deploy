@@ -29,7 +29,6 @@ const ROLES: { value: string; label: string }[] = [
 export const CONSENT_LINE_A = "By joining, you agree that CoachLenz can email you about the waitlist, free coaching resources, launch news, and pricing when we open. You can unsubscribe anytime with one click. See our Privacy Policy."
 export const CONSENT_BUTTON_A = "Join the waitlist"
 export const WAITLIST_SUCCESS = "You're on the list."
-const MINOR_MESSAGE = "Thanks. We'll email you when CoachLenz opens. That note will not include pricing. Ask your coach to join the list."
 
 function ConsentLine({ line }: { line: string }) {
   const mark = 'Privacy Policy'
@@ -74,7 +73,6 @@ export default function WaitlistForm({ source, id = 'waitlist' }: { source: stri
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [sent, setSent] = useState(false)
-  const [minor, setMinor] = useState(false)
 
   useEffect(() => {
     publicApi.get('/auth/signups', { timeout: 8000 })
@@ -112,8 +110,7 @@ export default function WaitlistForm({ source, id = 'waitlist' }: { source: stri
         ...(sport ? { sport } : {}),
         ...readWaitlistAttribution(),
       })
-      if (res.data?.minor) setMinor(true)
-      else setSent(true)
+      setSent(true)
     } catch (err) {
       setError(serverProblem(err))
     } finally {
@@ -121,7 +118,6 @@ export default function WaitlistForm({ source, id = 'waitlist' }: { source: stri
     }
   }
 
-  if (minor) return <p role="status" className="text-base text-gray-100">{MINOR_MESSAGE}</p>
   if (sent) return <p role="status" className="text-base text-gray-100">{WAITLIST_SUCCESS}</p>
 
   return (
