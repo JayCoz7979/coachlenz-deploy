@@ -6,6 +6,9 @@ shapes:
     models/user.py and marketing_leads in services/waitlist_capture.py).
   * 32 lowercase hex characters: the users backfill in migration 055
     (gen_random_uuid() with the dashes removed).
+  * 43 characters of URL-safe base64 without padding: the marketing_leads
+    backfill in migration 061 (32 random bytes from two gen_random_uuid()
+    values, the same shape token_urlsafe(32) makes).
 Anything outside 32 to 64 URL-safe base64 characters cannot be a real token, so
 the API can reject it without a lookup. Every token that has a valid shape gets
 the same answer whether or not it matches, so tokens can't be enumerated.

@@ -15,6 +15,7 @@ import pytest
 
 MIG = pathlib.Path(__file__).resolve().parents[1] / "migrations"
 DOWNS = [
+    "061_marketing_lead_unsubscribe_token",
     "060_legal_acceptance_user_agent",
     "059_role_branch_minor_track",
     "058_marketing_consent_events",
