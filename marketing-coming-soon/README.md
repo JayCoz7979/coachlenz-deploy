@@ -29,14 +29,21 @@ Point those at `https://app.coachlenz.com/waitlist` (or at `#waitlist` on this
 same page once the section below is inserted). The real "Sign in" link stays on
 `https://app.coachlenz.com/login`.
 
-Add a short line near the hero: "Coming soon. Join the list and you will be
-among the first to experience CoachLenz."
+Under the hero headline, use this lede: "Game film for school basketball and
+football. Join the waitlist and we'll email you when CoachLenz opens, plus a
+few free coaching resources before then. Already have an account? You can
+still sign in." Keep the real Sign in link on `https://app.coachlenz.com/login`.
 
 Paste `waitlist-section.html` in front of the footer. It is a section, not a
-full document. It posts to the same `POST /leads` endpoint as the app. Name,
-email, role, and the email-consent box are required. School and sport are
-optional. It also sends `utm_source`, `utm_medium`, `utm_campaign`, and
-`lead_magnet` when those are on the page URL.
+full document. It posts to the same `POST /leads` endpoint as the app. First
+name, email, and role are required. There is no consent checkbox. The sentence
+above the button is the `cl-waitlist-v1` line, and Privacy Policy links to
+`https://app.coachlenz.com/privacy`. School and sport are optional. Player is
+left out of this static snippet because `WAITLIST_PLAYER_ROLE_ENABLED` defaults
+off. On the first page load it stores `utm_source`, `utm_medium`,
+`utm_campaign`, `utm_content`, `utm_term`, the referrer host, the landing path,
+`lead_magnet`, and `ref` in `sessionStorage` (`cl_wl_attr`) and sends them with
+the form. Success copy, with email still off, is "You're on the list."
 
 The form only works when the page is served from `https://coachlenz.com` or
 `https://www.coachlenz.com`. Those origins are already allowed by the API.
