@@ -253,7 +253,7 @@ class Settings(BaseSettings):
     # this on. Do not point it at cosbyaisolutions.com from this code.
     WAITLIST_EMAIL_ENABLED: bool = False
     # Explicit CoachLenz mailbox. Do not fall through to RESEND_DOMAIN.
-    WAITLIST_FROM_EMAIL: str = "Jay Cosby, CoachLenz <support@coachlenz.com>"
+    WAITLIST_FROM_EMAIL: str = "Jay Cosby <support@coachlenz.com>"
     WAITLIST_REPLY_TO: str = "support@coachlenz.com"
 
     class Config:

@@ -338,8 +338,23 @@ def test_resend_payload_has_no_ip_or_user_agent():
         "ip_address": "203.0.113.9", "user_agent": "SecretBrowser",
     })
     assert "ip_address" not in clean and "user_agent" not in clean
-    assert "support@coachlenz.com" in mail._from_address()
+    assert mail._from_address() == "Jay Cosby <support@coachlenz.com>"
     assert mail._reply_to() == "support@coachlenz.com"
+
+
+@pytest.mark.unit
+def test_from_display_name_is_exactly_jay_cosby(monkeypatch):
+    monkeypatch.delenv("WAITLIST_FROM", raising=False)
+    monkeypatch.setattr(settings, "WAITLIST_EMAIL_ENABLED", True)
+    fake = _Gateway()
+    mail.set_gateway(fake)
+    status = asyncio.run(mail.after_stored(
+        _DB(), _lead(), {"ip": "203.0.113.8", "ua": "CoachBrowser"}))
+    mail.set_gateway(None)
+    assert status == "c0_sent"
+    assert fake.sends[0]["from"] == "Jay Cosby <support@coachlenz.com>"
+    assert fake.sends[0]["reply_to"] == "support@coachlenz.com"
+    assert ", CoachLenz" not in fake.sends[0]["from"]
 
 
 @pytest.mark.unit
