@@ -400,7 +400,7 @@ def test_under_19_player_is_stored_on_the_minor_track(monkeypatch):
     assert out["stored"] is True and out["minor"] is True
     row = db.added[0]
     assert row.role == "player"
-    assert row.role_branch == "player_hold"
+    assert row.role_branch == "minor_track"
     assert row.is_19_or_older is False
 
 

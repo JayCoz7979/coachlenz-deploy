@@ -94,14 +94,24 @@ def canonicalize_source(raw: str | None) -> str:
     return cleaned or "landing"
 
 
+# player_hold was the stored name before minor_track. Readers accept both.
+ROLE_BRANCH_ALIASES = {"player_hold": "minor_track"}
+
+
+def canonical_role_branch(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return ROLE_BRANCH_ALIASES.get(value, value)
+
+
 def role_branch_for(role: str | None, is_19_or_older: bool | None = None) -> str | None:
     if role in ("head_coach", "assistant_coach", "video_coordinator"):
         return "coach"
     if role in ("athletic_director", "principal_admin"):
         return "admin"
     if role == "player":
-        # Under 19 stays on the minor track. 19 or older follows the general path.
-        return "general" if is_19_or_older is True else "player_hold"
+        # Under 19 is minor_track. 19 or older follows the general path.
+        return "general" if is_19_or_older is True else "minor_track"
     if role in ("parent", "other"):
         return "general"
     return None
@@ -140,13 +150,14 @@ def consent_text_sha256() -> str:
 
 
 def nurture_eligible(row) -> bool:
-    """Consent, confirmed, and not a player hold. Unsubscribed is not eligible."""
+    """Consent, confirmed, and not on the minor track. Unsubscribed is not eligible."""
     if getattr(row, "unsubscribed_at", None):
         return False
+    branch = canonical_role_branch(getattr(row, "role_branch", None))
     return bool(
         getattr(row, "marketing_consent", False)
         and getattr(row, "confirmed_at", None)
-        and getattr(row, "role_branch", None) != "player_hold"
+        and branch != "minor_track"
     )
 
 

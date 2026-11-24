@@ -244,8 +244,8 @@ class Settings(BaseSettings):
     SIGNUPS_ENABLED: bool = False
 
     # Player on the waitlist role list. Jason has not decided. DEFAULT FALSE hides
-    # Player. When true, a player must say they are 19 or older. Under 19 is the
-    # minor track (player_hold). 19 or older follows the general path.
+    # Player. When true, a player must say they are 19 or older. Under 19 is
+    # role_branch minor_track. 19 or older follows the general path.
     WAITLIST_PLAYER_ROLE_ENABLED: bool = False
 
     # Waitlist button and consent sentence, switched together. "a" or "b".
