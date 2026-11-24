@@ -247,6 +247,15 @@ class Settings(BaseSettings):
     # in code and is not rendered. Anything other than "a" uses B.
     WAITLIST_CONSENT_PAIR: str = "b"
 
+    # Double opt-in and Resend for the waitlist. DEFAULT FALSE: the capture
+    # path stores the lead and makes zero Resend calls. No From address is
+    # assumed. Set WAITLIST_FROM_EMAIL (a coachlenz.com mailbox) before turning
+    # this on. Do not point it at cosbyaisolutions.com from this code.
+    WAITLIST_EMAIL_ENABLED: bool = False
+    # Explicit CoachLenz mailbox. Do not fall through to RESEND_DOMAIN.
+    WAITLIST_FROM_EMAIL: str = "Jay Cosby, CoachLenz <support@coachlenz.com>"
+    WAITLIST_REPLY_TO: str = "support@coachlenz.com"
+
     class Config:
         env_file = ".env"
         case_sensitive = False

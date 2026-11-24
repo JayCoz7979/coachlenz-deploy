@@ -5,6 +5,7 @@ limited. The beacon only accepts the anonymous client events; the two signup ste
 are emitted server-side (auth.register, onboarding.choose_sports) so they cannot be
 spoofed from the browser.
 """
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -171,10 +172,23 @@ async def capture_lead(body: LeadIn, request: Request, db: AsyncSession = Depend
             select(MarketingLead).where(func.lower(MarketingLead.email) == email)
         )).scalar_one_or_none()
         if existing is None:
-            db.add(_new_lead(email, source, body))
+            row = _new_lead(email, source, body)
+            db.add(row)
         else:
+            row = existing
             apply_repeat(existing, body, source)
         await db.commit()
+        try:
+            from backend.services.waitlist_email import after_stored
+            await after_stored(db, row, {
+                "ip": request.client.host if request.client else None,
+                "ua": request.headers.get("user-agent", "") if hasattr(request, "headers") else "",
+                "page_url": request.headers.get("referer") if hasattr(request, "headers") else None,
+                "now": datetime.utcnow(),
+            })
+            await db.commit()
+        except Exception:
+            pass
     except IntegrityError:
         # Two requests inserted the same email at once. The unique index already
         # kept a single row, so the visitor is on the list.

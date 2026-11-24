@@ -79,6 +79,7 @@ async def signup_status(db: AsyncSession = Depends(get_db)):
     pair = active_consent()
     return {
         "signups_enabled": bool(await feature_flags.is_enabled(db, "signups_enabled")),
+        "waitlist_email_enabled": bool(settings.WAITLIST_EMAIL_ENABLED),
         "consent_pair": pair["id"],
         "consent_version": pair["version"],
         "consent_button": pair["button"],
@@ -420,5 +421,13 @@ async def unsubscribe(request: Request, body: UnsubscribeRequest, db: AsyncSessi
         u = (await db.execute(select(User).where(User.unsubscribe_token == token))).scalar_one_or_none()
         if u is not None and u.marketing_opt_in:
             u.marketing_opt_in = False
+            await db.commit()
+        from backend.models.funnel import MarketingLead
+        from backend.services.waitlist_email import unsubscribe_lead
+        lead = (await db.execute(
+            select(MarketingLead).where(MarketingLead.unsubscribe_token == token)
+        )).scalar_one_or_none()
+        if lead is not None:
+            await unsubscribe_lead(db, lead, "unsubscribe_link")
             await db.commit()
     return {"ok": True, "message": "You're unsubscribed from CoachLenz marketing emails."}

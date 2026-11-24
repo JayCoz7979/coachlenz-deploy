@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import { Bebas_Neue, DM_Sans, DM_Mono, Syne } from 'next/font/google'
+import localFont from 'next/font/local'
 import './globals.css'
 import './os.css'
 import ReconsentGate from '@/components/legal/ReconsentGate'
@@ -7,27 +7,34 @@ import ServiceWorkerRegistrar from '@/components/ServiceWorkerRegistrar'
 import { ThemeProvider } from '@/components/theme/ThemeProvider'
 import { NO_FLASH_SCRIPT } from '@/lib/theme/theme'
 
-const bebasNeue = Bebas_Neue({
-  subsets: ['latin'],
+// Self-hosted latin files so the production build does not fetch Google Fonts.
+const bebasNeue = localFont({
+  src: '../fonts/bebas-neue-400.woff2',
   weight: '400',
+  display: 'swap',
   variable: '--font-bebas',
 })
 
-const dmSans = DM_Sans({
-  subsets: ['latin'],
-  weight: ['300', '400', '500', '600'],
+const dmSans = localFont({
+  src: '../fonts/dm-sans.woff2',
+  weight: '300 600',
+  display: 'swap',
   variable: '--font-dm-sans',
 })
 
-const dmMono = DM_Mono({
-  subsets: ['latin'],
-  weight: ['400', '500'],
+const dmMono = localFont({
+  src: [
+    { path: '../fonts/dm-mono-400.woff2', weight: '400', style: 'normal' },
+    { path: '../fonts/dm-mono-500.woff2', weight: '500', style: 'normal' },
+  ],
+  display: 'swap',
   variable: '--font-dm-mono',
 })
 
-const syne = Syne({
-  subsets: ['latin'],
-  weight: ['400', '600', '700', '800'],
+const syne = localFont({
+  src: '../fonts/syne.woff2',
+  weight: '400 800',
+  display: 'swap',
   variable: '--font-syne',
 })
 
