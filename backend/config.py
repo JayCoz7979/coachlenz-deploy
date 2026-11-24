@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     # valid for its whole lifetime; the app refreshes presigned URLs as needed, so
     # a viewing session never needs a week. (Detection uses its own 1-2h expiries.)
     R2_PRESIGNED_EXPIRY_SECONDS: int = 86400  # 24 hours
+    # Local storage only (dev, tests, staging): how long a film complete waits
+    # for another request that holds the same upload's lock before it answers
+    # 409 "try again". R2 does not use this lock.
+    UPLOAD_LOCK_TIMEOUT_SECONDS: float = 120.0
 
     # Anthropic
     ANTHROPIC_API_KEY: str = ""
@@ -183,6 +187,12 @@ class Settings(BaseSettings):
     # App
     APP_URL: str = "https://coachlenz.com"
     ENVIRONMENT: str = "production"
+    # Optional comma-separated browser origins added to CORS. Empty means the
+    # allow-list is exactly the historical one. Exact origins only: wildcards
+    # are ignored, and production ignores anything that is not https.
+    # Staging sets this to its frontend origin when APP_URL is the API host
+    # (so local /files playback links resolve) and the page is served elsewhere.
+    CORS_EXTRA_ORIGINS: str = ""
     # Shared rate-limit storage. The API runs with multiple uvicorn workers, and
     # slowapi's default in-memory storage is PER-PROCESS, so each worker keeps its
     # own counter and the effective limit is ~Nx (N = worker count). Point this at

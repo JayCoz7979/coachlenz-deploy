@@ -1,0 +1,14 @@
+-- One stored film object belongs to one game. A second complete of the same
+-- upload must not insert another row (and must not keep a second trial slot:
+-- that insert is in the same transaction as the reservation, so the unique
+-- violation rolls both back).
+--
+-- NULL r2_key stays allowed. URL import and the Live Game Logger create a game
+-- before any object exists, and Postgres unique indexes treat NULL as distinct.
+--
+-- If this fails, duplicate keys already exist. Do not delete rows here. Inspect:
+--   SELECT r2_key, count(*) FROM games
+--   WHERE r2_key IS NOT NULL GROUP BY 1 HAVING count(*) > 1;
+--
+-- Down (run by hand, not by the migrator): backend/migrations/056_games_r2_key_unique.down.sql
+CREATE UNIQUE INDEX IF NOT EXISTS games_r2_key_unique ON games (r2_key);

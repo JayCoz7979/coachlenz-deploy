@@ -79,7 +79,9 @@ from backend.models.roster import RosterPlayer  # noqa: E402
 from backend.models.grade_annotation import GradeAnnotation  # noqa: E402
 from backend.models.comms import Playlist, PlaylistClip  # noqa: E402
 from backend.models.report_chat import ReportChatMessage  # noqa: E402
-from backend.models.source_connection import SourceConnection  # noqa: E402
+from backend.models.source_connection import SourceConnection
+from backend.models.legal import LegalAcceptance
+from backend.services.legal import STUDENT_DATA_VERSION  # noqa: E402
 from backend.services.auth import hash_password, create_access_token  # noqa: E402
 from backend.services.encryption import encrypt_json  # noqa: E402
 from backend.routers import scout_football, reports, scout, events, games  # noqa: E402
@@ -110,7 +112,7 @@ TABLES = [Organization.__table__, User.__table__, Game.__table__,
           Event.__table__, TendencyReport.__table__, Job.__table__, AgentLog.__table__,
           Clip.__table__, Team.__table__, RosterPlayer.__table__, GradeAnnotation.__table__,
           Playlist.__table__, PlaylistClip.__table__, ReportChatMessage.__table__,
-          SourceConnection.__table__]
+          SourceConnection.__table__, LegalAcceptance.__table__]
 
 # Swap the Postgres-only types on just the tables we create.
 for _t in TABLES:
@@ -140,6 +142,13 @@ async def setup_db():
         other = User(organization_id=org.id, name="Other Analyst", email="other@x.com",
                      hashed_password=hash_password("x"), role="member")
         db.add_all([analyst, reviewer, other])
+        await db.flush()
+        # Scout sessions, film, and manual tags require the student-data attestation.
+        # The slim schema has to contain that table or the first session create 500s.
+        db.add(LegalAcceptance(
+            organization_id=org.id, user_id=analyst.id,
+            document="student_data", version=STUDENT_DATA_VERSION,
+        ))
         await db.commit()
         for u in (org, analyst, reviewer, other):
             await db.refresh(u)

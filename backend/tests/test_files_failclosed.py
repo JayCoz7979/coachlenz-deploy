@@ -38,6 +38,16 @@ def test_serve_works_in_dev_local_mode(monkeypatch):
     assert out.body == b"data"
 
 
+def test_multipart_part_404s_in_production_even_if_local_mode_is_on(monkeypatch):
+    # The chunk endpoint is unauthenticated (the signature is the credential) and
+    # must stay closed in production, same as the single-PUT local upload.
+    monkeypatch.setattr(files, "_use_local", lambda: True)
+    monkeypatch.setattr(files.settings, "ENVIRONMENT", "production")
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(files.local_part("upload", 1, None, "sig"))
+    assert exc.value.status_code == 404
+
+
 def test_serve_404s_when_local_disabled(monkeypatch):
     # R2 configured (normal prod/dev): local endpoints inert.
     monkeypatch.setattr(files, "_use_local", lambda: False)

@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { Suspense } from 'react'
 
 import { SPORTS } from '@/lib/sports'
+import { peekResume, uploadFilmChunked } from '@/lib/chunkedUpload'
 
 const SOURCE_LABELS: Record<string, string> = {
   youtube: 'YouTube',
@@ -59,6 +60,8 @@ function UploadPageInner() {
   const [file, setFile] = useState<File | null>(null)
   const [uploading, setUploading] = useState(false)
   const [progress, setProgress] = useState(0)
+  const [progressNote, setProgressNote] = useState('')
+  const [canResume, setCanResume] = useState(false)
 
   const [videoUrl, setVideoUrl] = useState('')
   const [importing, setImporting] = useState(false)
@@ -86,7 +89,9 @@ function UploadPageInner() {
       setConsent({ attestation: d.attestation, retry })
       return
     }
-    setError(typeof d === 'string' ? d : fallback)
+    if (typeof d === 'string' && d) { setError(d); return }
+    if (!e?.response && typeof e?.message === 'string' && e.message) { setError(e.message); return }
+    setError(fallback)
   }
 
   async function attestConsent() {
@@ -209,29 +214,34 @@ function UploadPageInner() {
     if (!file) return
     setUploading(true)
     setError('')
+    setProgress(0)
+    setProgressNote('Starting upload.')
     try {
       const duration_seconds = await readVideoDuration(file)
-      const gameRes = await api.post('/games', {
-        ...form,
-        file_name: file.name,
-        file_size_bytes: file.size,
-        duration_seconds,
-        team_id: form.team_id || undefined,
-        is_home: form.is_home === '' ? undefined : form.is_home === 'true',
-      })
-      // Proxy upload through the backend (no browser->R2 PUT, so no R2 CORS needed).
-      const fd = new FormData()
-      fd.append('file', file)
-      await api.post(`/upload/file?game_id=${gameRes.data.id}`, fd, {
-        // Let axios set multipart/form-data WITH the boundary — do not set it manually.
-        timeout: 0,
-        maxContentLength: Infinity,
-        maxBodyLength: Infinity,
-        onUploadProgress: (ev) => setProgress(Math.round((ev.loaded / (ev.total || 1)) * 100)),
+      await uploadFilmChunked({
+        file,
+        fields: {
+          title: form.title,
+          sport: form.sport,
+          team_id: form.team_id || undefined,
+          opponent: form.opponent || undefined,
+          game_date: form.game_date || undefined,
+          is_home: form.is_home === '' ? undefined : form.is_home === 'true',
+          scout_jersey: form.scout_jersey || undefined,
+          opponent_jersey: form.opponent_jersey || undefined,
+          duration_seconds,
+        },
+        onProgress: setProgress,
+        onDetail: setProgressNote,
       })
       router.push('/games')
     } catch (err: any) {
-      onActionError(err, 'Upload failed', () => handleFileUpload())
+      setCanResume(peekResume(file))
+      onActionError(
+        err,
+        'Upload failed. Your film was not saved and your trial game was not used.',
+        () => handleFileUpload(),
+      )
     } finally {
       setUploading(false)
     }
@@ -368,19 +378,27 @@ function UploadPageInner() {
               <form onSubmit={handleFileUpload} className="space-y-4">
                 <div>
                   <label className="label">Game Film (Video File)</label>
-                  <input type="file" accept="video/*" className="input" onChange={e => setFile(e.target.files?.[0] || null)} required />
-                  <p className="text-xs text-gray-500 mt-1">Max 20GB. MP4, MOV, AVI supported.</p>
+                  <input type="file" accept="video/*" className="input" onChange={e => {
+                    const next = e.target.files?.[0] || null
+                    setFile(next)
+                    setCanResume(!!next && peekResume(next))
+                    setError('')
+                  }} required />
+                  <p className="text-xs text-gray-500 mt-1">Max 20GB. MP4, MOV, AVI supported. Large films upload in chunks and can resume if the connection drops.</p>
+                  {canResume && !uploading && (
+                    <p className="text-xs text-brand-300 mt-1">This film has an unfinished upload. We will continue from the last chunk that landed.</p>
+                  )}
                 </div>
                 {uploading && (
                   <div>
-                    <div className="flex justify-between text-sm mb-1"><span>Uploading...</span><span>{progress}%</span></div>
+                    <div className="flex justify-between text-sm mb-1"><span>{progressNote || 'Uploading...'}</span><span>{progress}%</span></div>
                     <div className="w-full bg-gray-700 rounded-full h-2">
                       <div className="bg-brand-500 h-2 rounded-full transition-all" style={{ width: `${progress}%` }} />
                     </div>
                   </div>
                 )}
                 <button type="submit" disabled={uploading || !file || !form.title} className="btn-primary w-full">
-                  {uploading ? `Uploading ${progress}%...` : 'Upload Film'}
+                  {uploading ? `Uploading ${progress}%...` : canResume ? 'Resume upload' : 'Upload Film'}
                 </button>
               </form>
             )}
