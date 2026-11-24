@@ -11,6 +11,7 @@ The game row and the trial slot are created only after the assembled object is
 in storage and within the size limit. Starting, interrupting, or aborting an
 upload does not insert a game and does not consume a trial game.
 """
+import asyncio
 import logging
 import math
 import uuid
@@ -28,7 +29,7 @@ from backend.models.job import Job
 from backend.services import multipart_store as store
 from backend.services.entitlements import assert_ready_to_analyze
 from backend.services.legal import assert_student_consent
-from backend.services.multipart_store import MultipartError
+from backend.services.multipart_store import MultipartError, UploadBusy
 from backend.services.r2 import safe_object_name
 from backend.services.sports import assert_sport_allowed
 from backend.services.trial import can_upload_game, is_trial_active, reserve_trial_game_slot
@@ -56,6 +57,10 @@ MSG_INCOMPLETE = (
 MSG_STORAGE = (
     "We could not store that film. Nothing was added to your library "
     "and your trial game was not used."
+)
+MSG_BUSY = (
+    "This upload is still finishing in another tab or request. "
+    "Wait a minute and try again. Nothing was lost and your trial game was not used."
 )
 MSG_TRIAL = "Trial game limit reached. Upgrade to upload more games."
 MSG_TRIAL_AFTER = (
@@ -437,6 +442,16 @@ def _assemble_checked(key: str, session: dict) -> None:
             raise HTTPException(status_code=413, detail=MSG_TOO_BIG)
 
 
+def _assemble_locked(key: str, session: dict) -> None:
+    """Sync: take the upload lock (no-op on R2) and assemble. A lock held past
+    UPLOAD_LOCK_TIMEOUT_SECONDS is a retryable 409, never an endless wait."""
+    try:
+        with store.upload_lock(session["upid"]):
+            _assemble_checked(key, session)
+    except UploadBusy:
+        raise HTTPException(status_code=409, detail=MSG_BUSY)
+
+
 async def finish_upload(db, user, org, token: str, body) -> dict:
     """Assemble the object, then insert the game and reserve the trial slot.
 
@@ -453,9 +468,9 @@ async def finish_upload(db, user, org, token: str, body) -> dict:
     key = session["key"]
     # Local storage: list, check and assemble under the per-upload lock so a
     # second complete never reads a part directory the first is removing.
-    # The helper is sync, so nothing awaits while the lock is held.
-    with store.upload_lock(session["upid"]):
-        _assemble_checked(key, session)
+    # The wait for the lock and the assemble run in a worker thread, so the
+    # event loop keeps serving other requests. The wait is bounded.
+    await asyncio.to_thread(_assemble_locked, key, session)
 
     existing = await _existing_game(db, org_id, key)
     if existing:

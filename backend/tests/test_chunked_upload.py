@@ -978,3 +978,113 @@ def test_list_parts_file_not_found_without_an_object_is_a_client_error(local_dis
         asyncio.run(finish_upload(db, user, org, token, _body(len(source), "race2b.mp4")))
     assert exc.value.status_code == 400
     assert _games(db) == []
+
+
+# Bounded lock wait (Harriet's retest 3 note): the local lock used to wait
+# forever on the event loop. It now retries a non-blocking flock until
+# UPLOAD_LOCK_TIMEOUT_SECONDS, answers a retryable 409, and runs in a thread.
+
+
+def _hold_lock(upload_id):
+    import fcntl
+    import os as _os
+    fd = _os.open(store._lock_path(upload_id), _os.O_CREAT | _os.O_RDWR, 0o644)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    return fd
+
+
+def _release(fd):
+    import fcntl
+    import os as _os
+    fcntl.flock(fd, fcntl.LOCK_UN)
+    _os.close(fd)
+
+
+@pytest.mark.unit
+def test_lock_deadline_returns_retryable_409_and_releases_cleanly(local_disk, monkeypatch):
+    import fcntl
+    import os as _os
+    import time
+    monkeypatch.setattr(r2.settings, "UPLOAD_LOCK_TIMEOUT_SECONDS", 0.3, raising=False)
+    org = _org()
+    org.is_trial = False
+    user = _user(org)
+    db = MemDB()
+    token, session, source = _prepared_upload(org, user, db, parts=2, part_size=1000)
+    holder = _hold_lock(session["upid"])
+    try:
+        started = time.monotonic()
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(finish_upload(db, user, org, token, _body(len(source), "race2b.mp4")))
+        waited = time.monotonic() - started
+    finally:
+        _release(holder)
+    assert exc.value.status_code == 409
+    assert exc.value.detail == film_upload.MSG_BUSY
+    assert 0.25 <= waited < 5
+    assert _games(db) == []
+    # The timed-out waiter left nothing locked: a non-blocking lock succeeds.
+    fd = _os.open(store._lock_path(session["upid"]), _os.O_RDWR)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        _os.close(fd)
+    # The parts are intact, so the retry finishes the upload.
+    done = asyncio.run(finish_upload(db, user, org, token, _body(len(source), "race2b.mp4")))
+    assert done["status"] == "processing"
+    assert r2.read_local_file(session["key"]) == source
+
+
+@pytest.mark.unit
+def test_event_loop_stays_responsive_while_another_holder_has_the_lock(local_disk, monkeypatch):
+    monkeypatch.setattr(r2.settings, "UPLOAD_LOCK_TIMEOUT_SECONDS", 10, raising=False)
+    org = _org()
+    org.is_trial = False
+    user = _user(org)
+    db = MemDB()
+    token, session, source = _prepared_upload(org, user, db, parts=2, part_size=1000)
+    holder = _hold_lock(session["upid"])
+
+    async def scenario():
+        ticks = 0
+        task = asyncio.create_task(finish_upload(db, user, org, token, _body(len(source), "race2b.mp4")))
+        # While the lock is held elsewhere, the loop must keep running.
+        for _ in range(40):
+            await asyncio.sleep(0.01)
+            ticks += 1
+        assert not task.done()
+        _release(holder)
+        result = await asyncio.wait_for(task, timeout=5)
+        return ticks, result
+
+    import time
+    started = time.monotonic()
+    ticks, result = asyncio.run(scenario())
+    assert ticks == 40
+    assert time.monotonic() - started < 5
+    assert result["status"] == "processing"
+    assert r2.read_local_file(session["key"]) == source
+
+
+@pytest.mark.unit
+def test_upload_lock_times_out_with_upload_busy_and_is_a_no_op_on_r2(local_disk, monkeypatch):
+    org = _org()
+    token, session, source = _prepared_upload(org, _user(org), MemDB(), parts=1, part_size=1000)
+    holder = _hold_lock(session["upid"])
+    try:
+        with pytest.raises(store.UploadBusy):
+            with store.upload_lock(session["upid"], timeout=0.05):
+                pass
+    finally:
+        _release(holder)
+    # R2 mode: no lock file, no flock, no wait.
+    monkeypatch.setattr(store, "_local", lambda: False)
+
+    def boom(*_a, **_k):
+        raise AssertionError("R2 path touched the local lock")
+
+    monkeypatch.setattr(store, "_lock_path", boom)
+    monkeypatch.setattr(store, "_acquire", boom)
+    with store.upload_lock("anything", timeout=0.01):
+        pass

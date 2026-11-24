@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     # valid for its whole lifetime; the app refreshes presigned URLs as needed, so
     # a viewing session never needs a week. (Detection uses its own 1-2h expiries.)
     R2_PRESIGNED_EXPIRY_SECONDS: int = 86400  # 24 hours
+    # Local storage only (dev, tests, staging): how long a film complete waits
+    # for another request that holds the same upload's lock before it answers
+    # 409 "try again". R2 does not use this lock.
+    UPLOAD_LOCK_TIMEOUT_SECONDS: float = 120.0
 
     # Anthropic
     ANTHROPIC_API_KEY: str = ""

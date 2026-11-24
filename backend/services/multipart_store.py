@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import tempfile
+import time
 from typing import Optional
 
 from botocore.exceptions import ClientError
@@ -20,6 +21,35 @@ from backend.services import r2
 
 class MultipartError(Exception):
     """The upload id is unknown, or it does not belong to the given object key."""
+
+
+class UploadBusy(Exception):
+    """Local storage: another request held this upload's lock past the deadline."""
+
+
+def _lock_timeout() -> float:
+    try:
+        value = float(getattr(r2.settings, "UPLOAD_LOCK_TIMEOUT_SECONDS", 120.0))
+    except (TypeError, ValueError):
+        return 120.0
+    return value if value > 0 else 120.0
+
+
+def _acquire(lock_fd: int, timeout: float) -> None:
+    """Take an exclusive flock without waiting forever. Retries a non-blocking
+    lock with a short, growing sleep and raises UploadBusy at the deadline."""
+    deadline = time.monotonic() + timeout
+    delay = 0.01
+    while True:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise UploadBusy("Upload is busy")
+            time.sleep(min(delay, remaining))
+            delay = min(delay * 2, 0.5)
 
 
 def _local() -> bool:
@@ -229,7 +259,7 @@ def _assembled_size(dest: str, expected: int) -> Optional[int]:
 
 
 @contextlib.contextmanager
-def upload_lock(upload_id: str):
+def upload_lock(upload_id: str, timeout: Optional[float] = None):
     """Hold the per-upload cross-process lock for local storage.
 
     finish_upload lists the parts, checks them and assembles them inside this
@@ -238,6 +268,9 @@ def upload_lock(upload_id: str):
     R2 does not need it (ListParts and CompleteMultipartUpload are atomic
     there), so it is a no-op and R2 behavior is unchanged. An invalid upload id
     takes no lock; the caller's list_parts raises MultipartError as before.
+
+    The wait is bounded: after `timeout` seconds (UPLOAD_LOCK_TIMEOUT_SECONDS by
+    default) it raises UploadBusy. Callers run it off the event loop.
     """
     if not _local():
         yield
@@ -249,7 +282,7 @@ def upload_lock(upload_id: str):
         return
     lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
     try:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        _acquire(lock_fd, _lock_timeout() if timeout is None else timeout)
         try:
             yield
         finally:
