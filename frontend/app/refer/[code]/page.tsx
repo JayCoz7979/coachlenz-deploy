@@ -1,11 +1,13 @@
 import Link from 'next/link'
 import TrialCta from '@/components/signup/TrialCta'
 import { signupsEnabled } from '@/lib/signups'
+import RememberRef from '@/components/signup/RememberRef'
 
 export default async function ReferPage({ params }: { params: { code: string } }) {
   const open = await signupsEnabled()
   return (
     <div className="min-h-screen bg-gray-950 flex items-center justify-center">
+      <RememberRef code={params.code} />
       <div className="text-center max-w-md">
         <h1 className="text-3xl font-bold text-brand-400 mb-4">You're Invited to CoachLenz</h1>
         <p className="text-gray-400 mb-8">

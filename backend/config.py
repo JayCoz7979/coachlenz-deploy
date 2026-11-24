@@ -243,6 +243,10 @@ class Settings(BaseSettings):
     # Login, password reset, email verification, and staff invites ignore this.
     SIGNUPS_ENABLED: bool = False
 
+    # Player on the waitlist role list. Jason has not decided. DEFAULT FALSE hides
+    # Player. When true, a player must say they are 18 or older or nothing is stored.
+    WAITLIST_PLAYER_ROLE_ENABLED: bool = False
+
     class Config:
         env_file = ".env"
         case_sensitive = False

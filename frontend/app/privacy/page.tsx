@@ -45,6 +45,19 @@ export default function PrivacyPage() {
           identifiers.
         </p>
 
+        <h2 className="text-xl font-semibold text-gray-100 pt-2">Waitlist and marketing email</h2>
+        <p className="text-sm uppercase tracking-wide text-gold-400">Draft. Pending review by Jason and an attorney.</p>
+        <p>
+          If you join the waitlist we collect your email, first name, and role, plus an optional
+          school and sport. We also store the page you landed on, the site that referred you,
+          campaign tags from the link you opened, and the IP address and browser (user agent)
+          from that signup and from a later confirm click. We use this to email you about the
+          waitlist, free coaching resources, launch news, and pricing when we open. Resend sends
+          those emails. Every message has a one-click unsubscribe that does not need a sign-in.
+          If you opt out we keep a suppression record so we do not email you again. The waitlist
+          is not for children under 13. A player who is not an adult is not added to the list.
+        </p>
+
         <h2 className="text-xl font-semibold text-gray-100 pt-2">2. How we use film and student-athlete data</h2>
         <p>
           Film and its analysis are used only to provide the service you requested. We do not use

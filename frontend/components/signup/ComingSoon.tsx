@@ -32,10 +32,8 @@ export default function ComingSoon({ source = 'waitlist' }: { source?: string })
           <h1 className="text-3xl sm:text-4xl font-bold text-gray-100 mb-4">
             CoachLenz is launching soon
           </h1>
-          <p className="text-gray-400 mb-8">
-            Game film for school basketball and football. Leave your name and email and
-            you will be among the first to experience it. If you already have an account,
-            you can still sign in.
+          <p className="text-gray-300 text-base mb-8">
+            Game film for school basketball and football. Join the waitlist and we&apos;ll email you when CoachLenz opens, plus a few free coaching resources before then. Already have an account? You can still sign in.
           </p>
           <div className="card">
             <WaitlistForm source={source} />

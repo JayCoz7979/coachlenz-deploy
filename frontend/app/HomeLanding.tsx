@@ -6,6 +6,7 @@ import { track } from '@/lib/funnel'
 import api from '@/lib/api'
 import logo from '../public/coachlenz-logo.png'
 import WaitlistForm from '@/components/signup/WaitlistForm'
+import { captureWaitlistAttribution } from '@/lib/waitlistAttribution'
 
 const OBJECTIONS: { q: string; a: string }[] = [
   {
@@ -30,7 +31,7 @@ export default function HomeLanding({ signupsOpen = true }: { signupsOpen?: bool
   const [email, setEmail] = useState('')
   const [leadSent, setLeadSent] = useState(false)
 
-  useEffect(() => { track('landing_view') }, [])
+  useEffect(() => { track('landing_view'); captureWaitlistAttribution() }, [])
 
   async function submitLead(e: React.FormEvent) {
     e.preventDefault()
@@ -156,9 +157,8 @@ export default function HomeLanding({ signupsOpen = true }: { signupsOpen?: bool
               <>
                 <p className="text-xs uppercase tracking-[0.18em] text-gold-400 mb-2">Coming soon</p>
                 <div className="font-medium text-gray-100 mb-1">Be among the first to experience CoachLenz</div>
-                <p className="text-sm text-gray-400 mb-4">
-                  Game film for school basketball and football. Leave your name and email
-                  and we will tell you when it opens.
+                <p className="text-base text-gray-200 mb-4">
+                  Game film for school basketball and football. Join the waitlist and we&apos;ll email you when CoachLenz opens, plus a few free coaching resources before then. Already have an account? You can still sign in.
                 </p>
                 <WaitlistForm source="app-home" id="home-waitlist" />
               </>

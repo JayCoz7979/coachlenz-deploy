@@ -224,7 +224,8 @@ def test_public_signup_status_reports_the_flag(monkeypatch):
 
     monkeypatch.setattr(auth_router.feature_flags, "is_enabled", _off)
     out = asyncio.run(auth_router.signup_status(db=None))
-    assert out == {"signups_enabled": False}
+    assert out["signups_enabled"] is False
+    assert out["player_role_enabled"] is False
 
 
 def _lead(coro_body, db):
@@ -246,10 +247,9 @@ def test_waitlist_email_only():
 def _waitlist(**extra):
     base = dict(
         email="coach@school.edu",
-        name="Ada Lovelace",
+        first_name="Ada",
         role="head_coach",
-        source="app-waitlist",
-        email_consent=True,
+        source="coachlenz-app-waitlist",
     )
     base.update(extra)
     return funnel.LeadIn(**base)
@@ -260,78 +260,96 @@ def test_waitlist_all_fields():
     db = _LeadDB()
     out = _lead(_waitlist(
         email="Coach@School.edu",
-        name="  Ada   Lovelace  ",
+        first_name="  Ada  ",
         school="  Lincoln High  ",
         sport="Basketball",
-        role="Head Coach",
-        lead_magnet="spring-checklist",
+        role="principal_admin",
+        lead_magnet="halftime-sheet-v1",
         utm_source="newsletter",
         utm_medium="email",
         utm_campaign="launch",
+        utm_content="hero",
+        utm_term="film",
+        referrer="example.edu",
+        landing_path="/",
+        ref_code="COACH1",
     ), db)
-    assert out == {"ok": True}
+    assert out["ok"] is True
     row = db.added[0]
     assert row.email == "coach@school.edu"
-    assert row.name == "Ada Lovelace"
+    assert row.first_name == "Ada"
     assert row.school == "Lincoln High"
     assert row.sport == "basketball"
-    assert row.role == "head_coach"
-    assert row.role_other is None
-    assert row.lead_magnet == "spring-checklist"
-    assert row.utm_source == "newsletter" and row.utm_campaign == "launch"
-    assert row.email_consent_version == funnel.EMAIL_CONSENT_VERSION
-    assert row.email_consent_at is not None
-    assert row.source == "app-waitlist"
+    assert row.role == "principal_admin"
+    assert row.role_branch == "admin"
+    assert row.consent_text_version == "cl-waitlist-v1"
+    assert row.utm_content == "hero" and row.utm_term == "film"
+    assert row.ref_code == "COACH1"
+    assert row.source == "coachlenz-app-waitlist"
+    assert row.has_account is False
 
 
 @pytest.mark.unit
-def test_waitlist_repeat_updates_only_that_rows_volunteered_fields():
+def test_waitlist_repeat_fills_blanks_and_does_not_touch_another_row():
     other = SimpleNamespace(
-        email="other@school.edu", name="Pat", school="Other HS", sport="soccer",
-        role="parent", role_other=None, source="landing", lead_magnet=None,
-        utm_source=None, utm_medium=None, utm_campaign=None,
-        email_consent_at=None, email_consent_version=None, created_at="keep-other",
+        email="other@school.edu", first_name="Pat", school="Other HS", sport="soccer",
+        role="parent", role_branch="general", source="landing", lead_magnet="keep",
+        utm_source=None, utm_content=None, consent_text_version="cl-waitlist-v1",
+        is_adult=None, created_at="keep-other",
     )
     existing = SimpleNamespace(
-        email="coach@school.edu", name="Old Name", school=None, sport=None,
-        role=None, role_other="stale note", source="landing", lead_magnet=None,
-        utm_source=None, utm_medium=None, utm_campaign=None,
-        email_consent_at=None, email_consent_version=None, created_at="keep",
+        email="coach@school.edu", first_name="Ada", school=None, sport=None,
+        role=None, role_branch=None, source="landing", lead_magnet=None,
+        utm_source=None, utm_medium=None, utm_campaign=None, utm_content=None, utm_term=None,
+        referrer=None, landing_path=None, ref_code=None,
+        consent_text_version=None, is_adult=None, created_at="keep",
     )
     db = _LeadDB(existing)
-    out = _lead(_waitlist(
-        name="Ada Lovelace", school="Lincoln High", sport="football",
-        role="other", role_other="Film dad",
-        utm_source="coach-facebook",
-    ), db)
-    assert out == {"ok": True}
-    assert db.added == []
-    assert existing.email == "coach@school.edu"
+    out = _lead(_waitlist(school="Lincoln High", utm_source="ig"), db)
+    assert out["ok"] is True and db.added == []
+    assert existing.first_name == "Ada"
+    assert existing.school == "Lincoln High"
+    assert existing.role == "head_coach" and existing.role_branch == "coach"
     assert existing.source == "landing"
     assert existing.created_at == "keep"
-    assert existing.name == "Ada Lovelace"
-    assert existing.school == "Lincoln High" and existing.sport == "football"
-    assert existing.role == "other" and existing.role_other == "Film dad"
-    assert existing.utm_source == "coach-facebook"
-    assert existing.email_consent_version == funnel.EMAIL_CONSENT_VERSION
-    assert other.name == "Pat" and other.school == "Other HS" and other.created_at == "keep-other"
+    assert existing.consent_text_version == "cl-waitlist-v1"
+    assert other.first_name == "Pat" and other.school == "Other HS"
 
 
 @pytest.mark.unit
-def test_repeat_without_consent_does_not_clear_an_existing_consent():
+def test_repeat_does_not_blank_a_stored_value():
     existing = SimpleNamespace(
-        email="coach@school.edu", name="Ada", school=None, sport=None, role="parent",
-        role_other=None, source="landing", lead_magnet="keep-magnet",
-        utm_source="keep", utm_medium=None, utm_campaign=None,
-        email_consent_at="already", email_consent_version="2026-11-24", created_at="keep",
+        email="coach@school.edu", first_name="Ada", school="Lincoln", sport="football",
+        role="parent", role_branch="general", source="landing", lead_magnet="keep-magnet",
+        utm_source="keep", utm_medium=None, utm_campaign=None, utm_content=None, utm_term=None,
+        referrer=None, landing_path=None, ref_code=None,
+        consent_text_version="cl-waitlist-v1", is_adult=None, created_at="keep",
     )
     db = _LeadDB(existing)
-    out = _lead(funnel.LeadIn(email="coach@school.edu", school="Lincoln High", source="landing"), db)
-    assert out == {"ok": True}
-    assert existing.email_consent_at == "already"
+    out = _lead(funnel.LeadIn(email="coach@school.edu", school="Somewhere Else", source="landing"), db)
+    assert out["ok"] is True
+    assert existing.school == "Lincoln"
+    assert existing.first_name == "Ada"
     assert existing.lead_magnet == "keep-magnet"
-    assert existing.school == "Lincoln High"
-    assert existing.name == "Ada"
+    assert existing.consent_text_version == "cl-waitlist-v1"
+
+
+@pytest.mark.unit
+def test_minor_player_is_not_stored(monkeypatch):
+    monkeypatch.setattr(funnel.settings, "WAITLIST_PLAYER_ROLE_ENABLED", True)
+    db = _LeadDB()
+    out = _lead(_waitlist(role="player", is_adult=False), db)
+    assert out["stored"] is False and out["minor"] is True
+    assert db.added == [] and db.commits == 0
+
+
+@pytest.mark.unit
+def test_player_role_rejected_when_flag_is_off():
+    db = _LeadDB()
+    with pytest.raises(HTTPException) as exc:
+        _lead(_waitlist(role="player", is_adult=True), db)
+    assert exc.value.status_code == 422
+    assert db.added == []
 
 
 @pytest.mark.unit
@@ -343,27 +361,25 @@ def test_waitlist_rejects_bad_email():
 @pytest.mark.unit
 def test_waitlist_rejects_blank_and_long_names():
     with pytest.raises(ValidationError):
-        _waitlist(name="   ")
+        _waitlist(first_name="   ")
     with pytest.raises(ValidationError):
-        _waitlist(name="A" * 101)
+        _waitlist(first_name="A" * 81)
 
 
 @pytest.mark.unit
-def test_waitlist_rejects_unknown_role_and_oversized_role_other():
+def test_waitlist_rejects_unknown_role():
     with pytest.raises(ValidationError):
         _waitlist(role="wizard")
     with pytest.raises(ValidationError):
-        _waitlist(role="other", role_other="x" * 101)
+        _waitlist(role="school_admin")
 
 
 @pytest.mark.unit
-def test_waitlist_source_requires_name_role_and_consent():
+def test_waitlist_source_requires_first_name_and_role():
     with pytest.raises(ValidationError):
-        funnel.LeadIn(email="coach@school.edu", source="app-waitlist", role="parent", email_consent=True)
+        funnel.LeadIn(email="coach@school.edu", source="coachlenz-app-waitlist", role="parent")
     with pytest.raises(ValidationError):
-        funnel.LeadIn(email="coach@school.edu", source="app-waitlist", name="Ada", email_consent=True)
-    with pytest.raises(ValidationError):
-        funnel.LeadIn(email="coach@school.edu", source="app-waitlist", name="Ada", role="parent", email_consent=False)
+        funnel.LeadIn(email="coach@school.edu", source="coachlenz-app-waitlist", first_name="Ada")
 
 
 @pytest.mark.unit
@@ -375,7 +391,7 @@ def test_waitlist_rejects_unknown_sport():
 @pytest.mark.unit
 def test_lead_magnet_and_utm_are_length_capped():
     with pytest.raises(ValidationError):
-        _waitlist(lead_magnet="m" * 81)
+        _waitlist(lead_magnet="m" * 121)
     with pytest.raises(ValidationError):
         _waitlist(utm_campaign="c" * 121)
 
@@ -506,22 +522,25 @@ def test_admin_csv_includes_waitlist_fields_and_is_admin_gated():
     dep = inspect.signature(admin.export_waitlist_csv).parameters["user"].default
     assert getattr(dep, "dependency", None) is require_admin
     row = SimpleNamespace(
-        email="coach@school.edu", name="=Ada", role="head_coach", role_other=None,
-        school="Lincoln", sport="football", source="app-home", lead_magnet="checklist",
-        utm_source="ig", utm_medium="social", utm_campaign="launch",
-        email_consent_at=datetime(2026, 11, 24, 12, 0, 0),
-        email_consent_version="2026-11-24",
-        created_at=datetime(2026, 11, 24, 12, 1, 0),
+        email="coach@school.edu", first_name="=Ada", role="head_coach", role_branch="coach",
+        is_adult=None, school="Lincoln", sport="football", source="coachlenz-app-waitlist",
+        lead_magnet="halftime-sheet-v1", utm_source="ig", utm_medium="social",
+        utm_campaign="launch", utm_content=None, utm_term=None, referrer=None,
+        landing_path="/", ref_code=None, consent_text_version="cl-waitlist-v1",
+        confirmed_at=None, unsubscribed_at=None, has_account=False,
+        marketing_consent=False, created_at=datetime(2026, 11, 24, 12, 1, 0),
     )
     other = SimpleNamespace(
-        email="other@school.edu", name="Pat", role="parent", role_other=None,
-        school="Other", sport=None, source="landing", lead_magnet=None,
-        utm_source=None, utm_medium=None, utm_campaign=None,
-        email_consent_at=None, email_consent_version=None, created_at=None,
+        email="other@school.edu", first_name="Pat", role="parent", role_branch="general",
+        is_adult=None, school="Other", sport=None, source="landing", lead_magnet=None,
+        utm_source=None, utm_medium=None, utm_campaign=None, utm_content=None, utm_term=None,
+        referrer=None, landing_path=None, ref_code=None, consent_text_version=None,
+        confirmed_at=None, unsubscribed_at=None, has_account=False, marketing_consent=False,
+        created_at=None,
     )
     text = leads_to_csv([row, other])
-    assert text.splitlines()[0].startswith("email,name,role,")
-    assert "email_consent_version" in text.splitlines()[0]
-    assert "lead_magnet" in text.splitlines()[0]
+    header = text.splitlines()[0]
+    assert header.startswith("email,first_name,role,")
+    assert "consent_text_version" in header and "utm_content" in header
     assert "'=Ada" in text
     assert "coach@school.edu" in text and "other@school.edu" in text

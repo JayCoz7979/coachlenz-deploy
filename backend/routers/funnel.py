@@ -5,7 +5,6 @@ limited. The beacon only accepts the anonymous client events; the two signup ste
 are emitted server-side (auth.register, onboarding.choose_sports) so they cannot be
 spoofed from the browser.
 """
-from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -18,42 +17,19 @@ from backend.models.base import get_db
 from backend.ratelimit import limiter
 from backend.services import funnel as funnel_svc
 
+from backend.config import settings
+from backend.services.waitlist_capture import (
+    FULL_WAITLIST_SOURCES,
+    WAITLIST_ROLES,
+    apply_repeat,
+    canonicalize_source,
+    is_minor_player,
+    new_lead_kwargs,
+)
+
 # Sports a waitlist visitor can name. Basketball and football are the launch
 # sports; the others are there so a coach in a different sport can still sign up.
 WAITLIST_SPORTS = ("basketball", "football", "soccer", "volleyball", "other")
-
-# Stored slugs for the "I am a..." select. Labels live in the form.
-WAITLIST_ROLES = (
-    "head_coach",
-    "assistant_coach",
-    "athletic_director",
-    "school_admin",
-    "film_coordinator",
-    "parent",
-    "player",
-    "other",
-)
-
-# Sources that are the launch waitlist, not the older email-only "keep me posted"
-# box. Those rows must carry a name, a role, and an explicit email consent.
-WAITLIST_SOURCES = frozenset({
-    "waitlist",
-    "app-home",
-    "app-onboarding",
-    "app-waitlist",
-    "marketing-site",
-})
-
-# Text the checkbox shows. Bump the version if that sentence changes.
-EMAIL_CONSENT_TEXT = "Email me launch updates and coaching resources."
-EMAIL_CONSENT_VERSION = "2026-11-24"
-
-# Fields a repeat submit may change on the row for THAT email. Never email,
-# source, or created_at, and never a different row.
-_REPEAT_FIELDS = (
-    "name", "school", "sport", "role", "lead_magnet",
-    "utm_source", "utm_medium", "utm_campaign",
-)
 
 router = APIRouter(tags=["funnel"])
 
@@ -94,45 +70,43 @@ def _clean(v: Optional[str], limit: int) -> Optional[str]:
 class LeadIn(BaseModel):
     email: EmailStr
     source: Optional[str] = None
-    # Name and role are required on the waitlist sources. The older email-only
-    # callers (the open homepage "Keep me posted" box and the film-time calculator)
-    # omit them, and that still works.
-    name: Optional[str] = None
+    # first_name and role are required on the full waitlist sources. The older
+    # email-only callers omit them, and that still works.
+    first_name: Optional[str] = None
     school: Optional[str] = None
     sport: Optional[str] = None
     role: Optional[str] = None
-    role_other: Optional[str] = None
+    is_adult: Optional[bool] = None
     lead_magnet: Optional[str] = None
     utm_source: Optional[str] = None
     utm_medium: Optional[str] = None
     utm_campaign: Optional[str] = None
-    email_consent: bool = False
+    utm_content: Optional[str] = None
+    utm_term: Optional[str] = None
+    referrer: Optional[str] = None
+    landing_path: Optional[str] = None
+    ref_code: Optional[str] = None
 
-    @field_validator("name")
+    @field_validator("first_name")
     @classmethod
-    def _name(cls, v: Optional[str]) -> Optional[str]:
+    def _first_name(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
             return None
         if not v.strip():
-            raise ValueError("Name is required.")
-        return _clean(v, 100)
-
-    @field_validator("school", "source")
-    @classmethod
-    def _school_or_source(cls, v: Optional[str]) -> Optional[str]:
-        return _clean(v, 200)
-
-    @field_validator("role_other")
-    @classmethod
-    def _role_other(cls, v: Optional[str]) -> Optional[str]:
-        return _clean(v, 100)
-
-    @field_validator("lead_magnet")
-    @classmethod
-    def _magnet(cls, v: Optional[str]) -> Optional[str]:
+            raise ValueError("First name is required.")
         return _clean(v, 80)
 
-    @field_validator("utm_source", "utm_medium", "utm_campaign")
+    @field_validator("school")
+    @classmethod
+    def _school(cls, v: Optional[str]) -> Optional[str]:
+        return _clean(v, 200)
+
+    @field_validator("source", "lead_magnet", "referrer", "landing_path", "ref_code")
+    @classmethod
+    def _short_tag(cls, v: Optional[str]) -> Optional[str]:
+        return _clean(v, 120)
+
+    @field_validator("utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term")
     @classmethod
     def _utm(cls, v: Optional[str]) -> Optional[str]:
         return _clean(v, 120)
@@ -154,71 +128,28 @@ class LeadIn(BaseModel):
     def _role(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
             return None
-        v = v.strip().lower().replace(" ", "_")
+        v = v.strip().lower()
         if not v:
             return None
         if v not in WAITLIST_ROLES:
-            raise ValueError(
-                "Role must be head coach, assistant coach, athletic director, "
-                "principal / school admin, video / film coordinator, parent, player, or other."
-            )
+            raise ValueError("Role is not one of the allowed values.")
         return v
 
     @model_validator(mode="after")
     def _waitlist_requires_identity(self):
-        source = (self.source or "").strip().lower()
-        if source not in WAITLIST_SOURCES:
+        source = canonicalize_source(self.source)
+        if source not in FULL_WAITLIST_SOURCES:
             return self
-        if not self.name:
-            raise ValueError("Name is required.")
+        if not self.first_name:
+            raise ValueError("First name is required.")
         if not self.role:
             raise ValueError("Please tell us your role.")
-        if not self.email_consent:
-            raise ValueError("Please agree to receive launch updates.")
         return self
-
-
-def _apply_lead_details(row, body: LeadIn) -> None:
-    """Update the volunteered fields on the row for this email only.
-
-    A blank field does not erase a value they already gave us. role_other is
-    kept only when the role is other. Consent is recorded when they check the
-    box, and a later submit that omits the box does not take consent away.
-    Email, source, and created_at are not touched.
-    """
-    for field in _REPEAT_FIELDS:
-        value = getattr(body, field)
-        if value:
-            setattr(row, field, value)
-    if body.role == "other":
-        if body.role_other:
-            row.role_other = body.role_other
-    elif body.role:
-        row.role_other = None
-    if body.email_consent:
-        row.email_consent_at = datetime.utcnow()
-        row.email_consent_version = EMAIL_CONSENT_VERSION
 
 
 def _new_lead(email: str, source: str, body: LeadIn):
     from backend.models.funnel import MarketingLead
-    row = MarketingLead(
-        email=email,
-        source=source,
-        name=body.name,
-        school=body.school,
-        sport=body.sport,
-        role=body.role,
-        role_other=body.role_other if body.role == "other" else None,
-        lead_magnet=body.lead_magnet,
-        utm_source=body.utm_source,
-        utm_medium=body.utm_medium,
-        utm_campaign=body.utm_campaign,
-    )
-    if body.email_consent:
-        row.email_consent_at = datetime.utcnow()
-        row.email_consent_version = EMAIL_CONSENT_VERSION
-    return row
+    return MarketingLead(**new_lead_kwargs(email, source, body))
 
 
 @router.post("/leads")
@@ -232,7 +163,11 @@ async def capture_lead(body: LeadIn, request: Request, db: AsyncSession = Depend
     """
     from backend.models.funnel import MarketingLead
     email = str(body.email).lower().strip()
-    source = (body.source or "landing")[:120]
+    source = canonicalize_source(body.source)
+    if body.role == "player" and not settings.WAITLIST_PLAYER_ROLE_ENABLED:
+        raise HTTPException(status_code=422, detail="Player isn't available on the waitlist yet.")
+    if is_minor_player(body.role, body.is_adult):
+        return {"ok": True, "stored": False, "minor": True}
     try:
         existing = (await db.execute(
             select(MarketingLead).where(func.lower(MarketingLead.email) == email)
@@ -240,7 +175,7 @@ async def capture_lead(body: LeadIn, request: Request, db: AsyncSession = Depend
         if existing is None:
             db.add(_new_lead(email, source, body))
         else:
-            _apply_lead_details(existing, body)
+            apply_repeat(existing, body, source)
         await db.commit()
     except IntegrityError:
         # Two requests inserted the same email at once. The unique index already
@@ -254,7 +189,7 @@ async def capture_lead(body: LeadIn, request: Request, db: AsyncSession = Depend
                 select(MarketingLead).where(func.lower(MarketingLead.email) == email)
             )).scalar_one_or_none()
             if existing is not None:
-                _apply_lead_details(existing, body)
+                apply_repeat(existing, body, source)
                 await db.commit()
         except Exception:
             try:

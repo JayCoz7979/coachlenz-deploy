@@ -453,7 +453,7 @@ export default function AdminPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-gray-400 border-b border-gray-800">
-                      <th className="text-left pb-3">Name</th>
+                      <th className="text-left pb-3">First name</th>
                       <th className="text-left pb-3">Email</th>
                       <th className="text-left pb-3">Role</th>
                       <th className="text-left pb-3">School</th>
@@ -465,12 +465,12 @@ export default function AdminPage() {
                   <tbody className="divide-y divide-gray-800">
                     {leads.map((lead) => (
                       <tr key={lead.email}>
-                        <td className="py-3">{lead.name || '-'}</td>
+                        <td className="py-3">{lead.first_name || '-'}</td>
                         <td className="py-3">{lead.email}</td>
-                        <td className="py-3">{lead.role === 'other' && lead.role_other ? lead.role_other : (lead.role || '-')}</td>
+                        <td className="py-3">{lead.role || '-'}</td>
                         <td className="py-3">{lead.school || '-'}</td>
                         <td className="py-3">{lead.sport || '-'}</td>
-                        <td className="py-3">{lead.email_consent_version || '-'}</td>
+                        <td className="py-3">{lead.consent_text_version || '-'}</td>
                         <td className="py-3">{lead.source || '-'}</td>
                       </tr>
                     ))}

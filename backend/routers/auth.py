@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, func
 from pydantic import BaseModel, EmailStr
 from datetime import datetime, timedelta
+from backend.config import settings
 from backend.models.base import get_db
 from backend.models.user import User
 from backend.models.organization import Organization
@@ -74,7 +75,10 @@ async def signup_status(db: AsyncSession = Depends(get_db)):
     """Public read of the new-account switch. False when SIGNUPS_ENABLED is unset
     or false and no admin has turned the flag on. The homepage and /onboarding
     use this to show the waitlist. It does not affect login."""
-    return {"signups_enabled": bool(await feature_flags.is_enabled(db, "signups_enabled"))}
+    return {
+        "signups_enabled": bool(await feature_flags.is_enabled(db, "signups_enabled")),
+        "player_role_enabled": bool(settings.WAITLIST_PLAYER_ROLE_ENABLED),
+    }
 
 
 @router.post("/register")
@@ -144,6 +148,12 @@ async def register(body: RegisterRequest, request: Request, db: AsyncSession = D
         from backend.models.referral import Referral
         referral = Referral(referrer_org_id=referred_by, referred_org_id=org.id)
         db.add(referral)
+
+    try:
+        from backend.services.waitlist_capture import mark_lead_has_account
+        await mark_lead_has_account(db, body.email)
+    except Exception:
+        pass
 
     await db.commit()
     try:

@@ -1,7 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { publicApi } from '@/lib/api'
+import { readWaitlistAttribution } from '@/lib/waitlistAttribution'
 
 const SPORTS: { value: string; label: string }[] = [
   { value: '', label: 'Sport (optional)' },
@@ -17,84 +18,83 @@ const ROLES: { value: string; label: string }[] = [
   { value: 'head_coach', label: 'Head Coach' },
   { value: 'assistant_coach', label: 'Assistant Coach' },
   { value: 'athletic_director', label: 'Athletic Director' },
-  { value: 'school_admin', label: 'Principal / School Admin' },
-  { value: 'film_coordinator', label: 'Video / Film Coordinator' },
+  { value: 'principal_admin', label: 'Principal or Admin' },
+  { value: 'video_coordinator', label: 'Video Coordinator' },
   { value: 'parent', label: 'Parent' },
   { value: 'player', label: 'Player' },
   { value: 'other', label: 'Other' },
 ]
 
-export const WAITLIST_SUCCESS = "You're on the list. You'll be among the first to experience CoachLenz."
+// Same sentence and version as backend.services.waitlist_capture.CONSENT_TEXT.
+export const CONSENT_TEXT = "By joining, you agree that CoachLenz can email you about the waitlist, free coaching resources, launch news, and pricing when we open. You can unsubscribe anytime with one click. See our Privacy Policy."
+export const WAITLIST_SUCCESS = "You're on the list."
+const MINOR_MESSAGE = "Thanks. CoachLenz is built for coaches and schools. Ask your coach to join the list."
 
-function attribution(): Record<string, string> {
-  if (typeof window === 'undefined') return {}
-  const q = new URLSearchParams(window.location.search)
-  const out: Record<string, string> = {}
-  const magnet = (q.get('lead_magnet') || q.get('magnet') || '').trim()
-  if (magnet) out.lead_magnet = magnet
-  for (const key of ['utm_source', 'utm_medium', 'utm_campaign'] as const) {
-    const value = (q.get(key) || '').trim()
-    if (value) out[key] = value
-  }
-  return out
-}
-
-function problem(name: string, email: string, role: string, roleOther: string, consent: boolean): string {
-  if (!name.trim()) return 'Name is required.'
-  if (name.trim().length > 100) return 'Name must be 100 characters or less.'
-  const v = email.trim()
-  if (!v) return 'Email is required.'
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return 'Enter a valid email address.'
+function problem(firstName: string, email: string, role: string, adult: '' | 'yes' | 'no', playerOn: boolean): string {
+  if (!firstName.trim()) return 'First name is required.'
+  if (firstName.trim().length > 80) return 'First name must be 80 characters or less.'
+  if (!email.trim()) return 'Email is required.'
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return 'Enter a valid email address.'
   if (!role) return 'Please tell us your role.'
-  if (roleOther.trim().length > 100) return 'That note must be 100 characters or less.'
-  if (!consent) return 'Please agree to receive launch updates.'
+  if (role === 'player' && playerOn && !adult) return 'Please tell us if you are 18 or older.'
   return ''
 }
 
 function serverProblem(err: unknown): string {
   const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
   if (typeof detail === 'string' && detail.trim()) return detail
-  if (Array.isArray(detail) && detail.length) {
-    const msg = detail[0]?.msg
-    if (typeof msg === 'string' && msg.trim()) return msg.replace(/^Value error,\s*/i, '')
-  }
+  if (Array.isArray(detail) && detail[0]?.msg) return String(detail[0].msg).replace(/^Value error,\s*/i, '')
   return 'Could not join the waitlist. Please try again.'
 }
 
 export default function WaitlistForm({ source, id = 'waitlist' }: { source: string; id?: string }) {
-  const [name, setName] = useState('')
+  const [firstName, setFirstName] = useState('')
   const [email, setEmail] = useState('')
   const [school, setSchool] = useState('')
   const [sport, setSport] = useState('')
   const [role, setRole] = useState('')
-  const [roleOther, setRoleOther] = useState('')
-  const [consent, setConsent] = useState(false)
+  const [adult, setAdult] = useState<'' | 'yes' | 'no'>('')
+  const [playerOn, setPlayerOn] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [sent, setSent] = useState(false)
+  const [minor, setMinor] = useState(false)
+
+  useEffect(() => {
+    publicApi.get('/auth/signups', { timeout: 8000 })
+      .then((r) => setPlayerOn(r.data?.player_role_enabled === true))
+      .catch(() => setPlayerOn(false))
+  }, [])
+
+  const roles = playerOn ? ROLES : ROLES.filter((r) => r.value !== 'player')
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
-    const message = problem(name, email, role, roleOther, consent)
+    const message = problem(firstName, email, role, adult, playerOn)
     if (message) {
       setError(message)
+      return
+    }
+    if (role === 'player' && adult === 'no') {
+      setMinor(true)
+      setError('')
       return
     }
     setError('')
     setLoading(true)
     try {
-      await publicApi.post('/leads', {
+      const res = await publicApi.post('/leads', {
         email: email.trim(),
-        name: name.trim(),
+        first_name: firstName.trim(),
         role,
         source,
-        email_consent: true,
-        ...attribution(),
+        ...(role === 'player' ? { is_adult: true } : {}),
         ...(school.trim() ? { school: school.trim() } : {}),
         ...(sport ? { sport } : {}),
-        ...(role === 'other' && roleOther.trim() ? { role_other: roleOther.trim() } : {}),
+        ...readWaitlistAttribution(),
       })
-      setSent(true)
+      if (res.data?.minor) setMinor(true)
+      else setSent(true)
     } catch (err) {
       setError(serverProblem(err))
     } finally {
@@ -102,56 +102,48 @@ export default function WaitlistForm({ source, id = 'waitlist' }: { source: stri
     }
   }
 
-  if (sent) {
-    return <p role="status" className="text-gray-200">{WAITLIST_SUCCESS}</p>
-  }
+  if (minor) return <p role="status" className="text-base text-gray-100">{MINOR_MESSAGE}</p>
+  if (sent) return <p role="status" className="text-base text-gray-100">{WAITLIST_SUCCESS}</p>
 
   return (
     <form id={id} onSubmit={submit} className="space-y-4 text-left" noValidate>
-      {error && (
-        <div role="alert" className="text-red-400 text-sm bg-red-400/10 rounded p-3">{error}</div>
-      )}
+      {error && <div role="alert" className="text-red-400 text-sm bg-red-400/10 rounded p-3">{error}</div>}
       <div>
-        <label className="label" htmlFor={`${id}-name`}>Name</label>
-        <input id={`${id}-name`} className="input" value={name} onChange={(e) => setName(e.target.value)} required maxLength={100} autoComplete="name" />
+        <label className="label" htmlFor={`${id}-first`}>First name</label>
+        <input id={`${id}-first`} className="input" value={firstName} onChange={(e) => setFirstName(e.target.value)} required maxLength={80} autoComplete="given-name" />
       </div>
       <div>
         <label className="label" htmlFor={`${id}-email`}>Email</label>
-        <input id={`${id}-email`} type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@yourschool.org" className="input" aria-invalid={error ? true : undefined} />
+        <input id={`${id}-email`} type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@yourschool.org" className="input" />
       </div>
       <div>
         <label className="label" htmlFor={`${id}-role`}>I am a...</label>
-        <select id={`${id}-role`} required value={role} onChange={(e) => setRole(e.target.value)} className="input">
-          {ROLES.map((r) => (
-            <option key={r.value || 'none'} value={r.value}>{r.label}</option>
-          ))}
+        <select id={`${id}-role`} required value={role} onChange={(e) => { setRole(e.target.value); setAdult('') }} className="input">
+          {roles.map((r) => <option key={r.value || 'none'} value={r.value}>{r.label}</option>)}
         </select>
       </div>
-      {role === 'other' && (
-        <div>
-          <label className="label" htmlFor={`${id}-role-other`}>Tell us a bit more <span className="normal-case tracking-normal">(optional)</span></label>
-          <input id={`${id}-role-other`} className="input" value={roleOther} onChange={(e) => setRoleOther(e.target.value)} maxLength={100} />
-        </div>
+      {playerOn && role === 'player' && (
+        <fieldset className="space-y-2">
+          <legend className="text-sm text-gray-100 mb-1">Are you 18 or older?</legend>
+          <label className="flex items-center gap-2 text-sm text-gray-100"><input type="radio" name={`${id}-adult`} checked={adult === 'yes'} onChange={() => setAdult('yes')} /> Yes</label>
+          <label className="flex items-center gap-2 text-sm text-gray-100"><input type="radio" name={`${id}-adult`} checked={adult === 'no'} onChange={() => setAdult('no')} /> No</label>
+        </fieldset>
       )}
       <div>
         <label className="label" htmlFor={`${id}-school`}>School <span className="normal-case tracking-normal">(optional)</span></label>
-        <input id={`${id}-school`} className="input" value={school} onChange={(e) => setSchool(e.target.value)} placeholder="Lincoln High" maxLength={200} />
+        <input id={`${id}-school`} className="input" value={school} onChange={(e) => setSchool(e.target.value)} maxLength={200} />
       </div>
       <div>
         <label className="label" htmlFor={`${id}-sport`}>Sport <span className="normal-case tracking-normal">(optional)</span></label>
         <select id={`${id}-sport`} value={sport} onChange={(e) => setSport(e.target.value)} className="input">
-          {SPORTS.map((s) => (
-            <option key={s.value || 'none'} value={s.value}>{s.label}</option>
-          ))}
+          {SPORTS.map((s) => <option key={s.value || 'none'} value={s.value}>{s.label}</option>)}
         </select>
       </div>
-      <label className="flex items-start gap-2 text-sm text-gray-300 cursor-pointer">
-        <input type="checkbox" className="mt-1" checked={consent} onChange={(e) => setConsent(e.target.checked)} required />
-        <span>Email me launch updates and coaching resources.</span>
-      </label>
-      <button type="submit" disabled={loading} className="btn-primary w-full">
-        {loading ? 'Joining...' : 'Join the waitlist'}
-      </button>
+      <p className="text-base text-gray-100">
+        By joining, you agree that CoachLenz can email you about the waitlist, free coaching resources, launch news, and pricing when we open. You can unsubscribe anytime with one click. See our{' '}
+        <a href="https://app.coachlenz.com/privacy" className="text-brand-400 underline">Privacy Policy</a>.
+      </p>
+      <button type="submit" disabled={loading} className="btn-primary w-full">{loading ? 'Joining...' : 'Join the waitlist'}</button>
     </form>
   )
 }

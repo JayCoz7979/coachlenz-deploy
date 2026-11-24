@@ -10,7 +10,7 @@
     <p style="color:#a39e92;margin:0 0 20px;">Game film for school basketball and football. Leave your name and email and we will tell you when it opens.</p>
     <form id="cl-waitlist" style="display:grid;gap:12px;">
       <div id="cl-waitlist-error" hidden style="background:rgba(224,112,112,.12);color:#e07070;padding:12px;border-radius:4px;"></div>
-      <label>Name<br><input name="name" required maxlength="100" autocomplete="name" style="width:100%;height:44px;margin-top:4px;background:#3d3d3d;color:#f8f6f0;border:1px solid rgba(255,255,255,.12);padding:0 12px;"></label>
+      <label>First name<br><input name="first_name" required maxlength="80" autocomplete="given-name" style="width:100%;height:44px;margin-top:4px;background:#3d3d3d;color:#f8f6f0;border:1px solid rgba(255,255,255,.12);padding:0 12px;"></label>
       <label>Email<br><input name="email" type="email" required autocomplete="email" style="width:100%;height:44px;margin-top:4px;background:#3d3d3d;color:#f8f6f0;border:1px solid rgba(255,255,255,.12);padding:0 12px;"></label>
       <label>I am a...<br>
         <select name="role" required style="width:100%;height:44px;margin-top:4px;background:#3d3d3d;color:#f8f6f0;border:1px solid rgba(255,255,255,.12);padding:0 12px;">
@@ -18,14 +18,16 @@
           <option value="head_coach">Head Coach</option>
           <option value="assistant_coach">Assistant Coach</option>
           <option value="athletic_director">Athletic Director</option>
-          <option value="school_admin">Principal / School Admin</option>
-          <option value="film_coordinator">Video / Film Coordinator</option>
+          <option value="principal_admin">Principal or Admin</option>
+          <option value="video_coordinator">Video Coordinator</option>
           <option value="parent">Parent</option>
-          <option value="player">Player</option>
           <option value="other">Other</option>
         </select>
       </label>
-      <label id="cl-role-other" hidden>Tell us a bit more (optional)<br><input name="role_other" maxlength="100" style="width:100%;height:44px;margin-top:4px;background:#3d3d3d;color:#f8f6f0;border:1px solid rgba(255,255,255,.12);padding:0 12px;"></label>
+      <p id="cl-adult" hidden style="font-size:16px;color:#f8f6f0;">Are you 18 or older?<br>
+        <label><input type="radio" name="adult" value="yes"> Yes</label>
+        <label><input type="radio" name="adult" value="no"> No</label>
+      </p>
       <label>School (optional)<br><input name="school" maxlength="200" style="width:100%;height:44px;margin-top:4px;background:#3d3d3d;color:#f8f6f0;border:1px solid rgba(255,255,255,.12);padding:0 12px;"></label>
       <label>Sport (optional)<br>
         <select name="sport" style="width:100%;height:44px;margin-top:4px;background:#3d3d3d;color:#f8f6f0;border:1px solid rgba(255,255,255,.12);padding:0 12px;">
@@ -37,7 +39,7 @@
           <option value="other">Other</option>
         </select>
       </label>
-      <label style="display:flex;gap:8px;align-items:flex-start;"><input name="consent" type="checkbox" required> <span>Email me launch updates and coaching resources.</span></label>
+      <p style="font-size:16px;color:#f8f6f0;line-height:1.5;">By joining, you agree that CoachLenz can email you about the waitlist, free coaching resources, launch news, and pricing when we open. You can unsubscribe anytime with one click. See our <a href="https://app.coachlenz.com/privacy" style="color:#2d8c40;">Privacy Policy</a>.</p>
       <button type="submit" style="height:48px;background:#C9A84C;color:#1c1c1c;border:0;font-weight:700;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;">Join the waitlist</button>
     </form>
   </div>
@@ -47,37 +49,46 @@
   var form = document.getElementById("cl-waitlist");
   if (!form) return;
   var errorBox = document.getElementById("cl-waitlist-error");
-  var otherWrap = document.getElementById("cl-role-other");
-  var roleSelect = form.querySelector('[name="role"]');
-  roleSelect.addEventListener("change", function () {
-    otherWrap.hidden = roleSelect.value !== "other";
-  });
   var ENDPOINT = "https://coachlenz-backend-production.up.railway.app/leads";
+  var STORE = "cl_wl_attr";
+  function clip(v) { return String(v || "").trim().slice(0, 120); }
+  try {
+    if (!sessionStorage.getItem(STORE)) {
+      var q0 = new URLSearchParams(window.location.search);
+      var host = "";
+      try { if (document.referrer) host = new URL(document.referrer).hostname; } catch (e) {}
+      sessionStorage.setItem(STORE, JSON.stringify({
+        utm_source: clip(q0.get("utm_source")),
+        utm_medium: clip(q0.get("utm_medium")),
+        utm_campaign: clip(q0.get("utm_campaign")),
+        utm_content: clip(q0.get("utm_content")),
+        utm_term: clip(q0.get("utm_term")),
+        referrer: clip(host),
+        landing_path: clip(location.pathname),
+        lead_magnet: clip(q0.get("lead_magnet") || q0.get("magnet")),
+        ref_code: clip(q0.get("ref"))
+      }));
+    }
+  } catch (e) {}
   function show(message) { errorBox.hidden = false; errorBox.textContent = message; }
   form.addEventListener("submit", function (event) {
     event.preventDefault();
     var data = new FormData(form);
-    var name = String(data.get("name") || "").trim();
+    var first = String(data.get("first_name") || "").trim();
     var email = String(data.get("email") || "").trim();
     var role = String(data.get("role") || "");
-    var roleOther = String(data.get("role_other") || "").trim();
-    if (!name) { show("Name is required."); return; }
+    if (!first) { show("First name is required."); return; }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { show("Enter a valid email address."); return; }
     if (!role) { show("Please tell us your role."); return; }
-    if (!data.get("consent")) { show("Please agree to receive launch updates."); return; }
-    var params = new URLSearchParams(window.location.search);
-    var body = { email: email, name: name, role: role, source: "marketing-site", email_consent: true };
+    var body = { email: email, first_name: first, role: role, source: "coachlenz-site-waitlist" };
     var school = String(data.get("school") || "").trim();
     var sport = String(data.get("sport") || "");
     if (school) body.school = school;
     if (sport) body.sport = sport;
-    if (role === "other" && roleOther) body.role_other = roleOther;
-    ["utm_source", "utm_medium", "utm_campaign"].forEach(function (key) {
-      var value = (params.get(key) || "").trim();
-      if (value) body[key] = value;
-    });
-    var magnet = (params.get("lead_magnet") || params.get("magnet") || "").trim();
-    if (magnet) body.lead_magnet = magnet;
+    try {
+      var saved = JSON.parse(sessionStorage.getItem(STORE) || "{}");
+      Object.keys(saved).forEach(function (key) { if (saved[key]) body[key] = saved[key]; });
+    } catch (e) {}
     var button = form.querySelector("button");
     button.disabled = true;
     fetch(ENDPOINT, {
@@ -86,7 +97,7 @@
       body: JSON.stringify(body)
     }).then(function (res) {
       if (!res.ok) throw new Error("save failed");
-      form.outerHTML = '<p role="status" style="color:#f8f6f0;">You\'re on the list. You\'ll be among the first to experience CoachLenz.</p>';
+      form.outerHTML = '<p role="status" style="font-size:16px;color:#f8f6f0;">You\'re on the list.</p>';
     }).catch(function () {
       show("Could not join the waitlist. Please try again.");
       button.disabled = false;
