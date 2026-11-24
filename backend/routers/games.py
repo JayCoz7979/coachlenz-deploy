@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, func
 from pydantic import BaseModel
 from typing import Optional
+import uuid
 from backend.models.base import get_db
 from backend.models.user import User
 from backend.models.organization import Organization
@@ -51,8 +52,21 @@ async def create_game(body: GameCreate, user: User = Depends(get_current_user), 
     await authorize_film_upload(db, user, org, body.sport, body.file_size_bytes)
     raise HTTPException(status_code=409, detail=USE_CHUNKED_DETAIL)
 
+def _require_game_id(game_id: str) -> None:
+    """Game ids are UUIDs. Anything else made asyncpg raise DataError, a 500.
+    Answer the same 404 as a missing or foreign game instead."""
+    try:
+        uuid.UUID(str(game_id))
+        ok = 32 <= len(str(game_id)) <= 36  # the lengths asyncpg accepts
+    except (ValueError, AttributeError, TypeError):
+        ok = False
+    if not ok:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+
 @router.get("/{game_id}")
 async def get_game(game_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    _require_game_id(game_id)
     result = await db.execute(select(Game).where(Game.id == game_id, Game.organization_id == user.organization_id))
     game = result.scalar_one_or_none()
     if not game:
@@ -71,6 +85,7 @@ class GameUpdate(BaseModel):
 
 @router.patch("/{game_id}")
 async def update_game(game_id: str, body: GameUpdate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    _require_game_id(game_id)
     result = await db.execute(select(Game).where(Game.id == game_id, Game.organization_id == user.organization_id))
     game = result.scalar_one_or_none()
     if not game:
@@ -88,6 +103,7 @@ async def delete_game(game_id: str, user: User = Depends(get_current_user), db: 
     clips (FK ON DELETE CASCADE), any queued processing jobs, and any tendency
     report that was built from it. Scoped to the caller's org so a coach can only
     delete their own film."""
+    _require_game_id(game_id)
     result = await db.execute(select(Game).where(Game.id == game_id, Game.organization_id == user.organization_id))
     game = result.scalar_one_or_none()
     if not game:
