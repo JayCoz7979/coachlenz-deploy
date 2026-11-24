@@ -22,7 +22,9 @@ import backend.routers.auth as auth_router
 import backend.routers.funnel as funnel
 import backend.routers.staff as staff
 import backend.services.feature_flags as ff
+from backend.config import settings
 from backend.services.auth import require_admin
+from backend.services.waitlist_capture import CONSENT_PAIRS, active_consent, consent_text_sha256
 from backend.services.waitlist_export import leads_to_csv
 
 
@@ -217,6 +219,39 @@ def test_staff_invite_still_works_when_signups_closed(monkeypatch):
 
 
 @pytest.mark.unit
+def test_consent_pairs_store_the_line_and_the_button(monkeypatch):
+    monkeypatch.setattr(settings, "WAITLIST_CONSENT_PAIR", "a")
+    a = active_consent()
+    assert a["id"] == "a"
+    assert a["version"] == "cl-waitlist-v1-a"
+    assert a["button"] == "Join the waitlist"
+    assert a["line"] == CONSENT_PAIRS["a"]["line"]
+    assert a["text"] == a["line"] + "\nButton: " + a["button"]
+    assert a["sha256"] == consent_text_sha256()
+
+    monkeypatch.setattr(settings, "WAITLIST_CONSENT_PAIR", "b")
+    b = active_consent()
+    assert b["id"] == "b"
+    assert b["version"] == "cl-waitlist-v1-b"
+    assert b["button"] == "Send me the Halftime Sheet"
+    assert b["line"].startswith("By clicking Send me the Halftime Sheet, you join the CoachLenz waitlist")
+    assert b["text"] == b["line"] + "\nButton: Send me the Halftime Sheet"
+    assert "Join the waitlist" not in b["text"]
+
+    monkeypatch.setattr(settings, "WAITLIST_CONSENT_PAIR", "nope")
+    assert active_consent()["id"] == "a"
+
+
+@pytest.mark.unit
+def test_lead_stores_the_active_pair_version(monkeypatch):
+    monkeypatch.setattr(settings, "WAITLIST_CONSENT_PAIR", "b")
+    db = _LeadDB()
+    out = _lead(_waitlist(), db)
+    assert out["ok"] is True
+    assert db.added[0].consent_text_version == "cl-waitlist-v1-b"
+
+
+@pytest.mark.unit
 def test_public_signup_status_reports_the_flag(monkeypatch):
     async def _off(_db, key):
         assert key == "signups_enabled"
@@ -226,6 +261,10 @@ def test_public_signup_status_reports_the_flag(monkeypatch):
     out = asyncio.run(auth_router.signup_status(db=None))
     assert out["signups_enabled"] is False
     assert out["player_role_enabled"] is False
+    assert out["consent_pair"] == "a"
+    assert out["consent_version"] == "cl-waitlist-v1-a"
+    assert out["consent_button"] == "Join the waitlist"
+    assert out["consent_line"].startswith("By joining, you agree")
 
 
 def _lead(coro_body, db):
@@ -282,7 +321,7 @@ def test_waitlist_all_fields():
     assert row.sport == "basketball"
     assert row.role == "principal_admin"
     assert row.role_branch == "admin"
-    assert row.consent_text_version == "cl-waitlist-v1"
+    assert row.consent_text_version == "cl-waitlist-v1-a"
     assert row.utm_content == "hero" and row.utm_term == "film"
     assert row.ref_code == "COACH1"
     assert row.source == "coachlenz-app-waitlist"
@@ -312,7 +351,7 @@ def test_waitlist_repeat_fills_blanks_and_does_not_touch_another_row():
     assert existing.role == "head_coach" and existing.role_branch == "coach"
     assert existing.source == "landing"
     assert existing.created_at == "keep"
-    assert existing.consent_text_version == "cl-waitlist-v1"
+    assert existing.consent_text_version == "cl-waitlist-v1-a"
     assert other.first_name == "Pat" and other.school == "Other HS"
 
 

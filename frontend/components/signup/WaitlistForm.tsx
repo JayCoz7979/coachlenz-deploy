@@ -25,10 +25,24 @@ const ROLES: { value: string; label: string }[] = [
   { value: 'other', label: 'Other' },
 ]
 
-// Same sentence and version as backend.services.waitlist_capture.CONSENT_TEXT.
-export const CONSENT_TEXT = "By joining, you agree that CoachLenz can email you about the waitlist, free coaching resources, launch news, and pricing when we open. You can unsubscribe anytime with one click. See our Privacy Policy."
+// Pair A, the default. GET /auth/signups can replace both strings together.
+export const CONSENT_LINE_A = "By joining, you agree that CoachLenz can email you about the waitlist, free coaching resources, launch news, and pricing when we open. You can unsubscribe anytime with one click. See our Privacy Policy."
+export const CONSENT_BUTTON_A = "Join the waitlist"
 export const WAITLIST_SUCCESS = "You're on the list."
 const MINOR_MESSAGE = "Thanks. CoachLenz is built for coaches and schools. Ask your coach to join the list."
+
+function ConsentLine({ line }: { line: string }) {
+  const mark = 'Privacy Policy'
+  const at = line.lastIndexOf(mark)
+  if (at < 0) return <>{line}</>
+  return (
+    <>
+      {line.slice(0, at)}
+      <a href="https://app.coachlenz.com/privacy" className="text-brand-400 underline">{mark}</a>
+      {line.slice(at + mark.length)}
+    </>
+  )
+}
 
 function problem(firstName: string, email: string, role: string, adult: '' | 'yes' | 'no', playerOn: boolean): string {
   if (!firstName.trim()) return 'First name is required.'
@@ -55,6 +69,8 @@ export default function WaitlistForm({ source, id = 'waitlist' }: { source: stri
   const [role, setRole] = useState('')
   const [adult, setAdult] = useState<'' | 'yes' | 'no'>('')
   const [playerOn, setPlayerOn] = useState(false)
+  const [buttonLabel, setButtonLabel] = useState(CONSENT_BUTTON_A)
+  const [consentLine, setConsentLine] = useState(CONSENT_LINE_A)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [sent, setSent] = useState(false)
@@ -62,7 +78,15 @@ export default function WaitlistForm({ source, id = 'waitlist' }: { source: stri
 
   useEffect(() => {
     publicApi.get('/auth/signups', { timeout: 8000 })
-      .then((r) => setPlayerOn(r.data?.player_role_enabled === true))
+      .then((r) => {
+        setPlayerOn(r.data?.player_role_enabled === true)
+        if (typeof r.data?.consent_button === 'string' && r.data.consent_button.trim()) {
+          setButtonLabel(r.data.consent_button)
+        }
+        if (typeof r.data?.consent_line === 'string' && r.data.consent_line.trim()) {
+          setConsentLine(r.data.consent_line)
+        }
+      })
       .catch(() => setPlayerOn(false))
   }, [])
 
@@ -140,10 +164,9 @@ export default function WaitlistForm({ source, id = 'waitlist' }: { source: stri
         </select>
       </div>
       <p className="text-base text-gray-100">
-        By joining, you agree that CoachLenz can email you about the waitlist, free coaching resources, launch news, and pricing when we open. You can unsubscribe anytime with one click. See our{' '}
-        <a href="https://app.coachlenz.com/privacy" className="text-brand-400 underline">Privacy Policy</a>.
+        <ConsentLine line={consentLine} />
       </p>
-      <button type="submit" disabled={loading} className="btn-primary w-full">{loading ? 'Joining...' : 'Join the waitlist'}</button>
+      <button type="submit" disabled={loading} className="btn-primary w-full">{loading ? 'Sending...' : buttonLabel}</button>
     </form>
   )
 }

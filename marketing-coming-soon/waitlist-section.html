@@ -35,7 +35,7 @@
           <option value="other">Other</option>
         </select>
       </label>
-      <p style="font-size:16px;color:#f8f6f0;line-height:1.5;">By joining, you agree that CoachLenz can email you about the waitlist, free coaching resources, launch news, and pricing when we open. You can unsubscribe anytime with one click. See our <a href="https://app.coachlenz.com/privacy" style="color:#2d8c40;">Privacy Policy</a>.</p>
+      <p id="cl-consent" style="font-size:16px;color:#f8f6f0;line-height:1.5;">By joining, you agree that CoachLenz can email you about the waitlist, free coaching resources, launch news, and pricing when we open. You can unsubscribe anytime with one click. See our <a href="https://app.coachlenz.com/privacy" style="color:#2d8c40;">Privacy Policy</a>.</p>
       <button type="submit" style="height:48px;background:#C9A84C;color:#1c1c1c;border:0;font-weight:700;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;">Join the waitlist</button>
     </form>
   </div>
@@ -46,6 +46,7 @@
   if (!form) return;
   var errorBox = document.getElementById("cl-waitlist-error");
   var ENDPOINT = "https://coachlenz-backend-production.up.railway.app/leads";
+  var STATUS = "https://coachlenz-backend-production.up.railway.app/auth/signups";
   var STORE = "cl_wl_attr";
   function clip(v) { return String(v || "").trim().slice(0, 120); }
   try {
@@ -66,6 +67,25 @@
       }));
     }
   } catch (e) {}
+  function paintConsent(line) {
+    var node = document.getElementById("cl-consent");
+    if (!node || !line) return;
+    var mark = "Privacy Policy";
+    var at = line.lastIndexOf(mark);
+    node.textContent = "";
+    if (at < 0) { node.textContent = line; return; }
+    node.appendChild(document.createTextNode(line.slice(0, at)));
+    var link = document.createElement("a");
+    link.href = "https://app.coachlenz.com/privacy";
+    link.style.color = "#2d8c40";
+    link.textContent = mark;
+    node.appendChild(link);
+    node.appendChild(document.createTextNode(line.slice(at + mark.length)));
+  }
+  fetch(STATUS).then(function (res) { return res.json(); }).then(function (data) {
+    if (data && data.consent_button) form.querySelector("button").textContent = data.consent_button;
+    if (data && data.consent_line) paintConsent(data.consent_line);
+  }).catch(function () {});
   function show(message) { errorBox.hidden = false; errorBox.textContent = message; }
   form.addEventListener("submit", function (event) {
     event.preventDefault();

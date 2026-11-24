@@ -247,6 +247,10 @@ class Settings(BaseSettings):
     # Player. When true, a player must say they are 18 or older or nothing is stored.
     WAITLIST_PLAYER_ROLE_ENABLED: bool = False
 
+    # Waitlist button and consent sentence, switched together. "a" or "b".
+    # Anything else falls back to pair A. See waitlist_capture.CONSENT_PAIRS.
+    WAITLIST_CONSENT_PAIR: str = "a"
+
     class Config:
         env_file = ".env"
         case_sensitive = False

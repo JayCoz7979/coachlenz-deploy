@@ -8,13 +8,30 @@ from datetime import datetime
 
 from sqlalchemy import func, select
 
-# The sentence above the Join button. Version cl-waitlist-v1. There is no checkbox.
-CONSENT_TEXT = (
+# Button label and the sentence above it are one pair. Jason picks A or B later.
+# consent_text stores the sentence and the button label. Each pair has its own version.
+_LINE_A = (
     "By joining, you agree that CoachLenz can email you about the waitlist, "
     "free coaching resources, launch news, and pricing when we open. "
     "You can unsubscribe anytime with one click. See our Privacy Policy."
 )
-CONSENT_TEXT_VERSION = "cl-waitlist-v1"
+_LINE_B = (
+    "By clicking Send me the Halftime Sheet, you join the CoachLenz waitlist and agree "
+    "that CoachLenz can email you about the waitlist, free coaching resources, launch news, "
+    "and pricing when we open. You can unsubscribe anytime with one click. See our Privacy Policy."
+)
+CONSENT_PAIRS = {
+    "a": {
+        "version": "cl-waitlist-v1-a",
+        "button": "Join the waitlist",
+        "line": _LINE_A,
+    },
+    "b": {
+        "version": "cl-waitlist-v1-b",
+        "button": "Send me the Halftime Sheet",
+        "line": _LINE_B,
+    },
+}
 
 # Exact stored values. Labels are for the select only.
 WAITLIST_ROLES = (
@@ -89,8 +106,36 @@ def role_branch_for(role: str | None) -> str | None:
     return None
 
 
+def active_pair_id() -> str:
+    from backend.config import settings
+    raw = (getattr(settings, "WAITLIST_CONSENT_PAIR", None) or "a").strip().lower()
+    return raw if raw in CONSENT_PAIRS else "a"
+
+
+def active_consent() -> dict:
+    """The pair in force right now. text is the sentence plus the button label."""
+    pair = CONSENT_PAIRS[active_pair_id()]
+    text = pair["line"] + "\nButton: " + pair["button"]
+    return {
+        "id": active_pair_id(),
+        "version": pair["version"],
+        "button": pair["button"],
+        "line": pair["line"],
+        "text": text,
+        "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+    }
+
+
+def consent_text() -> str:
+    return active_consent()["text"]
+
+
+def consent_version() -> str:
+    return active_consent()["version"]
+
+
 def consent_text_sha256() -> str:
-    return hashlib.sha256(CONSENT_TEXT.encode("utf-8")).hexdigest()
+    return active_consent()["sha256"]
 
 
 def nurture_eligible(row) -> bool:
@@ -123,7 +168,7 @@ def apply_repeat(row, body, source: str) -> None:
         row.is_adult = True
     # Joining is the consent. Never clear a version already stored.
     if not getattr(row, "consent_text_version", None) and body.role:
-        row.consent_text_version = CONSENT_TEXT_VERSION
+        row.consent_text_version = consent_version()
 
 
 def new_lead_kwargs(email: str, source: str, body) -> dict:
@@ -149,7 +194,7 @@ def new_lead_kwargs(email: str, source: str, body) -> dict:
         "ref_code": body.ref_code,
         "has_account": False,
         "unsubscribe_token": secrets.token_urlsafe(32),
-        "consent_text_version": CONSENT_TEXT_VERSION if role else None,
+        "consent_text_version": consent_version() if role else None,
     }
     return values
 

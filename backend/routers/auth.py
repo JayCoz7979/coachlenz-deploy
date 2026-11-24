@@ -4,6 +4,7 @@ from sqlalchemy import select, update, func
 from pydantic import BaseModel, EmailStr
 from datetime import datetime, timedelta
 from backend.config import settings
+from backend.services.waitlist_capture import active_consent
 from backend.models.base import get_db
 from backend.models.user import User
 from backend.models.organization import Organization
@@ -75,9 +76,14 @@ async def signup_status(db: AsyncSession = Depends(get_db)):
     """Public read of the new-account switch. False when SIGNUPS_ENABLED is unset
     or false and no admin has turned the flag on. The homepage and /onboarding
     use this to show the waitlist. It does not affect login."""
+    pair = active_consent()
     return {
         "signups_enabled": bool(await feature_flags.is_enabled(db, "signups_enabled")),
         "player_role_enabled": bool(settings.WAITLIST_PLAYER_ROLE_ENABLED),
+        "consent_pair": pair["id"],
+        "consent_version": pair["version"],
+        "consent_button": pair["button"],
+        "consent_line": pair["line"],
     }
 
 
