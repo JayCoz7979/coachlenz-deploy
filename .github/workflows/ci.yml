@@ -58,8 +58,25 @@ jobs:
     name: integration tests (in-process ASGI + SQLite)
     runs-on: ubuntu-latest
     needs: unit-tests
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: coachlenz_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d coachlenz_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
       DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/coachlenz_test
+      # The asyncpg complete-race tests use this URL. CI=true (set by Actions)
+      # makes a connection failure fail the job instead of skipping.
+      UPLOAD_TEST_DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/coachlenz_test
       SECRET_KEY: test-secret-key
       ANTHROPIC_API_KEY: test-anthropic-key
       PYTHONIOENCODING: utf-8

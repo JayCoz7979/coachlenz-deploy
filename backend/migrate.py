@@ -32,7 +32,11 @@ async def run():
         )
 
         applied = {r["filename"] for r in await conn.fetch("SELECT filename FROM schema_migrations")}
-        files = sorted(MIGRATIONS_DIR.glob("*.sql"))
+        # *.down.sql is the reverse of a migration, for a human to run by hand
+        # on rollback. The runner must never apply it on the way up.
+        files = sorted(
+            p for p in MIGRATIONS_DIR.glob("*.sql") if not p.name.endswith(".down.sql")
+        )
 
         # First-run baseline: if nothing tracked yet but the DB is already
         # provisioned, mark pre-existing migrations as applied without running.

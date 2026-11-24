@@ -42,7 +42,9 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # domain); the Railway URL and the marketing site stay valid too. Deduped,
 # falsy-filtered so a missing settings.APP_URL never injects a bad origin.
 from backend.cors_config import build_allowed_origins
-_ALLOWED_ORIGINS = build_allowed_origins(settings.APP_URL, settings.ENVIRONMENT)
+_ALLOWED_ORIGINS = build_allowed_origins(
+    settings.APP_URL, settings.ENVIRONMENT, settings.CORS_EXTRA_ORIGINS,
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -50,6 +52,9 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Chunk uploads read the part ETag when a browser talks to this API directly
+    # (local storage). R2 uploads need the same header exposed on the bucket.
+    expose_headers=["ETag"],
 )
 
 
