@@ -4,3 +4,6 @@
 UPDATE marketing_leads
     SET role_branch = 'player_hold'
     WHERE role_branch = 'minor_track';
+
+-- Let the migrator re-apply 059 on the next deploy.
+DELETE FROM schema_migrations WHERE filename = '059_role_branch_minor_track.sql';
