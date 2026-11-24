@@ -268,6 +268,14 @@ class Settings(BaseSettings):
     # Explicit CoachLenz mailbox. Do not fall through to RESEND_DOMAIN.
     WAITLIST_FROM_EMAIL: str = "Jay Cosby <support@coachlenz.com>"
     WAITLIST_REPLY_TO: str = "support@coachlenz.com"
+    # Resend contact sync for the waitlist. Read only by the live gateway, and only
+    # while WAITLIST_EMAIL_ENABLED is on. Empty values keep every live Resend call
+    # refused (nothing is sent), so email cannot go out half configured.
+    # WAITLIST_RESEND_SEGMENT_IDS is a JSON object: {"<segment name>": "<segment id>"}.
+    WAITLIST_RESEND_TOPIC_ID: str = ""
+    WAITLIST_RESEND_SEGMENT_IDS: str = ""
+    # Hosted Halftime Sheet PDF. Empty means <PUBLIC_APP_URL>/waitlist/halftime-sheet.pdf.
+    WAITLIST_HALFTIME_SHEET_URL: str = ""
 
     class Config:
         env_file = ".env"

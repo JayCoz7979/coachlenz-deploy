@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.base import get_db
 from backend.models.funnel import MarketingLead
-from backend.services.waitlist_email import confirm_token, token_hash
+from backend.services.waitlist_email import confirm_token, halftime_sheet_url, token_hash
 
 router = APIRouter(tags=["waitlist"])
 
@@ -30,5 +30,5 @@ async def confirm_waitlist(body: ConfirmIn, request: Request, db: AsyncSession =
     ok = status in ("confirmed", "already_confirmed")
     body = {"ok": ok, "status": status}
     if ok:
-        body["download_url"] = "https://app.coachlenz.com/waitlist/halftime-sheet.pdf"
+        body["download_url"] = halftime_sheet_url()
     return body

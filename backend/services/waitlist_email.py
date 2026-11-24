@@ -5,6 +5,7 @@ before any gateway method, so Resend is not called. The From address is
 WAITLIST_FROM_EMAIL and has no built-in mailbox.
 """
 import hashlib
+import json
 import logging
 import os
 import secrets
@@ -28,6 +29,8 @@ L2_SEGMENT = "CL Launch: L2 no account"
 FORBIDDEN_SEGMENT = "General"
 HOLDING_SEGMENTS = (HOLDING_COACHES, HOLDING_COACHES_FOOTBALL, HOLDING_ADMIN)
 L1_SEGMENTS = HOLDING_SEGMENTS + (LAUNCH_GENERAL,)
+# Every segment the code can write to. Each needs an id in WAITLIST_RESEND_SEGMENT_IDS.
+ALL_SEGMENTS = (ALL_CONFIRMED,) + L1_SEGMENTS + (MINOR_SEGMENT, L2_SEGMENT)
 # Older name kept so a delayed check still recognizes it.
 NURTURE_SEGMENTS = HOLDING_SEGMENTS
 logger = logging.getLogger(__name__)
@@ -48,11 +51,86 @@ MAGNET_NAME = "Halftime Sheet"
 _gateway = None
 
 
+RESEND_API_BASE = "https://api.resend.com"
+CONFIRMED_EVENT = "coachlenz.waitlist.confirmed"
+
+
+def _segment_ids() -> dict:
+    raw = (getattr(settings, "WAITLIST_RESEND_SEGMENT_IDS", "") or "").strip()
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(k): str(v).strip() for k, v in data.items() if str(v or "").strip()}
+
+
+def resend_config_missing() -> list[str]:
+    """Names of the settings the live gateway still needs. Never returns values."""
+    missing = []
+    if not (settings.RESEND_API_KEY or "").strip():
+        missing.append("RESEND_API_KEY")
+    if not (getattr(settings, "WAITLIST_RESEND_TOPIC_ID", "") or "").strip():
+        missing.append("WAITLIST_RESEND_TOPIC_ID")
+    ids = _segment_ids()
+    absent = [name for name in ALL_SEGMENTS if name not in ids]
+    if absent:
+        missing.append("WAITLIST_RESEND_SEGMENT_IDS (" + ", ".join(absent) + ")")
+    return missing
+
+
+def _property_value(value):
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, (int, float)):
+        return value
+    return str(value)
+
+
 class ResendGateway:
-    """Live gateway. Not used in tests. Refuses to run unless the flag and From are set."""
+    """Live gateway. Not used in tests except with a mocked transport.
+
+    Every method is a no-op while WAITLIST_EMAIL_ENABLED is off. When it is on,
+    every method, including send, refuses until resend_config_missing() is
+    empty, so a half-configured build sends nothing at all.
+    """
+
+    def __init__(self, transport=None):
+        self._transport = transport
+
+    def _ready(self) -> bool:
+        if not emails_enabled():
+            return False
+        missing = resend_config_missing()
+        if missing:
+            raise RuntimeError("Resend is not configured for the waitlist. Missing: " + "; ".join(missing))
+        return True
+
+    def _call(self, method: str, path: str, body: dict | None = None) -> dict:
+        import httpx
+        headers = {"Authorization": f"Bearer {settings.RESEND_API_KEY}"}
+        with httpx.Client(base_url=RESEND_API_BASE, timeout=10.0, transport=self._transport) as client:
+            res = client.request(method, path, json=body, headers=headers)
+        if res.status_code >= 400:
+            # Status and path only. The body can echo the address.
+            raise RuntimeError(f"Resend {method} {path.split('/')[1]} failed with HTTP {res.status_code}")
+        try:
+            return res.json() or {}
+        except ValueError:
+            return {}
+
+    @staticmethod
+    def _contact_path(email: str) -> str:
+        from urllib.parse import quote
+        return "/contacts/" + quote((email or "").strip().lower(), safe="@")
 
     def send(self, payload: dict) -> dict:
-        if not emails_enabled():
+        if not self._ready():
             return {}
         refuse_if_placeholder(payload.get("text") or "")
         scrubbed = scrub_resend_payload(payload)
@@ -61,40 +139,65 @@ class ResendGateway:
         return resend.Emails.send(scrubbed) or {}
 
     def upsert_contact(self, email: str, properties: dict) -> None:
-        if not emails_enabled():
+        if not self._ready():
             return
-        # Contact upsert is intentionally not called from tests. A live call
-        # belongs here only after Jason creates the audience by hand.
-        raise RuntimeError("Live Resend contact upsert is not wired in this build.")
+        props = {k: _property_value(v) for k, v in scrub_resend_payload(properties or {}).items() if v is not None}
+        topic = settings.WAITLIST_RESEND_TOPIC_ID.strip()
+        try:
+            self._call("POST", "/contacts", {
+                "email": (email or "").strip().lower(),
+                "properties": props,
+                "topics": [{"id": topic, "subscription": "opt_in"}],
+            })
+        except RuntimeError as exc:
+            if "HTTP 409" not in str(exc) and "HTTP 422" not in str(exc):
+                raise
+            # Already a contact: update the properties and opt back in to the topic.
+            self._call("PATCH", self._contact_path(email), {"properties": props})
+            self.subscribe_topic(email)
 
     def subscribe_topic(self, email: str) -> None:
-        if not emails_enabled():
+        if not self._ready():
             return
-        raise RuntimeError("Live Resend topic subscribe is not wired in this build.")
+        self._call("PATCH", self._contact_path(email) + "/topics", {
+            "topics": [{"id": settings.WAITLIST_RESEND_TOPIC_ID.strip(), "subscription": "opt_in"}],
+        })
 
-    def add_to_segment(self, email: str, segment: str) -> None:
-        if not emails_enabled():
-            return
+    def _segment_path(self, email: str, segment: str) -> str:
         if segment == FORBIDDEN_SEGMENT:
             raise RuntimeError('Refusing the Resend segment named "General".')
-        raise RuntimeError("Live Resend segment add is not wired in this build.")
+        seg_id = _segment_ids().get(segment)
+        if not seg_id:
+            raise RuntimeError(f"No Resend segment id configured for {segment}.")
+        return self._contact_path(email) + "/segments/" + seg_id
+
+    def add_to_segment(self, email: str, segment: str) -> None:
+        if not self._ready():
+            return
+        self._call("POST", self._segment_path(email, segment))
 
     def remove_from_segment(self, email: str, segment: str) -> None:
-        if not emails_enabled():
+        if not self._ready():
             return
-        raise RuntimeError("Live Resend segment remove is not wired in this build.")
+        self._call("DELETE", self._segment_path(email, segment))
 
     def send_event(self, name: str, email: str, properties: dict) -> None:
-        if not emails_enabled():
+        if not self._ready():
             return
-        raise RuntimeError("Live Resend event send is not wired in this build.")
+        self._call("POST", "/events/send", {
+            "event": name,
+            "email": (email or "").strip().lower(),
+            "payload": {k: _property_value(v) for k, v in scrub_resend_payload(properties or {}).items() if v is not None},
+        })
 
     def unsubscribe_contact(self, email: str, only_list: str) -> None:
-        if not emails_enabled():
+        if not self._ready():
             return
         if only_list != COACHLENZ_TOPIC:
             raise RuntimeError("Refusing to touch a list that is not CoachLenz updates.")
-        raise RuntimeError("Live Resend unsubscribe is not wired in this build.")
+        self._call("PATCH", self._contact_path(email) + "/topics", {
+            "topics": [{"id": settings.WAITLIST_RESEND_TOPIC_ID.strip(), "subscription": "opt_out"}],
+        })
 
 
 def gateway():
@@ -175,11 +278,11 @@ def drop_delayed(lead, kind: str) -> bool:
     return branch == "minor_track" or is_minor_track(lead)
 
 
-def l1m_text() -> str:
+def l1m_text(token: str | None = None, broadcast: bool = False) -> str:
     return (
         "CoachLenz is opening for school basketball and football game film. "
         "This is a launch notice only.\n\n"
-        + standard_footer()
+        + standard_footer(token, broadcast)
     )
 
 
@@ -219,8 +322,10 @@ def _event(lead, event_type: str, meta: dict, **extra) -> MarketingConsentEvent:
     pair = active_consent()
     ip = (meta.get("ip") or "").strip()
     ua = _clip_ua(meta.get("ua"))
-    if event_type in ("signup", "doi_confirmed") and (not ip or not ua):
-        raise ValueError("signup and confirm consent rows require ip_address and user_agent")
+    # IP is required evidence. An empty User-Agent is stored as null so the
+    # consent row is still written (some clients send no User-Agent).
+    if event_type in ("signup", "doi_confirmed") and not ip:
+        raise ValueError("signup and confirm consent rows require ip_address")
     return MarketingConsentEvent(
         lead_id=getattr(lead, "id", None),
         event_type=event_type,
@@ -244,11 +349,32 @@ def _event(lead, event_type: str, meta: dict, **extra) -> MarketingConsentEvent:
     )
 
 
-def standard_footer() -> str:
+def unsubscribe_url(token: str) -> str:
+    """The page a person opens to unsubscribe. It posts the token to /auth/unsubscribe."""
+    return f"{public_app_base()}/unsubscribe?token={token}"
+
+
+def one_click_unsubscribe_url(token: str) -> str:
+    """RFC 8058 target. The frontend route accepts the mail provider's POST."""
+    return f"{public_app_base()}/unsubscribe/one-click?token={token}"
+
+
+def _unsubscribe_line(token: str | None, broadcast: bool = False) -> str:
+    if token:
+        return f"Unsubscribe from CoachLenz emails with one click: {unsubscribe_url(token)}\n"
+    if broadcast:
+        # A Resend broadcast fills in this merge tag per contact.
+        return "Unsubscribe from CoachLenz emails with one click: {{{RESEND_UNSUBSCRIBE_URL}}}\n"
+    reply = _reply_to() or DEFAULT_WAITLIST_REPLY_TO
+    return f"Unsubscribe from CoachLenz emails: reply to this email or write to {reply} with the word unsubscribe.\n"
+
+
+def standard_footer(token: str | None = None, broadcast: bool = False) -> str:
     return (
         "You're getting this because you joined the CoachLenz waitlist at coachlenz.com.\n"
         f"CoachLenz is a product of {WAITLIST_ENTITY}, {WAITLIST_POSTAL_ADDRESS}.\n"
-        "Unsubscribe from CoachLenz emails with one click. It's free, and you don't need to sign in.\n"
+        + _unsubscribe_line(token, broadcast)
+        + "It's free, and you don't need to sign in.\n"
         f"Privacy Policy: {PRIVACY_URL} | Questions? Reply to this email or write to privacy@coachlenz.com."
     )
 
@@ -284,20 +410,30 @@ def c1_subject() -> str:
     return f"Your free {MAGNET_NAME}"
 
 
-def c1_text() -> str:
-    return f"Your free {MAGNET_NAME} is ready.\n\n" + standard_footer()
+def halftime_sheet_url() -> str:
+    """Hosted PDF. Default keeps the URL the confirm page already returns."""
+    raw = (getattr(settings, "WAITLIST_HALFTIME_SHEET_URL", "") or "").strip()
+    return raw or f"{public_app_base()}/waitlist/halftime-sheet.pdf"
+
+
+def c1_text(token: str | None = None) -> str:
+    return (
+        f"Your free {MAGNET_NAME} is ready.\n"
+        f"Download it here: {halftime_sheet_url()}\n\n"
+        + standard_footer(token)
+    )
 
 
 def reminder_text() -> str:
     return "Your confirm link is still open.\n\n" + confirmation_footer()
 
 
-def nurture_text() -> str:
-    return "A coaching note.\n\n" + standard_footer()
+def nurture_text(token: str | None = None, broadcast: bool = False) -> str:
+    return "A coaching note.\n\n" + standard_footer(token, broadcast)
 
 
-def launch_text() -> str:
-    return "CoachLenz is opening.\n\n" + standard_footer()
+def launch_text(token: str | None = None, broadcast: bool = False) -> str:
+    return "CoachLenz is opening.\n\n" + standard_footer(token, broadcast)
 
 
 def rendered_waitlist_emails(token: str = "sample-token") -> list[str]:
@@ -306,20 +442,24 @@ def rendered_waitlist_emails(token: str = "sample-token") -> list[str]:
         "Confirm your CoachLenz waitlist spot",
         c0_text(token),
         c1_subject(),
-        c1_text(),
+        c1_text(token),
         "Still want on the CoachLenz waitlist?",
         reminder_text(),
         "A coaching note from CoachLenz",
-        nurture_text(),
+        nurture_text(token),
         "CoachLenz is opening",
-        launch_text(),
-        l1m_text(),
-        confirm_url(f"unsubscribe={token}"),
+        launch_text(token),
+        l1m_text(token),
+        unsubscribe_url(token),
     ]
 
 
+def _lead_token(lead) -> str:
+    return getattr(lead, "unsubscribe_token", "") or ""
+
+
 def _headers(token: str) -> dict:
-    link = confirm_url(f"unsubscribe={token}")
+    link = one_click_unsubscribe_url(token)
     reply = (settings.WAITLIST_REPLY_TO or "").strip()
     mailto = f"<mailto:{reply}?subject=unsubscribe>" if reply else ""
     value = f"<{link}>" + (f", {mailto}" if mailto else "")
@@ -419,10 +559,18 @@ async def after_stored(db, lead, meta: dict | None = None) -> str:
         "to": lead.email,
         "subject": "Confirm your CoachLenz waitlist spot",
         "text": c0_text(token),
-        "headers": _headers(getattr(lead, "unsubscribe_token", "") or ""),
+        "headers": _headers(_lead_token(lead)),
         "kind": "C0",
     }
-    result = gateway().send(payload) or {}
+    try:
+        result = gateway().send(payload) or {}
+    except Exception:
+        # The lead and its consent row are still saved. Undo the token so a
+        # later submit can send C0 again once the gateway works.
+        logger.exception("waitlist C0 send failed for lead %s", getattr(lead, "id", None))
+        lead.confirm_token_hash = None
+        lead.confirm_sent_at = None
+        return "c0_failed"
     if event is not None:
         event.doi_sent_at = now
         event.resend_message_id = result.get("id")
@@ -438,8 +586,8 @@ def _send_c1(lead, now) -> None:
         "reply_to": _reply_to(),
         "to": lead.email,
         "subject": c1_subject(),
-        "text": c1_text(),
-        "headers": _headers(getattr(lead, "unsubscribe_token", "") or ""),
+        "text": c1_text(_lead_token(lead)),
+        "headers": _headers(_lead_token(lead)),
         "kind": TEMPLATE_C1,
         "template_key": TEMPLATE_C1,
     })
@@ -465,15 +613,21 @@ async def confirm_token(db, lead, meta: dict | None = None) -> str:
         lead, "doi_confirmed", meta,
         doi_sent_at=sent, doi_confirmed_at=now,
     ))
-    gw = gateway()
-    gw.upsert_contact(lead.email, contact_properties(lead))
-    # Record only. This segment is never a broadcast audience.
-    gw.add_to_segment(lead.email, ALL_CONFIRMED)
-    gw.add_to_segment(lead.email, destination_segment(lead))
-    gw.send_event("coachlenz.waitlist.confirmed", lead.email, confirmed_event_properties(lead))
-    branch = canonical_role_branch(getattr(lead, "role_branch", None))
-    if branch in ("general", "minor_track"):
-        _send_c1(lead, now)
+    try:
+        gw = gateway()
+        gw.upsert_contact(lead.email, contact_properties(lead))
+        # Record only. This segment is never a broadcast audience.
+        gw.add_to_segment(lead.email, ALL_CONFIRMED)
+        gw.add_to_segment(lead.email, destination_segment(lead))
+        gw.send_event(CONFIRMED_EVENT, lead.email, confirmed_event_properties(lead))
+        branch = canonical_role_branch(getattr(lead, "role_branch", None))
+        if branch in ("general", "minor_track"):
+            _send_c1(lead, now)
+    except Exception:
+        # The confirm and its consent row still commit. There is no automatic
+        # replay yet: leads with confirmed_at set and a1_sent_at empty need a
+        # manual re-sync once Resend works.
+        logger.exception("waitlist Resend sync after confirm failed for lead %s", getattr(lead, "id", None))
     return "confirmed"
 
 
@@ -493,8 +647,8 @@ async def send_launch_notice(db, lead, now: datetime | None = None) -> str:
         "reply_to": _reply_to(),
         "to": lead.email,
         "subject": "CoachLenz is opening",
-        "text": l1m_text(),
-        "headers": _headers(getattr(lead, "unsubscribe_token", "") or ""),
+        "text": l1m_text(_lead_token(lead)),
+        "headers": _headers(_lead_token(lead)),
         "kind": TEMPLATE_L1M,
         "template_key": TEMPLATE_L1M,
         "segment": MINOR_SEGMENT,
@@ -517,12 +671,15 @@ async def send_nurture_step(db, lead, step: str = "n1") -> str:
         return "email_off"
     if drop_delayed(lead, "nurture"):
         return "exited"
+    if getattr(lead, "unsubscribed_at", None):
+        return "unsubscribed"
     gateway().send({
         "from": _from_address(),
         "reply_to": _reply_to(),
         "to": lead.email,
         "subject": "A coaching note from CoachLenz",
-        "text": nurture_text(),
+        "text": nurture_text(_lead_token(lead)),
+        "headers": _headers(_lead_token(lead)),
         "kind": "nurture",
         "step": step,
     })
@@ -538,7 +695,7 @@ def broadcast(kind: str, segment: str) -> str:
         "kind": kind,
         "segment": segment,
         "broadcast": True,
-        "text": l1m_text() if kind == "L1-M" else launch_text(),
+        "text": l1m_text(broadcast=True) if kind == "L1-M" else launch_text(broadcast=True),
     })
     return "sent"
 
@@ -607,12 +764,15 @@ async def send_general_launch(db, lead) -> str:
         return "email_off"
     if drop_delayed(lead, "launch"):
         return "exited"
+    if getattr(lead, "unsubscribed_at", None):
+        return "unsubscribed"
     gateway().send({
         "from": _from_address(),
         "reply_to": _reply_to(),
         "to": lead.email,
         "subject": "CoachLenz is opening",
-        "text": launch_text(),
+        "text": launch_text(_lead_token(lead)),
+        "headers": _headers(_lead_token(lead)),
         "kind": "general_launch",
         "segment": LAUNCH_GENERAL,
     })
@@ -678,7 +838,12 @@ async def unsubscribe_lead(db, lead, method: str = "unsubscribe_link") -> str:
     ))
     await redact_consent_network(db, lead.email)
     if emails_enabled():
-        gateway().unsubscribe_contact(lead.email, COACHLENZ_TOPIC)
+        try:
+            gateway().unsubscribe_contact(lead.email, COACHLENZ_TOPIC)
+        except Exception:
+            # The local unsubscribe and suppression row still commit and every
+            # per-lead send checks unsubscribed_at. Resend must be fixed by hand.
+            logger.exception("waitlist Resend unsubscribe failed for lead %s", getattr(lead, "id", None))
     return "unsubscribed"
 
 
