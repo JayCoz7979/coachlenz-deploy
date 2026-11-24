@@ -487,6 +487,65 @@ def test_duplicate_complete_that_loses_the_insert_race_returns_the_same_game(loc
 
 
 @pytest.mark.unit
+def test_local_complete_race_keeps_the_object_and_returns_the_game(local_disk, monkeypatch):
+    """Both completes listed the parts. The first assembled and removed them.
+    The second complete_upload then raises MultipartError. That used to be a 502.
+    The object is already the right size, so the second call returns the game."""
+    from backend.services.multipart_store import MultipartError
+
+    org, user, db = _org(), None, MemDB()
+    user = _user(org)
+    org.is_trial = False
+    started = asyncio.run(start_upload(db, user, org, _body(1000), part_size=1000))
+    session = film_upload.read_session(started["upload_token"], org)
+    store.write_part(session["key"], session["upid"], 1, b"q" * 1000)
+    first = asyncio.run(finish_upload(db, user, org, started["upload_token"], _body(1000)))
+
+    real_list = store.list_parts
+
+    def still_listed(*a, **k):
+        try:
+            return real_list(*a, **k)
+        except MultipartError:
+            return [{"part_number": 1, "etag": '"gone"', "size": 1000}]
+
+    monkeypatch.setattr(store, "list_parts", still_listed)
+    again = asyncio.run(finish_upload(db, user, org, started["upload_token"], _body(1000)))
+    assert again["id"] == first["id"]
+    assert r2.read_local_file(session["key"]) == b"q" * 1000
+
+
+@pytest.mark.unit
+def test_trial_loser_deletes_its_orphan_but_not_another_games_object(local_disk, monkeypatch):
+    org, user, db = _org(), None, MemDB()
+    user = _user(org)
+    started = asyncio.run(start_upload(db, user, org, _body(1000), part_size=1000))
+    session = film_upload.read_session(started["upload_token"], org)
+    store.write_part(session["key"], session["upid"], 1, b"q" * 1000)
+    first = asyncio.run(finish_upload(db, user, org, started["upload_token"], _body(1000)))
+    winner = _games(db)[0]
+    deleted = []
+    monkeypatch.setattr(store, "delete_object", lambda key: deleted.append(key))
+
+    async def deny(db_, org_):
+        return False
+
+    calls = {"n": 0}
+
+    async def miss_then_hit(db_, org_id, key):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return None
+        return winner
+
+    monkeypatch.setattr(film_upload, "reserve_trial_game_slot", deny)
+    monkeypatch.setattr(film_upload, "_existing_game", miss_then_hit)
+    again = asyncio.run(finish_upload(db, user, org, started["upload_token"], _body(1000)))
+    assert again["id"] == first["id"]
+    assert deleted == []
+
+
+@pytest.mark.unit
 def test_presign_rejects_over_20gb_before_touching_the_database():
     from backend.routers.upload import presign_upload, UploadRequest
     import inspect

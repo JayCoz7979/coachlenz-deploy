@@ -384,6 +384,11 @@ async def finish_upload(db, user, org, token: str, body) -> dict:
     touched, so the coach can resume. A second call after success returns the
     same game and does not reserve a second slot.
     """
+    # Rollback expires every ORM object in the session (expire_on_rollback).
+    # Reading org.id after that lazy-loads, and async sessions raise
+    # MissingGreenlet, which the API turns into a 500. Snapshot first.
+    org_id = org.id
+    trial_game = is_trial_active(org)
     session = read_session(token, org)
     key = session["key"]
     try:
@@ -409,6 +414,13 @@ async def finish_upload(db, user, org, token: str, body) -> dict:
             raise HTTPException(status_code=413, detail=MSG_TOO_BIG)
         try:
             size = store.complete_upload(key, session["upid"], parts)
+        except MultipartError:
+            # Local storage: the other complete already assembled this object
+            # and removed the part directory. The object is the upload.
+            size = store.object_size(key)
+            if size != session["size"]:
+                log.warning("multipart complete lost the local session")
+                raise HTTPException(status_code=502, detail=MSG_STORAGE)
         except HTTPException:
             raise
         except Exception as exc:
@@ -421,7 +433,7 @@ async def finish_upload(db, user, org, token: str, body) -> dict:
                 pass
             raise HTTPException(status_code=413, detail=MSG_TOO_BIG)
 
-    existing = await _existing_game(db, org.id, key)
+    existing = await _existing_game(db, org_id, key)
     if existing:
         return {"id": str(existing.id), "key": key, "status": existing.status}
 
@@ -435,15 +447,20 @@ async def finish_upload(db, user, org, token: str, body) -> dict:
     if not await reserve_trial_game_slot(db, org):
         # The other request may have committed this same upload between our
         # existence check and this reservation. Return that game. A different
-        # film that lost the trial race has no row here, so the slot stays put.
+        # film that lost the trial race has no row here, so its object is an
+        # orphan and is removed. Never delete an object a game row still names.
         await db.rollback()
-        raced = await _existing_game(db, org.id, key)
+        raced = await _existing_game(db, org_id, key)
         if raced:
             return {"id": str(raced.id), "key": key, "status": raced.status}
+        try:
+            store.delete_object(key)
+        except Exception as exc:
+            log.warning("could not delete orphaned upload: %s", type(exc).__name__)
         raise HTTPException(status_code=403, detail=MSG_TRIAL_AFTER)
 
     game = Game(
-        organization_id=org.id,
+        organization_id=org_id,
         team_id=getattr(body, "team_id", None) or None,
         title=title,
         sport=body.sport,
@@ -456,13 +473,13 @@ async def finish_upload(db, user, org, token: str, body) -> dict:
         file_size_bytes=session["size"],
         duration_seconds=_duration(getattr(body, "duration_seconds", None)),
         status="processing",
-        is_trial_game=is_trial_active(org),
+        is_trial_game=trial_game,
     )
     _apply_game_date(game, getattr(body, "game_date", None))
     db.add(game)
     await db.flush()
     db.add(Job(
-        organization_id=org.id,
+        organization_id=org_id,
         job_type="ingest",
         # No source_url: the ingest worker takes the uploaded-file branch and
         # presigns game.r2_key. A URL import sets source_url and is untouched.
@@ -474,7 +491,7 @@ async def finish_upload(db, user, org, token: str, body) -> dict:
         # Unique r2_key: the other worker inserted this object first. Its
         # transaction holds the trial slot. Ours rolls back, slot included.
         await db.rollback()
-        raced = await _existing_game(db, org.id, key)
+        raced = await _existing_game(db, org_id, key)
         if raced:
             return {"id": str(raced.id), "key": key, "status": raced.status}
         raise
