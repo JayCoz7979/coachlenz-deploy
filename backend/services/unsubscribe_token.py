@@ -14,8 +14,14 @@ the API can reject it without a lookup. Every token that has a valid shape gets
 the same answer whether or not it matches, so tokens can't be enumerated.
 """
 import re
+import secrets
 
 UNSUBSCRIBE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{32,64}$")
+
+
+def new_unsubscribe_token() -> str:
+    """43 characters of URL-safe base64. The one generator for new tokens."""
+    return secrets.token_urlsafe(32)
 
 
 def is_valid_unsubscribe_token(token) -> bool:

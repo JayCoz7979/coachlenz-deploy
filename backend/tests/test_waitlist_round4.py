@@ -192,6 +192,7 @@ def _body_sql(path):
 def test_061_only_fills_null_or_blank_tokens_and_records_them():
     sql = _body_sql(UP)
     assert "WHERE unsubscribe_token IS NULL OR btrim(unsubscribe_token) = ''" in sql
+    assert "row_number()" in sql and "WHERE n > 1" in sql
     assert "marketing_leads_token_backfill_061" in sql
     assert sql.find("INSERT INTO marketing_leads_token_backfill_061") < sql.find("UPDATE marketing_leads")
     assert "translate(" in sql and "'+/', '-_'" in sql and "'='" in sql
@@ -206,6 +207,9 @@ def test_061_down_undoes_only_unchanged_backfilled_rows_once():
     assert "to_regclass('public.marketing_leads_token_backfill_061') IS NULL" in sql
     assert "DELETE FROM schema_migrations WHERE filename = '061_marketing_lead_unsubscribe_token.sql';" in sql
     assert "WARNING" in DOWN.read_text(encoding="utf-8")
+    # The unique index has to go before blank or shared tokens are restored.
+    assert sql.find("DROP INDEX IF EXISTS marketing_leads_unsubscribe_token_key") < sql.find(
+        "SET unsubscribe_token = b.old_token")
 
 
 # ---------- migration 061 up and down on Postgres ----------
@@ -306,3 +310,165 @@ def test_061_backfills_and_its_down_restores_on_postgres():
         assert "applied 061_marketing_lead_unsubscribe_token.sql" in migrate()
     finally:
         asyncio.run(admin(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)'))
+
+
+def _postgres_ready():
+    import asyncpg
+
+    async def ping():
+        conn = await asyncpg.connect(_URL)
+        await conn.close()
+
+    try:
+        asyncio.run(ping())
+    except Exception as exc:
+        if os.environ.get("CI"):
+            pytest.fail(f"Postgres is required in CI ({type(exc).__name__})")
+        pytest.skip(f"Postgres is not reachable ({type(exc).__name__})")
+
+
+def _fresh_061_database():
+    """Apply every forward migration, then undo 061 so the test can seed rows."""
+    import asyncpg
+
+    async def admin(sql):
+        conn = await asyncpg.connect(_URL)
+        try:
+            await conn.execute(sql)
+        finally:
+            await conn.close()
+
+    _postgres_ready()
+    dbname = "mig061b_" + uuid.uuid4().hex[:10]
+    base, _, _ = _URL.rpartition("/")
+    url = f"{base}/{dbname}"
+    asyncio.run(admin(f'CREATE DATABASE "{dbname}"'))
+    asyncio.run(admin("DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'postgres') "
+                      "THEN CREATE ROLE postgres; END IF; END $$"))
+    env = dict(os.environ, DATABASE_URL=url)
+    out = subprocess.run([sys.executable, "-m", "backend.migrate"], cwd=MIG.parents[1], env=env,
+                         capture_output=True, text=True, timeout=300)
+    assert out.returncode == 0, out.stderr[-2000:]
+
+    async def undo():
+        conn = await asyncpg.connect(url)
+        try:
+            await conn.execute(DOWN.read_text(encoding="utf-8"))
+        finally:
+            await conn.close()
+
+    asyncio.run(undo())
+    return url, dbname
+
+
+def _drop_db(dbname):
+    import asyncpg
+
+    async def admin(sql):
+        conn = await asyncpg.connect(_URL)
+        try:
+            await conn.execute(sql)
+        finally:
+            await conn.close()
+
+    asyncio.run(admin(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)'))
+
+
+@pytest.mark.integration
+def test_061_down_restores_two_blank_tokens_then_up_again():
+    import asyncpg
+
+    url, dbname = _fresh_061_database()
+
+    async def scenario():
+        conn = await asyncpg.connect(url)
+        try:
+            ids = []
+            for i in range(3):
+                ids.append(await conn.fetchval(
+                    "INSERT INTO marketing_leads(email, unsubscribe_token) VALUES ($1, '') RETURNING id",
+                    f"qa+blank-{i}@coachlenz.com"))
+            await conn.execute(UP.read_text(encoding="utf-8"))
+            filled = [r["unsubscribe_token"] for r in await conn.fetch(
+                "SELECT unsubscribe_token FROM marketing_leads WHERE id = ANY($1::uuid[])", ids)]
+            assert len(set(filled)) == 3
+            for tok in filled:
+                assert is_valid_unsubscribe_token(tok) and len(tok) == 43
+            await conn.execute(DOWN.read_text(encoding="utf-8"))
+            restored = [r["unsubscribe_token"] for r in await conn.fetch(
+                "SELECT unsubscribe_token FROM marketing_leads WHERE id = ANY($1::uuid[])", ids)]
+            assert restored and set(restored) == {""}
+            await conn.execute(UP.read_text(encoding="utf-8"))
+            again = [r["unsubscribe_token"] for r in await conn.fetch(
+                "SELECT unsubscribe_token FROM marketing_leads WHERE id = ANY($1::uuid[])", ids)]
+            assert len(set(again)) == 3
+            for tok in again:
+                assert is_valid_unsubscribe_token(tok)
+            assert await conn.fetchval("SELECT to_regclass('public.marketing_leads_unsubscribe_token_key')")
+        finally:
+            await conn.close()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        _drop_db(dbname)
+
+
+@pytest.mark.integration
+def test_061_reissues_duplicate_tokens_and_down_restores_them():
+    import asyncpg
+    from datetime import datetime as dt
+
+    shared_a = "a" * 43
+    shared_b = "b" * 43
+    url, dbname = _fresh_061_database()
+
+    async def scenario():
+        conn = await asyncpg.connect(url)
+        try:
+            group_a = []
+            for i, when in enumerate((dt(2020, 1, 1), dt(2021, 1, 1), dt(2022, 1, 1))):
+                group_a.append(await conn.fetchval(
+                    "INSERT INTO marketing_leads(email, unsubscribe_token, created_at) "
+                    "VALUES ($1, $2, $3) RETURNING id",
+                    f"qa+dup-a-{i}@coachlenz.com", shared_a, when))
+            group_b = []
+            for i, when in enumerate((dt(2019, 6, 1), dt(2019, 7, 1))):
+                group_b.append(await conn.fetchval(
+                    "INSERT INTO marketing_leads(email, unsubscribe_token, created_at) "
+                    "VALUES ($1, $2, $3) RETURNING id",
+                    f"qa+dup-b-{i}@coachlenz.com", shared_b, when))
+            await conn.execute(UP.read_text(encoding="utf-8"))
+            rows = {r["id"]: r["unsubscribe_token"] for r in await conn.fetch(
+                "SELECT id, unsubscribe_token FROM marketing_leads")}
+            assert rows[group_a[0]] == shared_a
+            assert rows[group_b[0]] == shared_b
+            reissued = [rows[i] for i in group_a[1:] + group_b[1:]]
+            assert len(set(reissued)) == 3
+            for tok in reissued:
+                assert tok not in (shared_a, shared_b)
+                assert 32 <= len(tok) <= 64 and is_valid_unsubscribe_token(tok)
+            recorded = await conn.fetch("SELECT lead_id, old_token FROM marketing_leads_token_backfill_061")
+            by_id = {r["lead_id"]: r["old_token"] for r in recorded}
+            for lead_id in group_a[1:]:
+                assert by_id[lead_id] == shared_a
+            for lead_id in group_b[1:]:
+                assert by_id[lead_id] == shared_b
+            await conn.execute(DOWN.read_text(encoding="utf-8"))
+            restored = {r["id"]: r["unsubscribe_token"] for r in await conn.fetch(
+                "SELECT id, unsubscribe_token FROM marketing_leads")}
+            assert all(restored[i] == shared_a for i in group_a)
+            assert all(restored[i] == shared_b for i in group_b)
+            await conn.execute(UP.read_text(encoding="utf-8"))
+            final = {r["id"]: r["unsubscribe_token"] for r in await conn.fetch(
+                "SELECT id, unsubscribe_token FROM marketing_leads")}
+            assert final[group_a[0]] == shared_a and final[group_b[0]] == shared_b
+            assert len({final[i] for i in group_a + group_b}) == 5
+            assert await conn.fetchval("SELECT to_regclass('public.marketing_leads_unsubscribe_token_key')")
+        finally:
+            await conn.close()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        _drop_db(dbname)

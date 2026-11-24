@@ -8,6 +8,11 @@
 
 BEGIN;
 
+-- Drop the unique index before any restore. Two leads that 061 filled from a
+-- blank token both go back to '', and two reissued duplicates go back to the
+-- same shared token. Either restore hits the unique index if it is still there.
+DROP INDEX IF EXISTS marketing_leads_unsubscribe_token_key;
+
 DO $$
 BEGIN
     IF to_regclass('public.marketing_leads_token_backfill_061') IS NULL THEN
@@ -27,8 +32,6 @@ BEGIN
     END IF;
 END
 $$;
-
-DROP INDEX IF EXISTS marketing_leads_unsubscribe_token_key;
 
 -- Let the migrator re-apply 061 on the next deploy.
 DELETE FROM schema_migrations WHERE filename = '061_marketing_lead_unsubscribe_token.sql';

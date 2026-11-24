@@ -1,9 +1,10 @@
-import secrets
 import uuid
 from datetime import datetime
 from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Integer, CheckConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
+from backend.services.unsubscribe_token import new_unsubscribe_token
+
 from .base import Base
 
 # Every role value the users.role column may hold. This is the SINGLE SOURCE for the
@@ -58,7 +59,7 @@ class User(Base):
     # user, so an opted-out or never-opted-in coach still has a working unsubscribe link.
     marketing_opt_in = Column(Boolean, nullable=False, default=False, server_default="false")
     marketing_opt_in_at = Column(DateTime(timezone=True))
-    unsubscribe_token = Column(String, unique=True, default=lambda: secrets.token_urlsafe(32))
+    unsubscribe_token = Column(String, unique=True, default=new_unsubscribe_token)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 

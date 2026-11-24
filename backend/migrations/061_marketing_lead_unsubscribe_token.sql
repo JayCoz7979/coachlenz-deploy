@@ -14,6 +14,12 @@
 -- Also adds a unique index on the token (nulls allowed), since the
 -- unsubscribe lookup expects at most one row per token.
 --
+-- If two or more leads already share a non-blank token, the unique index
+-- would abort. For each such group the oldest row (created_at, then id)
+-- keeps the token. The others get a fresh token from the same generator,
+-- and those rows are recorded in the same backfill table so the down can
+-- put the shared token back.
+--
 -- This file does not send email. The backend preDeploy command applies it.
 -- Reverse by hand with 061_marketing_lead_unsubscribe_token.down.sql.
 -- Do not run this by hand against production.
@@ -50,6 +56,52 @@ WITH targets AS (
 recorded AS (
     INSERT INTO marketing_leads_token_backfill_061 (lead_id, old_token, new_token)
     SELECT id, old_token, new_token FROM targets
+    ON CONFLICT (lead_id) DO NOTHING
+    RETURNING lead_id, new_token
+)
+UPDATE marketing_leads AS m
+    SET unsubscribe_token = recorded.new_token
+    FROM recorded
+    WHERE m.id = recorded.lead_id;
+
+-- Reissue tokens that are already shared. The oldest row in each group keeps
+-- its token. Everyone else is recorded and given a new one before the unique
+-- index is created.
+WITH ranked AS (
+    SELECT
+        id,
+        unsubscribe_token AS old_token,
+        row_number() OVER (
+            PARTITION BY unsubscribe_token
+            ORDER BY created_at ASC, id ASC
+        ) AS n
+    FROM marketing_leads
+    WHERE unsubscribe_token IS NOT NULL AND btrim(unsubscribe_token) <> ''
+),
+dupes AS (
+    SELECT
+        id,
+        old_token,
+        rtrim(
+            translate(
+                encode(
+                    decode(
+                        replace(gen_random_uuid()::text, '-', '')
+                        || replace(gen_random_uuid()::text, '-', ''),
+                        'hex'
+                    ),
+                    'base64'
+                ),
+                '+/', '-_'
+            ),
+            '='
+        ) AS new_token
+    FROM ranked
+    WHERE n > 1
+),
+recorded AS (
+    INSERT INTO marketing_leads_token_backfill_061 (lead_id, old_token, new_token)
+    SELECT id, old_token, new_token FROM dupes
     ON CONFLICT (lead_id) DO NOTHING
     RETURNING lead_id, new_token
 )

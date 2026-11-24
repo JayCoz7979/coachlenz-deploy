@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, func, and_
@@ -15,11 +17,23 @@ from backend.services.waitlist_export import lead_to_dict, leads_to_csv
 from starlette.responses import Response
 from backend.models.agent_log import AgentLog
 from backend.models.game import Game
-from backend.services.auth import require_admin
+from backend.services.auth import get_current_org, get_current_user, is_platform_admin, require_admin
 from backend.services import feature_flags, retention, funnel, credits, detection_quality
 from datetime import datetime
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+logger = logging.getLogger(__name__)
+
+
+def require_unsubscribe_admin(
+    user: User = Depends(get_current_user),
+    org: Organization = Depends(get_current_org),
+) -> User:
+    """Platform admin, same people as the other /admin routes. This one answers
+    403 so a missed unsubscribe reply is an obvious denial."""
+    if not is_platform_admin(user, org):
+        raise HTTPException(status_code=403, detail="Platform admin only.")
+    return user
 
 
 @router.get("/feature-flags")
@@ -63,6 +77,51 @@ async def export_waitlist_csv(user: User = Depends(require_admin), db: AsyncSess
         media_type="text/csv",
         headers={"Content-Disposition": 'attachment; filename="coachlenz-waitlist.csv"'},
     )
+
+
+class EmailUnsubscribe(BaseModel):
+    email: str
+
+
+@router.post("/leads/unsubscribe")
+async def unsubscribe_lead_by_email(
+    body: EmailUnsubscribe,
+    user: User = Depends(require_unsubscribe_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Opt a waitlist lead and a coach account out by email.
+
+    For replies to support@coachlenz.com that say unsubscribe, when the lead
+    has no usable one-click token. Idempotent and case-insensitive. Does not
+    read an inbox. The log line carries a short hash, not the address.
+    """
+    from backend.services.waitlist_email import email_sha256, unsubscribe_lead
+
+    raw = (body.email or "").strip().lower()
+    if "@" not in raw:
+        raise HTTPException(status_code=422, detail="Email is required.")
+    digest = email_sha256(raw)[:12]
+    leads = (await db.execute(
+        select(MarketingLead).where(func.lower(MarketingLead.email) == raw)
+    )).scalars().all()
+    accounts = (await db.execute(
+        select(User).where(func.lower(User.email) == raw)
+    )).scalars().all()
+    if not leads and not accounts:
+        logger.info("admin unsubscribe no-op sha=%s", digest)
+        return {"ok": True, "updated": False}
+    updated = False
+    for account in accounts:
+        if account.marketing_opt_in:
+            account.marketing_opt_in = False
+            updated = True
+    for lead in leads:
+        if not getattr(lead, "unsubscribed_at", None):
+            await unsubscribe_lead(db, lead, "admin_email")
+            updated = True
+    await db.commit()
+    logger.info("admin unsubscribe sha=%s updated=%s", digest, updated)
+    return {"ok": True, "updated": updated}
 
 
 @router.get("/retention")

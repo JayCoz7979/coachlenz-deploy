@@ -171,8 +171,8 @@ def apply_repeat(row, body, source: str) -> None:
 
 def new_unsubscribe_token() -> str:
     """The one generator for lead and user unsubscribe tokens: 43 chars, URL-safe."""
-    import secrets
-    return secrets.token_urlsafe(32)
+    from backend.services.unsubscribe_token import new_unsubscribe_token as issue
+    return issue()
 
 
 def ensure_unsubscribe_token(row) -> bool:
