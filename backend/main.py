@@ -50,6 +50,9 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Chunk uploads read the part ETag when a browser talks to this API directly
+    # (local storage). R2 uploads need the same header exposed on the bucket.
+    expose_headers=["ETag"],
 )
 
 

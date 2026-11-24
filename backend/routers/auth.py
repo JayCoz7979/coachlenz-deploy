@@ -118,10 +118,14 @@ async def register(body: RegisterRequest, request: Request, db: AsyncSession = D
 
     # Marketing permission (opt-IN only). If the coach ticked the box, record the
     # consent + timestamp and log it with the IP for the audit trail, same as terms.
+    # Opt-in only. An unticked box stores an explicit false so the INSERT does not
+    # send NULL (the column is NOT NULL) and the in-memory user matches the row.
     if body.marketing_opt_in:
         user.marketing_opt_in = True
         user.marketing_opt_in_at = datetime.utcnow()
         await record_acceptance(db, org.id, user.id, "marketing", ip=ip)
+    else:
+        user.marketing_opt_in = False
 
     if referred_by:
         from backend.models.referral import Referral

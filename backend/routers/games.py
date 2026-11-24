@@ -3,17 +3,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, func
 from pydantic import BaseModel
 from typing import Optional
-import uuid
 from backend.models.base import get_db
 from backend.models.user import User
 from backend.models.organization import Organization
 from backend.models.game import Game
 from backend.models.job import Job
 from backend.services.auth import get_current_user, get_current_org
-from backend.services.trial import can_upload_game, is_trial_active, reserve_trial_game_slot
-from backend.services.entitlements import assert_ready_to_analyze
-from backend.services.legal import assert_student_consent
-from backend.services.r2 import generate_presigned_upload_url, safe_object_name
+from backend.services.film_upload import USE_CHUNKED_DETAIL, authorize_film_upload
 
 router = APIRouter(prefix="/games", tags=["games"])
 
@@ -33,6 +29,7 @@ class GameCreate(BaseModel):
     # at file-select. Stored up front so the detector always has a duration fallback
     # even when the later ffprobe-over-R2 read fails (the #1 historical ingest fault).
     duration_seconds: Optional[float] = None
+    content_type: Optional[str] = None
 
 @router.get("")
 async def list_games(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
@@ -42,48 +39,17 @@ async def list_games(user: User = Depends(get_current_user), db: AsyncSession = 
 
 @router.post("")
 async def create_game(body: GameCreate, user: User = Depends(get_current_user), org: Organization = Depends(get_current_org), db: AsyncSession = Depends(get_db)):
-    if not can_upload_game(org):
-        raise HTTPException(status_code=403, detail="Trial game limit reached. Upgrade to upload more games.")
-    # Entitlements: an active trial must verify email + lock a sport before it can
-    # upload film (upload auto-chains into detection).
-    assert_ready_to_analyze(org, user)
-    # COPPA/FERPA: film contains minors' images and the AI extracts jersey numbers
-    # (individual identifiers), so the org must have made the student-data authority
-    # attestation BEFORE any minors' film is stored or analyzed — not just before a
-    # name is typed into the roster. 403s with the attestation prompt if missing.
-    await assert_student_consent(db, org.id)
-    # Authoritative, race-free trial-cap gate (the check above is a friendly
-    # pre-check only). Reserves the slot atomically in this transaction.
-    if not await reserve_trial_game_slot(db, org):
-        raise HTTPException(status_code=403, detail="Trial game limit reached. Upgrade to upload more games.")
-    key = f"games/{org.id}/{uuid.uuid4()}/{safe_object_name(body.file_name)}"
-    presigned = generate_presigned_upload_url(key, "video/mp4")
-    game = Game(
-        organization_id=org.id,
-        team_id=body.team_id,
-        title=body.title,
-        sport=body.sport,
-        opponent=body.opponent,
-        is_home=body.is_home,
-        scout_jersey=body.scout_jersey,
-        opponent_jersey=body.opponent_jersey,
-        scout_attack_dir_h1=body.scout_attack_dir_h1,
-        r2_key=key,
-        file_size_bytes=body.file_size_bytes,
-        # Persist the client-measured duration immediately as the detector's fallback.
-        # ingest will overwrite it with the authoritative ffprobe value when that read
-        # succeeds, and keep this value when it fails (never clobbered with 0).
-        duration_seconds=(int(body.duration_seconds)
-                          if body.duration_seconds and body.duration_seconds > 0 else None),
-        status="pending",
-        is_trial_game=is_trial_active(org),
-    )
-    db.add(game)
-    await db.flush()
-    job = Job(organization_id=org.id, job_type="ingest", payload={"game_id": str(game.id)})
-    db.add(job)
-    await db.commit()
-    return {"id": str(game.id), "upload_url": presigned["upload_url"], "key": key}
+    """Do not insert a game before the film is in storage.
+
+    This used to create the row, reserve the trial slot, and enqueue ingest, and
+    only then did the browser POST the file. Railway's edge killed that request
+    at 300s, which left an empty game and a spent trial. The chunked uploader
+    (POST /upload/multipart/init, then /upload/multipart/complete) creates the
+    game only after the object is stored. The gates still run here so a missing
+    student-data consent returns the same 403 the upload page already handles.
+    """
+    await authorize_film_upload(db, user, org, body.sport, body.file_size_bytes)
+    raise HTTPException(status_code=409, detail=USE_CHUNKED_DETAIL)
 
 @router.get("/{game_id}")
 async def get_game(game_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):

@@ -59,7 +59,11 @@ class _DB:
 def test_document_versions_cover_expected_docs():
     # student_data authorizes COLLECTION; recruiting_directory authorizes public
     # third-party DISCLOSURE (#17) — they are deliberately separate consents.
-    assert set(DOCUMENT_VERSIONS) == {"terms", "privacy", "student_data", "recruiting_directory"}
+    # marketing is the optional signup checkbox. It is recorded when ticked, and it
+    # is not a re-consent document (see RECONSENT_DOCUMENTS).
+    assert set(DOCUMENT_VERSIONS) == {
+        "terms", "privacy", "student_data", "recruiting_directory", "marketing",
+    }
     assert STUDENT_DATA_ATTESTATION and "under 13" in STUDENT_DATA_ATTESTATION.lower()
 
 
@@ -99,6 +103,20 @@ def test_user_reconsent_needed_all_or_none():
     assert asyncio.run(user_reconsent_needed(_DB(0), "u1")) == ["terms", "privacy"]
     # Current acceptances -> nothing to re-accept.
     assert asyncio.run(user_reconsent_needed(_DB(1), "u1")) == []
+
+
+@pytest.mark.unit
+def test_record_acceptance_accepts_marketing_opt_in():
+    # Signup with the marketing box ticked used to 500: record_acceptance raised
+    # ValueError("unknown legal document: marketing") and the transaction rolled
+    # back, so no account was created.
+    db = _DB(0)
+    asyncio.run(record_acceptance(db, "o1", "u1", "marketing", ip="203.0.113.5"))
+    assert len(db.added) == 1
+    row = db.added[0]
+    assert row.document == "marketing"
+    assert row.version == DOCUMENT_VERSIONS["marketing"]
+    assert row.ip_address == "203.0.113.5"
 
 
 @pytest.mark.unit
