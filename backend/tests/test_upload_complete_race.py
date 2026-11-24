@@ -56,6 +56,10 @@ async def pg(tmp_path, monkeypatch):
     try:
         await _reachable()
     except Exception as exc:
+        # GitHub Actions sets CI. There the job must fail if Postgres is down,
+        # because these tests are the only check for the async rollback race.
+        if os.environ.get("CI"):
+            pytest.fail(f"async Postgres is required in CI ({type(exc).__name__})")
         pytest.skip(f"async Postgres is not reachable ({type(exc).__name__})")
     monkeypatch.setattr(r2, "LOCAL_STORAGE_DIR", str(tmp_path))
     engine = create_async_engine(_URL)

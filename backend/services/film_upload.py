@@ -414,6 +414,12 @@ async def finish_upload(db, user, org, token: str, body) -> dict:
             raise HTTPException(status_code=413, detail=MSG_TOO_BIG)
         try:
             size = store.complete_upload(key, session["upid"], parts)
+        except FileNotFoundError:
+            # The other process removed the part files after assembling. If the
+            # object is already the declared size, this complete succeeded.
+            size = store.object_size(key)
+            if size != session["size"]:
+                raise HTTPException(status_code=409, detail=MSG_INCOMPLETE)
         except MultipartError:
             # Local storage: the other complete already assembled this object
             # and removed the part directory. The object is the upload.

@@ -4,10 +4,12 @@ Production writes to Cloudflare R2 with the S3 multipart API. Dev and tests, whe
 R2 credentials are absent, use the same create / part / list / complete / abort
 contract on local disk. Callers never send a whole game film through one request.
 """
+import fcntl
 import hashlib
 import json
 import os
 import shutil
+import tempfile
 from typing import Optional
 
 from botocore.exceptions import ClientError
@@ -198,26 +200,89 @@ def presign_part(key: str, upload_id: str, part_number: int, public_base: str, p
     )
 
 
+def _lock_path(upload_id: str) -> str:
+    """A lock file next to the part directory, not inside it.
+
+    complete removes the part directory. The lock has to outlive that so the
+    next process can still take it. An in-process lock is not enough: staging
+    runs several API processes.
+    """
+    directory = _part_dir(upload_id)
+    parent = os.path.dirname(directory)
+    os.makedirs(parent, exist_ok=True)
+    return os.path.join(parent, upload_id + ".lock")
+
+
+def _assembled_size(dest: str, expected: int) -> Optional[int]:
+    if expected <= 0 or not os.path.isfile(dest):
+        return None
+    got = os.path.getsize(dest)
+    if got == expected:
+        return got
+    return None
+
+
+def _complete_local(key: str, upload_id: str, parts: list[dict]) -> int:
+    """Assemble local parts under an exclusive cross-process lock.
+
+    Two completes used to write the same `<dest>.partial` and the loser left
+    zeros in the winner's film. Each attempt now writes a private temp file,
+    fsyncs it, and renames it onto the destination only while it holds the lock.
+    A caller that arrives after the object is already the expected size returns
+    that size and does not rewrite it.
+    """
+    lock_path = _lock_path(upload_id)
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        try:
+            dest = r2._safe_local_path(key)
+            expected = sum(int(p["size"]) for p in parts)
+            ready = _assembled_size(dest, expected)
+            if ready is not None:
+                return ready
+            ordered = sorted(parts, key=lambda p: int(p["part_number"]))
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            fd, tmp = tempfile.mkstemp(
+                prefix="." + os.path.basename(dest) + ".",
+                dir=os.path.dirname(dest),
+            )
+            try:
+                with os.fdopen(fd, "wb") as out:
+                    for part in ordered:
+                        src = _part_path(upload_id, int(part["part_number"]))
+                        with open(src, "rb") as inp:
+                            shutil.copyfileobj(inp, out, length=1024 * 1024)
+                    out.flush()
+                    os.fsync(out.fileno())
+                os.replace(tmp, dest)
+                tmp = ""
+            finally:
+                if tmp:
+                    try:
+                        os.remove(tmp)
+                    except OSError:
+                        pass
+            shutil.rmtree(_part_dir(upload_id), ignore_errors=True)
+            return os.path.getsize(dest)
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+    finally:
+        os.close(lock_fd)
+
+
 def complete_upload(key: str, upload_id: str, parts: list[dict]) -> int:
     """Assemble the parts into the final object. Idempotent: a second call after
-    a successful assemble returns the object size. Returns that size in bytes."""
+    a successful assemble returns the object size. Returns that size in bytes.
+
+    The R2 branch is unchanged. S3 CompleteMultipartUpload (which R2 implements)
+    consumes the upload id: the call that wins concatenates the parts once, and
+    a concurrent or repeated complete receives NoSuchUpload rather than writing
+    the object again. The handler below turns that into the stored size.
+    https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html
+    """
     if _local():
-        _require_key(upload_id, key)
-        existing = object_size(key)
-        if existing is not None and not _has_local_parts(upload_id):
-            return existing
-        ordered = sorted(parts, key=lambda p: p["part_number"])
-        dest = r2._safe_local_path(key)
-        os.makedirs(os.path.dirname(dest), exist_ok=True)
-        tmp = dest + ".partial"
-        with open(tmp, "wb") as out:
-            for part in ordered:
-                src = _part_path(upload_id, part["part_number"])
-                with open(src, "rb") as inp:
-                    shutil.copyfileobj(inp, out, length=1024 * 1024)
-        os.replace(tmp, dest)
-        shutil.rmtree(_part_dir(upload_id), ignore_errors=True)
-        return os.path.getsize(dest)
+        return _complete_local(key, upload_id, parts)
     client = r2.get_r2_client()
     ordered = sorted(parts, key=lambda p: p["part_number"])
     try:

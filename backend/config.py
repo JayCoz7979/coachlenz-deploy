@@ -183,6 +183,12 @@ class Settings(BaseSettings):
     # App
     APP_URL: str = "https://coachlenz.com"
     ENVIRONMENT: str = "production"
+    # Optional comma-separated browser origins added to CORS. Empty means the
+    # allow-list is exactly the historical one. Exact origins only: wildcards
+    # are ignored, and production ignores anything that is not https.
+    # Staging sets this to its frontend origin when APP_URL is the API host
+    # (so local /files playback links resolve) and the page is served elsewhere.
+    CORS_EXTRA_ORIGINS: str = ""
     # Shared rate-limit storage. The API runs with multiple uvicorn workers, and
     # slowapi's default in-memory storage is PER-PROCESS, so each worker keeps its
     # own counter and the effective limit is ~Nx (N = worker count). Point this at

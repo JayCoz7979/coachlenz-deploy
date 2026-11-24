@@ -21,3 +21,28 @@ def test_unset_app_url_is_dropped():
 def test_origins_are_deduped():
     origins = build_allowed_origins("https://coachlenz.com", "production")
     assert len(origins) == len(set(origins))
+
+
+def test_unset_extra_origins_match_the_historical_list():
+    # The third argument defaults empty. Calling it explicitly empty must not
+    # add or remove a single origin, in production or outside it.
+    for env in ("production", "staging", "test"):
+        historical = build_allowed_origins("https://coachlenz.com", env)
+        assert build_allowed_origins("https://coachlenz.com", env, "") == historical
+        assert build_allowed_origins("https://coachlenz.com", env, "  ,  ") == historical
+
+
+def test_extra_origins_are_exact_and_https_only_in_production():
+    raw = "https://staging-frontend.example.com, http://staging-frontend.example.com, https://*.example.com, not-a-url"
+    prod = build_allowed_origins("https://coachlenz.com", "production", raw)
+    assert "https://staging-frontend.example.com" in prod
+    assert "http://staging-frontend.example.com" not in prod
+    assert "https://*.example.com" not in prod
+    assert "not-a-url" not in prod
+    # The historical hosts are still there.
+    assert "https://app.coachlenz.com" in prod
+
+    staging = build_allowed_origins("https://api.example.com", "staging", raw)
+    assert "https://staging-frontend.example.com" in staging
+    assert "http://staging-frontend.example.com" in staging
+    assert "https://*.example.com" not in staging

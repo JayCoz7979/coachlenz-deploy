@@ -11,7 +11,10 @@ resumes, and a failed or abandoned upload leaves no game and does not reserve a
 trial slot.
 """
 import asyncio
+import hashlib
 import inspect
+import multiprocessing
+import threading
 import uuid
 from types import SimpleNamespace
 from urllib.parse import urlparse
@@ -36,6 +39,16 @@ from backend.services.film_upload import (
     start_upload,
 )
 from backend.services.trial import reserve_trial_game_slot
+
+
+def _mp_complete(payload):
+    """Child process: assemble one local upload. Must be importable."""
+    root, key, upload_id, parts = payload
+    from backend.services import r2
+    from backend.services.multipart_store import complete_upload
+    r2.LOCAL_STORAGE_DIR = root
+    r2._r2_available = False
+    return complete_upload(key, upload_id, parts)
 
 
 class _Result:
@@ -543,6 +556,140 @@ def test_trial_loser_deletes_its_orphan_but_not_another_games_object(local_disk,
     again = asyncio.run(finish_upload(db, user, org, started["upload_token"], _body(1000)))
     assert again["id"] == first["id"]
     assert deleted == []
+
+
+class _RaceDB(MemDB):
+    """Thread-safe stand-in that rejects a second game for the same object key."""
+
+    def __init__(self):
+        super().__init__()
+        self._lock = threading.Lock()
+        self._committed = []
+
+    async def execute(self, *_a, **_k):
+        with self._lock:
+            return _Result(self)
+
+    def add(self, obj):
+        with self._lock:
+            super().add(obj)
+
+    async def flush(self):
+        with self._lock:
+            await super().flush()
+
+    async def commit(self):
+        from sqlalchemy.exc import IntegrityError
+        with self._lock:
+            pending = [
+                obj for obj in self.added
+                if isinstance(obj, Game) and not getattr(obj, "_committed", False)
+            ]
+            if any(obj.r2_key in self._committed for obj in pending):
+                raise IntegrityError("dup", {}, Exception("games_r2_key_unique"))
+            claimed = set(self._committed)
+            for obj in pending:
+                if obj.r2_key in claimed:
+                    continue
+                obj._committed = True
+                self._committed.append(obj.r2_key)
+                claimed.add(obj.r2_key)
+            self.commits += 1
+
+    async def rollback(self):
+        with self._lock:
+            self.added[:] = [
+                obj for obj in self.added
+                if not isinstance(obj, Game) or getattr(obj, "_committed", False)
+            ]
+
+
+@pytest.mark.unit
+def test_five_concurrent_local_completes_keep_one_film_and_one_game(local_disk):
+    # Two non-zero parts, large enough that overlapping writes would show up
+    # in the digest. Five processes assemble the same upload (staging runs
+    # four). Five threads then complete it through finish_upload.
+    part_a = bytes((i % 251) + 1 for i in range(256 * 1024))
+    part_b = bytes(((i * 7) % 251) + 1 for i in range(256 * 1024))
+    source = part_a + part_b
+    org = _org()
+    org.is_trial = False
+    user = _user(org)
+    db = _RaceDB()
+    started = asyncio.run(start_upload(
+        db, user, org, _body(len(source)), part_size=len(part_a),
+    ))
+    session = film_upload.read_session(started["upload_token"], org)
+    store.write_part(session["key"], session["upid"], 1, part_a)
+    store.write_part(session["key"], session["upid"], 2, part_b)
+    parts = store.list_parts(session["key"], session["upid"])
+    ctx = multiprocessing.get_context("fork")
+    payload = (str(local_disk), session["key"], session["upid"], parts)
+    with ctx.Pool(5) as pool:
+        sizes = pool.map(_mp_complete, [payload] * 5)
+    assert sizes == [len(source)] * 5
+    stored = r2.read_local_file(session["key"])
+    assert stored is not None
+    assert hashlib.md5(stored).hexdigest() == hashlib.md5(source).hexdigest()
+
+    # A second upload, completed five times through finish_upload, must agree
+    # on one game id and the same bytes. The file writes overlap; the insert
+    # race is what the unique key rejects.
+    started2 = asyncio.run(start_upload(
+        db, user, org, _body(len(source), "second.mp4"), part_size=len(part_a),
+    ))
+    session2 = film_upload.read_session(started2["upload_token"], org)
+    store.write_part(session2["key"], session2["upid"], 1, part_a)
+    store.write_part(session2["key"], session2["upid"], 2, part_b)
+    barrier = threading.Barrier(5)
+    results = []
+    errors = []
+
+    def _one():
+        barrier.wait()
+        try:
+            results.append(asyncio.run(finish_upload(
+                db, user, org, started2["upload_token"], _body(len(source), "second.mp4"),
+            )))
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_one) for _ in range(5)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == [], errors
+    assert [row["id"] for row in results] == [results[0]["id"]] * 5
+    stored2 = r2.read_local_file(session2["key"])
+    assert hashlib.md5(stored2).hexdigest() == hashlib.md5(source).hexdigest()
+
+
+@pytest.mark.unit
+def test_missing_part_file_is_incomplete_unless_the_object_is_already_there(local_disk, monkeypatch):
+    org = _org()
+    org.is_trial = False
+    user = _user(org)
+    db = MemDB()
+    started = asyncio.run(start_upload(db, user, org, _body(1000), part_size=1000))
+    session = film_upload.read_session(started["upload_token"], org)
+    store.write_part(session["key"], session["upid"], 1, b"q" * 1000)
+
+    def missing(*_a, **_k):
+        raise FileNotFoundError("part")
+
+    monkeypatch.setattr(store, "complete_upload", missing)
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(finish_upload(db, user, org, started["upload_token"], _body(1000)))
+    assert exc.value.status_code == 409
+    assert exc.value.detail == film_upload.MSG_INCOMPLETE
+
+    # The object is already the declared size (another process finished the
+    # rename). A missing part file is not a 502.
+    r2.save_local_file(session["key"], b"q" * 1000)
+    done = asyncio.run(finish_upload(db, user, org, started["upload_token"], _body(1000)))
+    assert done["status"] == "processing"
+    assert len(_games(db)) == 1
 
 
 @pytest.mark.unit
