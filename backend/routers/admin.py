@@ -10,7 +10,9 @@ from backend.models.organization import Organization
 from backend.models.abuse import RiskFlag, AuditLog
 from backend.models.teams_of_month import TeamSubmission, FeaturedTeam
 from backend.models.usage import AnalysisUsage
-from backend.models.funnel import FunnelEvent
+from backend.models.funnel import FunnelEvent, MarketingLead
+from backend.services.waitlist_export import lead_to_dict, leads_to_csv
+from starlette.responses import Response
 from backend.models.agent_log import AgentLog
 from backend.models.game import Game
 from backend.services.auth import require_admin
@@ -39,6 +41,29 @@ async def set_feature_flag(key: str, body: FlagUpdate, user: User = Depends(requ
     except ValueError:
         raise HTTPException(status_code=404, detail="Unknown feature flag")
     return {"ok": True, "key": key, "enabled": body.enabled}
+
+
+async def _waitlist_rows(db: AsyncSession):
+    res = await db.execute(select(MarketingLead).order_by(MarketingLead.created_at.desc()))
+    return list(res.scalars().all())
+
+
+@router.get("/leads")
+async def list_waitlist(user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """The launch waitlist, newest first. Platform admin only. Does not send email."""
+    return {"leads": [lead_to_dict(row) for row in await _waitlist_rows(db)]}
+
+
+@router.get("/leads.csv")
+async def export_waitlist_csv(user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """CSV of the same list, for a future nurture import. Platform admin only."""
+    body = leads_to_csv(await _waitlist_rows(db))
+    return Response(
+        content=body,
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="coachlenz-waitlist.csv"'},
+    )
+
 
 @router.get("/retention")
 async def retention_gate(user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):

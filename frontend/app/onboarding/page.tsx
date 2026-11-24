@@ -47,8 +47,14 @@ function OnboardingForm() {
     setSessionReady(true)
   }, [])
 
-  // Funnel: the visitor reached the signup page. Fires once on mount.
-  useEffect(() => { track('signup_view') }, [])
+  // Funnel: a real signup view. A closed door shows the waitlist instead, and that
+  // visit is a lead, not a signup_view. Signed-in coaches finishing verification
+  // still count, because they already registered.
+  useEffect(() => {
+    if (!sessionReady) return
+    if (!signedIn && gate !== 'open') return
+    track('signup_view')
+  }, [sessionReady, signedIn, gate])
 
   // On the sport step, load the student-data attestation text (and whether the org
   // already attested, in which case the checkbox is not needed).

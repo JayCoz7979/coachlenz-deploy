@@ -1,0 +1,96 @@
+<!--
+  Paste this section onto the existing coachlenz.com homepage, in front of the
+  footer. Do not replace the page. The animated hero stays.
+  Posts to the CoachLenz waitlist. No secrets.
+-->
+<section id="waitlist" style="background:#1c1c1c;color:#f8f6f0;font-family:Georgia,sans-serif;padding:64px 20px;">
+  <div style="max-width:560px;margin:0 auto;">
+    <p style="letter-spacing:.18em;text-transform:uppercase;color:#C9A84C;font-size:12px;margin:0 0 8px;">Coming soon</p>
+    <h2 style="font-size:32px;margin:0 0 12px;">Be among the first to experience CoachLenz</h2>
+    <p style="color:#a39e92;margin:0 0 20px;">Game film for school basketball and football. Leave your name and email and we will tell you when it opens.</p>
+    <form id="cl-waitlist" style="display:grid;gap:12px;">
+      <div id="cl-waitlist-error" hidden style="background:rgba(224,112,112,.12);color:#e07070;padding:12px;border-radius:4px;"></div>
+      <label>Name<br><input name="name" required maxlength="100" autocomplete="name" style="width:100%;height:44px;margin-top:4px;background:#3d3d3d;color:#f8f6f0;border:1px solid rgba(255,255,255,.12);padding:0 12px;"></label>
+      <label>Email<br><input name="email" type="email" required autocomplete="email" style="width:100%;height:44px;margin-top:4px;background:#3d3d3d;color:#f8f6f0;border:1px solid rgba(255,255,255,.12);padding:0 12px;"></label>
+      <label>I am a...<br>
+        <select name="role" required style="width:100%;height:44px;margin-top:4px;background:#3d3d3d;color:#f8f6f0;border:1px solid rgba(255,255,255,.12);padding:0 12px;">
+          <option value="">I am a...</option>
+          <option value="head_coach">Head Coach</option>
+          <option value="assistant_coach">Assistant Coach</option>
+          <option value="athletic_director">Athletic Director</option>
+          <option value="school_admin">Principal / School Admin</option>
+          <option value="film_coordinator">Video / Film Coordinator</option>
+          <option value="parent">Parent</option>
+          <option value="player">Player</option>
+          <option value="other">Other</option>
+        </select>
+      </label>
+      <label id="cl-role-other" hidden>Tell us a bit more (optional)<br><input name="role_other" maxlength="100" style="width:100%;height:44px;margin-top:4px;background:#3d3d3d;color:#f8f6f0;border:1px solid rgba(255,255,255,.12);padding:0 12px;"></label>
+      <label>School (optional)<br><input name="school" maxlength="200" style="width:100%;height:44px;margin-top:4px;background:#3d3d3d;color:#f8f6f0;border:1px solid rgba(255,255,255,.12);padding:0 12px;"></label>
+      <label>Sport (optional)<br>
+        <select name="sport" style="width:100%;height:44px;margin-top:4px;background:#3d3d3d;color:#f8f6f0;border:1px solid rgba(255,255,255,.12);padding:0 12px;">
+          <option value="">Sport (optional)</option>
+          <option value="basketball">Basketball</option>
+          <option value="football">Football</option>
+          <option value="soccer">Soccer</option>
+          <option value="volleyball">Volleyball</option>
+          <option value="other">Other</option>
+        </select>
+      </label>
+      <label style="display:flex;gap:8px;align-items:flex-start;"><input name="consent" type="checkbox" required> <span>Email me launch updates and coaching resources.</span></label>
+      <button type="submit" style="height:48px;background:#C9A84C;color:#1c1c1c;border:0;font-weight:700;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;">Join the waitlist</button>
+    </form>
+  </div>
+</section>
+<script>
+(function () {
+  var form = document.getElementById("cl-waitlist");
+  if (!form) return;
+  var errorBox = document.getElementById("cl-waitlist-error");
+  var otherWrap = document.getElementById("cl-role-other");
+  var roleSelect = form.querySelector('[name="role"]');
+  roleSelect.addEventListener("change", function () {
+    otherWrap.hidden = roleSelect.value !== "other";
+  });
+  var ENDPOINT = "https://coachlenz-backend-production.up.railway.app/leads";
+  function show(message) { errorBox.hidden = false; errorBox.textContent = message; }
+  form.addEventListener("submit", function (event) {
+    event.preventDefault();
+    var data = new FormData(form);
+    var name = String(data.get("name") || "").trim();
+    var email = String(data.get("email") || "").trim();
+    var role = String(data.get("role") || "");
+    var roleOther = String(data.get("role_other") || "").trim();
+    if (!name) { show("Name is required."); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { show("Enter a valid email address."); return; }
+    if (!role) { show("Please tell us your role."); return; }
+    if (!data.get("consent")) { show("Please agree to receive launch updates."); return; }
+    var params = new URLSearchParams(window.location.search);
+    var body = { email: email, name: name, role: role, source: "marketing-site", email_consent: true };
+    var school = String(data.get("school") || "").trim();
+    var sport = String(data.get("sport") || "");
+    if (school) body.school = school;
+    if (sport) body.sport = sport;
+    if (role === "other" && roleOther) body.role_other = roleOther;
+    ["utm_source", "utm_medium", "utm_campaign"].forEach(function (key) {
+      var value = (params.get(key) || "").trim();
+      if (value) body[key] = value;
+    });
+    var magnet = (params.get("lead_magnet") || params.get("magnet") || "").trim();
+    if (magnet) body.lead_magnet = magnet;
+    var button = form.querySelector("button");
+    button.disabled = true;
+    fetch(ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }).then(function (res) {
+      if (!res.ok) throw new Error("save failed");
+      form.outerHTML = '<p role="status" style="color:#f8f6f0;">You\'re on the list. You\'ll be among the first to experience CoachLenz.</p>';
+    }).catch(function () {
+      show("Could not join the waitlist. Please try again.");
+      button.disabled = false;
+    });
+  });
+})();
+</script>

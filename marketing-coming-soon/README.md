@@ -1,40 +1,47 @@
-# Marketing coming-soon page
+# Patch for coachlenz.com, not a new site
 
-The public marketing site at https://coachlenz.com is not in this repository.
-It is a separate deployment with Cloudflare in front of it. There is no
-`static/`, `marketing/`, or Cloudflare Pages config here, and this repo's
-Next.js app is the one served at https://app.coachlenz.com.
+The marketing site at https://coachlenz.com is not in this repository. It is a
+separate Cloudflare-fronted build (hashed files under `/assets/`, Google fonts
+Syne, DM Sans, and DM Mono, logo `/assets/coachlenz-logo-LDpDm6HP.png`). Nothing
+here changes Cloudflare, DNS, or hosting.
 
-This folder is a ready-to-use replacement for that marketing homepage while
-new signups are closed. It is not wired to any host. Nothing in this change
-touches Cloudflare, DNS, or hosting settings.
+Fetched read-only on 24 Nov 2026. There is no `<video>` and no iframe. The intro
+is an animated film-intel panel (the script module
+`/assets/football-field-intel-*.js`): a fake matchup, tendency scores, a live
+telemetry ticker, and an AI summary. A still of that panel is the Open Graph
+image. Keep that intro. Do not replace the homepage with a different page.
 
-## Where it would go
+## What to change on the live homepage
 
-Replace the current coachlenz.com homepage with `index.html` (and
-`coachlenz-logo.png` beside it) on whatever host serves that site. The page
-is one file plus the logo. It does not need a build step.
+Leave the nav, the animated hero, the sports, the steps, and the pricing
+sections in place. Change only the trial calls to action, and add one section.
 
-A simple revert is to put the previous marketing homepage back. Keep that
-previous build. This folder does not contain it, because the source was not
-in this repo.
+Links that currently go to `https://app.coachlenz.com/login` and read like a
+signup:
 
-`index.html` posts to the same waitlist endpoint as the app:
+- "Start Free" in the header (there are two)
+- "Start free" on the pricing cards (three)
+- "Start Free" in the footer
+- "Sign up free"
+- "Get the free logger"
 
-`POST https://coachlenz-backend-production.up.railway.app/leads`
+Point those at `https://app.coachlenz.com/waitlist` (or at `#waitlist` on this
+same page once the section below is inserted). The real "Sign in" link stays on
+`https://app.coachlenz.com/login`.
 
-JSON body: `email` (required), `school` (optional), `sport` (optional),
-`source` (`marketing-site`).
+Add a short line near the hero: "Coming soon. Join the list and you will be
+among the first to experience CoachLenz."
 
-The API already allows browser calls from `https://coachlenz.com` and
-`https://www.coachlenz.com`. The form will fail from any other origin, and
-from a file opened directly on a laptop, because the browser blocks that
-cross-origin request. That is expected. Confirm the endpoint with curl
-instead (see below). School and sport are stored only after migration 056
-has been applied, which the backend deploy does for you.
+Paste `waitlist-section.html` in front of the footer. It is a section, not a
+full document. It posts to the same `POST /leads` endpoint as the app. Name,
+email, role, and the email-consent box are required. School and sport are
+optional. It also sends `utm_source`, `utm_medium`, `utm_campaign`, and
+`lead_magnet` when those are on the page URL.
 
-Existing coaches still sign in at https://app.coachlenz.com/login. This page
-links there. It does not create accounts.
+The form only works when the page is served from `https://coachlenz.com` or
+`https://www.coachlenz.com`. Those origins are already allowed by the API.
+Opening the snippet as a local file will be blocked by the browser.
 
-The page sends `noindex`. That is a supplement. Swapping this file in is
-what actually takes the old marketing pages down.
+To revert, put the previous homepage build back and remove the section. The
+app flag `signups_enabled` is separate and is how registration itself turns
+back on.

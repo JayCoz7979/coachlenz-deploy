@@ -27,7 +27,16 @@ class MarketingLead(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(String, nullable=False)
     source = Column(String)
-    # Optional waitlist context (migration 056). Null on older landing-page rows.
+    # Waitlist context (migration 057). Null on older email-only rows.
+    name = Column(String)
     school = Column(String)
     sport = Column(String)
+    role = Column(String)
+    role_other = Column(String)
+    lead_magnet = Column(String)
+    utm_source = Column(String)
+    utm_medium = Column(String)
+    utm_campaign = Column(String)
+    email_consent_at = Column(DateTime(timezone=True))
+    email_consent_version = Column(String)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)

@@ -5,6 +5,7 @@ import IntroOverlay from '@/components/IntroOverlay'
 import { track } from '@/lib/funnel'
 import api from '@/lib/api'
 import logo from '../public/coachlenz-logo.png'
+import WaitlistForm from '@/components/signup/WaitlistForm'
 
 const OBJECTIONS: { q: string; a: string }[] = [
   {
@@ -25,7 +26,7 @@ const OBJECTIONS: { q: string; a: string }[] = [
   },
 ]
 
-export default function HomeLanding() {
+export default function HomeLanding({ signupsOpen = true }: { signupsOpen?: boolean }) {
   const [email, setEmail] = useState('')
   const [leadSent, setLeadSent] = useState(false)
 
@@ -61,15 +62,23 @@ export default function HomeLanding() {
               CoachLenz watches your game film for you and finds the tendencies, so you
               walk into every game plan with the reads instead of the busywork.
             </p>
-            <Link
-              href="/onboarding"
-              onClick={() => track('cta_click', { cta: 'hero' })}
-              className="btn-primary text-lg px-8 py-3 inline-block"
-            >
-              Start your free trial
-            </Link>
+            {signupsOpen ? (
+              <Link
+                href="/onboarding"
+                onClick={() => track('cta_click', { cta: 'hero' })}
+                className="btn-primary text-lg px-8 py-3 inline-block"
+              >
+                Start your free trial
+              </Link>
+            ) : (
+              <a href="#waitlist" className="btn-primary text-lg px-8 py-3 inline-block">
+                Join the waitlist
+              </a>
+            )}
             <p className="text-sm text-gray-500 mt-4">
-              14 days free. No credit card to start. Cancel any time.
+              {signupsOpen
+                ? '14 days free. No credit card to start. Cancel any time.'
+                : 'Coming soon. Join the list and you will be among the first to experience CoachLenz.'}
             </p>
           </div>
         </section>
@@ -89,7 +98,9 @@ export default function HomeLanding() {
           <div className="max-w-4xl mx-auto">
             <h2 className="text-2xl font-bold text-center mb-8">Straight answers before you start</h2>
             <div className="grid gap-4 sm:grid-cols-2">
-              {OBJECTIONS.map((o) => (
+              {(signupsOpen ? OBJECTIONS : OBJECTIONS.map((o) => o.q.startsWith('How much')
+                ? { ...o, a: 'Nothing yet. CoachLenz is launching soon. Join the list and you will be among the first.' }
+                : o)).map((o) => (
                 <div key={o.q} className="card">
                   <div className="font-medium text-gray-100 mb-1">{o.q}</div>
                   <div className="text-sm text-gray-400">{o.a}</div>
@@ -101,37 +112,55 @@ export default function HomeLanding() {
 
         {/* One more shot at the primary action. */}
         <section className="px-6 sm:px-8 pb-16 text-center">
-          <Link
-            href="/onboarding"
-            onClick={() => track('cta_click', { cta: 'footer' })}
-            className="btn-primary text-lg px-8 py-3 inline-block"
-          >
-            Start your free trial
-          </Link>
+          {signupsOpen ? (
+            <Link
+              href="/onboarding"
+              onClick={() => track('cta_click', { cta: 'footer' })}
+              className="btn-primary text-lg px-8 py-3 inline-block"
+            >
+              Start your free trial
+            </Link>
+          ) : (
+            <a href="#waitlist" className="btn-primary text-lg px-8 py-3 inline-block">
+              Join the waitlist
+            </a>
+          )}
         </section>
 
-        {/* Lead capture for visitors who are not ready to sign up yet. */}
-        <section className="px-6 sm:px-8 pb-20">
+        {/* Email capture. While signups are closed this is the launch list, after the intro. */}
+        <section id="waitlist" className="px-6 sm:px-8 pb-20">
           <div className="max-w-xl mx-auto card text-center">
-            {leadSent ? (
-              <p className="text-gray-300">Thanks. We will keep you posted.</p>
+            {signupsOpen ? (
+              leadSent ? (
+                <p className="text-gray-300">Thanks. We will keep you posted.</p>
+              ) : (
+                <>
+                  <div className="font-medium text-gray-100 mb-1">Not ready to start?</div>
+                  <p className="text-sm text-gray-400 mb-4">
+                    Leave your email and we will send you updates as CoachLenz grows.
+                  </p>
+                  <form onSubmit={submitLead} className="flex flex-col sm:flex-row gap-3 justify-center">
+                    <input
+                      type="email"
+                      required
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="you@yourschool.org"
+                      className="input flex-1"
+                    />
+                    <button type="submit" className="btn-secondary">Keep me posted</button>
+                  </form>
+                </>
+              )
             ) : (
               <>
-                <div className="font-medium text-gray-100 mb-1">Not ready to start?</div>
+                <p className="text-xs uppercase tracking-[0.18em] text-gold-400 mb-2">Coming soon</p>
+                <div className="font-medium text-gray-100 mb-1">Be among the first to experience CoachLenz</div>
                 <p className="text-sm text-gray-400 mb-4">
-                  Leave your email and we will send you updates as CoachLenz grows.
+                  Game film for school basketball and football. Leave your name and email
+                  and we will tell you when it opens.
                 </p>
-                <form onSubmit={submitLead} className="flex flex-col sm:flex-row gap-3 justify-center">
-                  <input
-                    type="email"
-                    required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="you@yourschool.org"
-                    className="input flex-1"
-                  />
-                  <button type="submit" className="btn-secondary">Keep me posted</button>
-                </form>
+                <WaitlistForm source="app-home" id="home-waitlist" />
               </>
             )}
           </div>
