@@ -133,16 +133,59 @@ class DataError(Exception):
     pass
 
 
+class Error(Exception):
+    """Shape of sqlalchemy's AsyncAdapt_asyncpg_dbapi.Error (seen live on staging)."""
+
+
+def _wrapped(message):
+    from sqlalchemy.exc import DBAPIError
+    driver = DataError(message)
+    adapted = Error(f"<class 'asyncpg.exceptions.DataError'>: {message}")
+    adapted.__cause__ = driver
+    return DBAPIError("SELECT 1", {}, adapted)
+
+
 @pytest.mark.unit
 def test_backstop_maps_only_an_invalid_uuid_data_error_to_404():
     from sqlalchemy.exc import DBAPIError
-    bad_uuid = DBAPIError("SELECT 1", {}, DataError(
-        "invalid input for query argument $1: 'abc' (invalid UUID 'abc': length must be between 32..36 characters, got 3)"))
-    other = DBAPIError("SELECT 1", {}, DataError("value too long for type character varying(5)"))
+    bad_uuid = _wrapped("invalid input for query argument $1: 'abc' "
+                        "(invalid UUID 'abc': length must be between 32..36 characters, got 3)")
+    other = _wrapped("value too long for type character varying(5)")
     assert is_invalid_uuid_error(bad_uuid)
+    assert is_invalid_uuid_error(DBAPIError("SELECT 1", {}, DataError("invalid UUID 'abc'")))
     assert not is_invalid_uuid_error(other)
+    assert not is_invalid_uuid_error(DBAPIError("SELECT 1", {}, Exception("invalid UUID from some other driver error")))
     req = SimpleNamespace(method="POST", url=SimpleNamespace(path="/games/x/runs/abc/restore"))
     res = asyncio.run(main._invalid_uuid_handler(req, bad_uuid))
     assert res.status_code == 404 and b"Not found" in res.body and b"abc" not in res.body
     with pytest.raises(DBAPIError):
         asyncio.run(main._invalid_uuid_handler(req, other))
+
+
+@pytest.mark.integration
+def test_backstop_recognizes_the_real_asyncpg_error_on_postgres():
+    """The round 4 staging smoke showed the real wrapper; check it end to end."""
+    import os
+    from sqlalchemy import text
+    from sqlalchemy.exc import DBAPIError
+    from sqlalchemy.ext.asyncio import create_async_engine
+    url = os.environ.get("UPLOAD_TEST_DATABASE_URL",
+                         "postgresql+asyncpg://coachlenz:coachlenz@localhost:5432/coachlenz_upload_test")
+
+    async def run():
+        engine = create_async_engine(url)
+        try:
+            async with engine.connect() as conn:
+                with pytest.raises(DBAPIError) as info:
+                    await conn.execute(text("SELECT CAST(:v AS uuid)"), {"v": "not-a-uuid"})
+                return info.value
+        finally:
+            await engine.dispose()
+
+    try:
+        err = asyncio.run(run())
+    except OSError as exc:
+        if os.environ.get("CI"):
+            pytest.fail(f"Postgres is required in CI ({type(exc).__name__})")
+        pytest.skip("Postgres is not reachable")
+    assert is_invalid_uuid_error(err), repr(err)[:300]

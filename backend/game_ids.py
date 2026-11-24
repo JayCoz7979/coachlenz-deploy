@@ -41,7 +41,18 @@ async def reject_malformed_game_id(request: Request) -> None:
 
 
 def is_invalid_uuid_error(exc) -> bool:
-    """A SQLAlchemy DBAPIError wrapping asyncpg's DataError for a bad UUID."""
-    orig = getattr(exc, "orig", None)
-    name = type(orig).__name__ if orig is not None else ""
-    return name.endswith("DataError") and "invalid UUID" in str(orig)
+    """A SQLAlchemy DBAPIError for asyncpg's "invalid UUID" DataError.
+
+    SQLAlchemy's asyncpg adapter wraps the driver error, so exc.orig is
+    AsyncAdapt_asyncpg_dbapi.Error, its message starts with
+    "<class 'asyncpg.exceptions.DataError'>", and the DataError itself is its
+    __cause__. Check the whole chain, not just the class name of exc.orig."""
+    seen = 0
+    err = getattr(exc, "orig", None)
+    while err is not None and seen < 5:
+        text = str(err)
+        if "invalid UUID" in text and (type(err).__name__ == "DataError" or "DataError" in text):
+            return True
+        err = err.__cause__ or err.__context__
+        seen += 1
+    return False
