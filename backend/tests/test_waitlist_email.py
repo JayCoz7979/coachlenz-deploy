@@ -43,10 +43,15 @@ class _Gateway:
         self.members = {}
         self.events = []
         self.unsubs = []
+        self.broadcasts = []
 
     def send(self, payload):
         self.sends.append(payload)
         return {"id": "msg_" + payload.get("kind", "x")}
+
+    def send_broadcast(self, payload):
+        self.broadcasts.append(payload)
+        return {"id": "bc_" + payload.get("kind", "x")}
 
     def upsert_contact(self, email, properties):
         self.contacts.append((email, properties))
@@ -483,7 +488,8 @@ def test_l1_broadcasts_once_per_adult_segment_and_l1m_is_minor_only(gw):
     assert [seg for seg, status in sent] == list(mail.L1_SEGMENTS)
     assert all(status == "sent" for _seg, status in sent)
     assert mail.broadcast_l1m() == "sent"
-    targets = [payload["segment"] for payload in gw.sends]
+    assert gw.sends == []  # broadcasts go through the Broadcasts API, not Emails.send
+    targets = [payload["segment"] for payload in gw.broadcasts]
     assert targets == [
         "CL Holding: Coaches",
         "CL Holding: Coaches Football",
@@ -491,7 +497,7 @@ def test_l1_broadcasts_once_per_adult_segment_and_l1m_is_minor_only(gw):
         "CL Launch only: General",
         "CL Launch only: Minor track",
     ]
-    assert [payload["kind"] for payload in gw.sends] == ["L1", "L1", "L1", "L1", "L1-M"]
+    assert [payload["kind"] for payload in gw.broadcasts] == ["L1", "L1", "L1", "L1", "L1-M"]
     assert mail.ALL_CONFIRMED not in targets
     assert "General" not in targets
 

@@ -53,6 +53,7 @@ _gateway = None
 
 RESEND_API_BASE = "https://api.resend.com"
 CONFIRMED_EVENT = "coachlenz.waitlist.confirmed"
+BROADCAST_UNSUBSCRIBE_TAG = "{{{RESEND_UNSUBSCRIBE_URL}}}"
 
 
 def _segment_ids() -> dict:
@@ -189,6 +190,38 @@ class ResendGateway:
             "email": (email or "").strip().lower(),
             "payload": {k: _property_value(v) for k, v in scrub_resend_payload(properties or {}).items() if v is not None},
         })
+
+    def send_broadcast(self, payload: dict) -> dict:
+        """One Resend Broadcast to one segment, sent at once.
+
+        Uses POST /broadcasts (not Emails.send), so Resend fills
+        {{{RESEND_UNSUBSCRIBE_URL}}} per contact and honors the topic opt-out.
+        """
+        if not self._ready():
+            return {}
+        segment = payload.get("segment") or ""
+        if segment in (FORBIDDEN_SEGMENT, ALL_CONFIRMED):
+            raise RuntimeError("Refusing to broadcast to " + segment + ".")
+        seg_id = _segment_ids().get(segment)
+        if not seg_id:
+            raise RuntimeError(f"No Resend segment id configured for {segment}.")
+        text = payload.get("text") or ""
+        refuse_if_placeholder(text)
+        if BROADCAST_UNSUBSCRIBE_TAG not in text:
+            raise RuntimeError("Refusing a broadcast without the Resend unsubscribe merge tag.")
+        body = {
+            "segment_id": seg_id,
+            "topic_id": settings.WAITLIST_RESEND_TOPIC_ID.strip(),
+            "from": payload.get("from") or _from_address(),
+            "subject": payload.get("subject") or "",
+            "text": text,
+            "name": payload.get("name") or f"CoachLenz {payload.get('kind', '')} {segment}".strip(),
+            "send": True,
+        }
+        reply = payload.get("reply_to")
+        if reply:
+            body["reply_to"] = reply
+        return self._call("POST", "/broadcasts", body)
 
     def unsubscribe_contact(self, email: str, only_list: str) -> None:
         if not self._ready():
@@ -364,7 +397,7 @@ def _unsubscribe_line(token: str | None, broadcast: bool = False) -> str:
         return f"Unsubscribe from CoachLenz emails with one click: {unsubscribe_url(token)}\n"
     if broadcast:
         # A Resend broadcast fills in this merge tag per contact.
-        return "Unsubscribe from CoachLenz emails with one click: {{{RESEND_UNSUBSCRIBE_URL}}}\n"
+        return "Unsubscribe from CoachLenz emails with one click: " + BROADCAST_UNSUBSCRIBE_TAG + "\n"
     reply = _reply_to() or DEFAULT_WAITLIST_REPLY_TO
     return f"Unsubscribe from CoachLenz emails: reply to this email or write to {reply} with the word unsubscribe.\n"
 
@@ -691,10 +724,14 @@ def broadcast(kind: str, segment: str) -> str:
     guard_broadcast(segment, kind)
     if not emails_enabled():
         return "email_off"
-    gateway().send({
+    gateway().send_broadcast({
         "kind": kind,
         "segment": segment,
         "broadcast": True,
+        "from": _from_address(),
+        "reply_to": _reply_to(),
+        "subject": "CoachLenz is opening",
+        "name": f"CoachLenz {kind} {segment}",
         "text": l1m_text(broadcast=True) if kind == "L1-M" else launch_text(broadcast=True),
     })
     return "sent"

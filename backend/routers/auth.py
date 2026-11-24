@@ -420,20 +420,25 @@ class UnsubscribeRequest(BaseModel):
 async def unsubscribe(request: Request, body: UnsubscribeRequest, db: AsyncSession = Depends(get_db)):
     """One-click marketing opt-out from an email link (public, no login). Flips the
     coach's marketing_opt_in off by their stable unsubscribe token. Idempotent, and it
-    returns the same confirmation whether or not the token matched, so the endpoint
-    can't be used to probe which tokens are real."""
+    returns the same confirmation for every well-formed token whether or not it
+    matched, so the endpoint can't be used to probe which tokens are real. A token
+    with a shape no issuer makes gets 400."""
+    from backend.services.unsubscribe_token import is_valid_unsubscribe_token
     token = (body.token or "").strip()
-    if token:
-        u = (await db.execute(select(User).where(User.unsubscribe_token == token))).scalar_one_or_none()
-        if u is not None and u.marketing_opt_in:
-            u.marketing_opt_in = False
-            await db.commit()
-        from backend.models.funnel import MarketingLead
-        from backend.services.waitlist_email import unsubscribe_lead
-        lead = (await db.execute(
-            select(MarketingLead).where(MarketingLead.unsubscribe_token == token)
-        )).scalar_one_or_none()
-        if lead is not None:
-            await unsubscribe_lead(db, lead, "unsubscribe_link")
-            await db.commit()
+    if not is_valid_unsubscribe_token(token):
+        # Not a shape any issuer makes (see services/unsubscribe_token.py). The
+        # page shows its error state instead of a false "unsubscribed".
+        raise HTTPException(status_code=400, detail="This unsubscribe link isn't valid.")
+    u = (await db.execute(select(User).where(User.unsubscribe_token == token))).scalar_one_or_none()
+    if u is not None and u.marketing_opt_in:
+        u.marketing_opt_in = False
+        await db.commit()
+    from backend.models.funnel import MarketingLead
+    from backend.services.waitlist_email import unsubscribe_lead
+    lead = (await db.execute(
+        select(MarketingLead).where(MarketingLead.unsubscribe_token == token)
+    )).scalar_one_or_none()
+    if lead is not None:
+        await unsubscribe_lead(db, lead, "unsubscribe_link")
+        await db.commit()
     return {"ok": True, "message": "You're unsubscribed from CoachLenz marketing emails."}
