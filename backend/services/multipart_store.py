@@ -4,6 +4,7 @@ Production writes to Cloudflare R2 with the S3 multipart API. Dev and tests, whe
 R2 credentials are absent, use the same create / part / list / complete / abort
 contract on local disk. Callers never send a whole game film through one request.
 """
+import contextlib
 import fcntl
 import hashlib
 import json
@@ -23,6 +24,11 @@ class MultipartError(Exception):
 
 def _local() -> bool:
     return r2._use_local()
+
+
+def uses_local_disk() -> bool:
+    """True when uploads are stored on local disk (dev, tests, staging)."""
+    return _local()
 
 
 def _root() -> str:
@@ -222,8 +228,38 @@ def _assembled_size(dest: str, expected: int) -> Optional[int]:
     return None
 
 
-def _complete_local(key: str, upload_id: str, parts: list[dict]) -> int:
-    """Assemble local parts under an exclusive cross-process lock.
+@contextlib.contextmanager
+def upload_lock(upload_id: str):
+    """Hold the per-upload cross-process lock for local storage.
+
+    finish_upload lists the parts, checks them and assembles them inside this
+    lock, so a second complete never sees a part directory that the first one
+    is still removing. The body must not await: the lock is a blocking flock.
+    R2 does not need it (ListParts and CompleteMultipartUpload are atomic
+    there), so it is a no-op and R2 behavior is unchanged. An invalid upload id
+    takes no lock; the caller's list_parts raises MultipartError as before.
+    """
+    if not _local():
+        yield
+        return
+    try:
+        lock_path = _lock_path(upload_id)
+    except MultipartError:
+        yield
+        return
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+    finally:
+        os.close(lock_fd)
+
+
+def _assemble_local(key: str, upload_id: str, parts: list[dict]) -> int:
+    """Assemble local parts. The caller holds upload_lock(upload_id).
 
     Two completes used to write the same `<dest>.partial` and the loser left
     zeros in the winner's film. Each attempt now writes a private temp file,
@@ -231,47 +267,49 @@ def _complete_local(key: str, upload_id: str, parts: list[dict]) -> int:
     A caller that arrives after the object is already the expected size returns
     that size and does not rewrite it.
     """
-    lock_path = _lock_path(upload_id)
-    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    dest = r2._safe_local_path(key)
+    expected = sum(int(p["size"]) for p in parts)
+    ready = _assembled_size(dest, expected)
+    if ready is not None:
+        return ready
+    ordered = sorted(parts, key=lambda p: int(p["part_number"]))
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    fd, tmp = tempfile.mkstemp(
+        prefix="." + os.path.basename(dest) + ".",
+        dir=os.path.dirname(dest),
+    )
     try:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
-        try:
-            dest = r2._safe_local_path(key)
-            expected = sum(int(p["size"]) for p in parts)
-            ready = _assembled_size(dest, expected)
-            if ready is not None:
-                return ready
-            ordered = sorted(parts, key=lambda p: int(p["part_number"]))
-            os.makedirs(os.path.dirname(dest), exist_ok=True)
-            fd, tmp = tempfile.mkstemp(
-                prefix="." + os.path.basename(dest) + ".",
-                dir=os.path.dirname(dest),
-            )
-            try:
-                with os.fdopen(fd, "wb") as out:
-                    for part in ordered:
-                        src = _part_path(upload_id, int(part["part_number"]))
-                        with open(src, "rb") as inp:
-                            shutil.copyfileobj(inp, out, length=1024 * 1024)
-                    out.flush()
-                    os.fsync(out.fileno())
-                os.replace(tmp, dest)
-                tmp = ""
-            finally:
-                if tmp:
-                    try:
-                        os.remove(tmp)
-                    except OSError:
-                        pass
-            shutil.rmtree(_part_dir(upload_id), ignore_errors=True)
-            return os.path.getsize(dest)
-        finally:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        with os.fdopen(fd, "wb") as out:
+            for part in ordered:
+                src = _part_path(upload_id, int(part["part_number"]))
+                with open(src, "rb") as inp:
+                    shutil.copyfileobj(inp, out, length=1024 * 1024)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(tmp, dest)
+        tmp = ""
     finally:
-        os.close(lock_fd)
+        if tmp:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+    shutil.rmtree(_part_dir(upload_id), ignore_errors=True)
+    return os.path.getsize(dest)
 
 
-def complete_upload(key: str, upload_id: str, parts: list[dict]) -> int:
+def _complete_local(key: str, upload_id: str, parts: list[dict], lock_held: bool = False) -> int:
+    """Assemble local parts under the exclusive cross-process lock. Pass
+    lock_held=True when the caller already holds upload_lock(upload_id); a
+    second flock on a new descriptor would wait on itself."""
+    if lock_held:
+        return _assemble_local(key, upload_id, parts)
+    _lock_path(upload_id)  # A bad upload id raises MultipartError, as before.
+    with upload_lock(upload_id):
+        return _assemble_local(key, upload_id, parts)
+
+
+def complete_upload(key: str, upload_id: str, parts: list[dict], lock_held: bool = False) -> int:
     """Assemble the parts into the final object. Idempotent: a second call after
     a successful assemble returns the object size. Returns that size in bytes.
 
@@ -280,9 +318,11 @@ def complete_upload(key: str, upload_id: str, parts: list[dict]) -> int:
     a concurrent or repeated complete receives NoSuchUpload rather than writing
     the object again. The handler below turns that into the stored size.
     https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html
+
+    lock_held applies to local storage only (see upload_lock). R2 ignores it.
     """
     if _local():
-        return _complete_local(key, upload_id, parts)
+        return _complete_local(key, upload_id, parts, lock_held=lock_held)
     client = r2.get_r2_client()
     ordered = sorted(parts, key=lambda p: p["part_number"])
     try:
