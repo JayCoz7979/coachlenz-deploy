@@ -257,7 +257,7 @@ def upload_status(org, token: str) -> dict:
     try:
         parts = store.list_parts(session["key"], session["upid"])
         assembled = False
-    except MultipartError:
+    except (MultipartError, FileNotFoundError):
         # The multipart id is gone once the object is assembled. A retry of
         # complete (the DB commit failed, or the response never came back)
         # should not make the browser send the file again.
@@ -377,25 +377,18 @@ def _apply_game_date(game: Game, raw) -> None:
         return
 
 
-async def finish_upload(db, user, org, token: str, body) -> dict:
-    """Assemble the object, then insert the game and reserve the trial slot.
-
-    If the chunks are incomplete, nothing is inserted and the trial slot is not
-    touched, so the coach can resume. A second call after success returns the
-    same game and does not reserve a second slot.
-    """
-    # Rollback expires every ORM object in the session (expire_on_rollback).
-    # Reading org.id after that lazy-loads, and async sessions raise
-    # MissingGreenlet, which the API turns into a 500. Snapshot first.
-    org_id = org.id
-    trial_game = is_trial_active(org)
-    session = read_session(token, org)
-    key = session["key"]
+def _assemble_checked(key: str, session: dict) -> None:
+    """List, check and assemble the parts. Raises HTTPException when the upload
+    cannot become a game. finish_upload calls it inside store.upload_lock, so
+    this must stay sync (no await while a blocking file lock is held)."""
     try:
         parts = store.list_parts(key, session["upid"])
-    except MultipartError:
+    except (MultipartError, FileNotFoundError):
         # Already assembled (resume of a complete that failed before the DB
         # commit). Fall through and let complete_upload return the object.
+        # FileNotFoundError: a part file vanished between listdir and open
+        # (local storage, removed by a finished complete or an abort). Same
+        # check: the object at the declared size is the upload, never a 500.
         parts = []
         already = store.object_size(key)
         if already is None:
@@ -405,6 +398,10 @@ async def finish_upload(db, user, org, token: str, body) -> dict:
     else:
         state = _assess(parts, session["part"], session["count"], session["size"])
         if state == "incomplete":
+            # Local storage: if the film is already assembled at the declared
+            # size, this is a late duplicate complete, not a broken upload.
+            if store.uses_local_disk() and store.object_size(key) == session["size"]:
+                return
             raise HTTPException(status_code=409, detail=MSG_INCOMPLETE)
         if state == "too_big":
             try:
@@ -413,7 +410,7 @@ async def finish_upload(db, user, org, token: str, body) -> dict:
                 pass
             raise HTTPException(status_code=413, detail=MSG_TOO_BIG)
         try:
-            size = store.complete_upload(key, session["upid"], parts)
+            size = store.complete_upload(key, session["upid"], parts, lock_held=True)
         except FileNotFoundError:
             # The other process removed the part files after assembling. If the
             # object is already the declared size, this complete succeeded.
@@ -438,6 +435,27 @@ async def finish_upload(db, user, org, token: str, body) -> dict:
             except Exception:
                 pass
             raise HTTPException(status_code=413, detail=MSG_TOO_BIG)
+
+
+async def finish_upload(db, user, org, token: str, body) -> dict:
+    """Assemble the object, then insert the game and reserve the trial slot.
+
+    If the chunks are incomplete, nothing is inserted and the trial slot is not
+    touched, so the coach can resume. A second call after success returns the
+    same game and does not reserve a second slot.
+    """
+    # Rollback expires every ORM object in the session (expire_on_rollback).
+    # Reading org.id after that lazy-loads, and async sessions raise
+    # MissingGreenlet, which the API turns into a 500. Snapshot first.
+    org_id = org.id
+    trial_game = is_trial_active(org)
+    session = read_session(token, org)
+    key = session["key"]
+    # Local storage: list, check and assemble under the per-upload lock so a
+    # second complete never reads a part directory the first is removing.
+    # The helper is sync, so nothing awaits while the lock is held.
+    with store.upload_lock(session["upid"]):
+        _assemble_checked(key, session)
 
     existing = await _existing_game(db, org_id, key)
     if existing:
