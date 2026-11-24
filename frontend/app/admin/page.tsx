@@ -18,7 +18,8 @@ export default function AdminPage() {
   const [funnel, setFunnel] = useState<any>(null)
   const [costs, setCosts] = useState<any>(null)
   const [detection, setDetection] = useState<any>(null)
-  const [tab, setTab] = useState<'orgs'|'retention'|'funnel'|'detection'|'costs'|'features'|'flags'|'stats'>('orgs')
+  const [tab, setTab] = useState<'orgs'|'retention'|'funnel'|'detection'|'costs'|'features'|'flags'|'stats'|'waitlist'>('orgs')
+  const [leads, setLeads] = useState<any[]>([])
   const [orgToDelete, setOrgToDelete] = useState<{id: string, name: string} | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [err, setErr] = useState('')
@@ -38,6 +39,7 @@ export default function AdminPage() {
     api.get('/admin/funnel').then(r => setFunnel(r.data)).catch(() => {})
     api.get('/admin/analysis-costs').then(r => setCosts(r.data)).catch(() => {})
     api.get('/admin/detection-quality').then(r => setDetection(r.data)).catch(() => {})
+    api.get('/admin/leads').then(r => setLeads(r.data.leads || [])).catch(() => {})
   }, [user])
 
   const gateStyle: Record<string, string> = {
@@ -111,8 +113,8 @@ export default function AdminPage() {
           <h2 className="text-2xl font-bold mb-6 flex items-center gap-3"><ShieldCheck className="text-brand-400" /> Admin Panel</h2>
           {err && <div className="mb-4 text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-2">{err}</div>}
           <div className="flex gap-2 mb-6">
-            {(['orgs','retention','funnel','detection','costs','features','flags','stats'] as const).map(t => (
-              <button key={t} onClick={() => setTab(t)} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === t ? 'bg-brand-500 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-100'}`}>{t === 'orgs' ? 'Organizations' : t === 'retention' ? 'Retention' : t === 'funnel' ? 'Funnel' : t === 'detection' ? 'Film Quality' : t === 'costs' ? 'Costs' : t === 'features' ? 'Feature Toggles' : t === 'flags' ? 'Risk Flags' : 'Stats'}</button>
+            {(['orgs','retention','funnel','detection','costs','features','flags','waitlist','stats'] as const).map(t => (
+              <button key={t} onClick={() => setTab(t)} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === t ? 'bg-brand-500 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-100'}`}>{t === 'orgs' ? 'Organizations' : t === 'retention' ? 'Retention' : t === 'funnel' ? 'Funnel' : t === 'detection' ? 'Film Quality' : t === 'costs' ? 'Costs' : t === 'features' ? 'Feature Toggles' : t === 'flags' ? 'Risk Flags' : t === 'waitlist' ? 'Waitlist' : 'Stats'}</button>
             ))}
           </div>
           {tab === 'stats' && stats && (
@@ -428,6 +430,54 @@ export default function AdminPage() {
                 </div>
               ))}
               {features.length === 0 && <div className="text-center text-gray-500 py-12">No feature toggles available.</div>}
+            </div>
+          )}
+          {tab === 'waitlist' && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-4">
+                <p className="text-sm text-gray-400">People who asked to be first when CoachLenz opens. Nothing here sends email.</p>
+                <button
+                  className="btn-secondary"
+                  onClick={async () => {
+                    const r = await api.get('/admin/leads.csv', { responseType: 'blob' })
+                    const url = URL.createObjectURL(r.data)
+                    const a = document.createElement('a')
+                    a.href = url
+                    a.download = 'coachlenz-waitlist.csv'
+                    a.click()
+                    URL.revokeObjectURL(url)
+                  }}
+                >Download CSV</button>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-gray-400 border-b border-gray-800">
+                      <th className="text-left pb-3">First name</th>
+                      <th className="text-left pb-3">Email</th>
+                      <th className="text-left pb-3">Role</th>
+                      <th className="text-left pb-3">School</th>
+                      <th className="text-left pb-3">Sport</th>
+                      <th className="text-left pb-3">Consent</th>
+                      <th className="text-left pb-3">Source</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-800">
+                    {leads.map((lead) => (
+                      <tr key={lead.email}>
+                        <td className="py-3">{lead.first_name || '-'}</td>
+                        <td className="py-3">{lead.email}</td>
+                        <td className="py-3">{lead.role || '-'}</td>
+                        <td className="py-3">{lead.school || '-'}</td>
+                        <td className="py-3">{lead.sport || '-'}</td>
+                        <td className="py-3">{lead.consent_text_version || '-'}</td>
+                        <td className="py-3">{lead.source || '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {leads.length === 0 && <div className="text-center text-gray-500 py-12">No one is on the list yet.</div>}
+              </div>
             </div>
           )}
           {tab === 'flags' && (

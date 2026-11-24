@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import api from '@/lib/api'
+import TrialCta from '@/components/signup/TrialCta'
 // Static import so the transparent lockup is emitted to /_next/static/media
 // (public/ is not bundled with output:'standalone').
 import logo from '../../public/coachlenz-logo.png'
@@ -53,7 +54,7 @@ export default function LoginPage() {
           </div>
           <button type="submit" disabled={loading} className="btn-primary w-full">{loading ? 'Signing in...' : 'Sign In'}</button>
           <p className="text-center text-sm text-gray-400">
-            No account? <Link href="/onboarding" className="text-brand-400 hover:underline">Start free trial</Link>
+            No account? <TrialCta openLabel="Start free trial" className="text-brand-400 hover:underline" />
           </p>
         </form>
         <p className="text-center text-xs text-gray-600 mt-6">

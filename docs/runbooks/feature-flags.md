@@ -21,6 +21,7 @@ across all workers within **~20 seconds**. That's it.
 |-----|--------------|-------------|---------------|
 | `rerun_confirmation` | Require confirmation + notify all team coaches before a 2nd billable analysis on already-analyzed film | `RERUN_CONFIRMATION_ENABLED` | **On** |
 | `recruiting_consent` | Require a per-player directory-disclosure attestation before minting a public recruiting link | `RECRUITING_CONSENT_ENABLED` | **Off** |
+| `signups_enabled` | New accounts. Off rejects `POST /auth/register` with 403 "Signups are paused" and the app homepage, `/onboarding`, and trial links show the waitlist. Login, password reset, email verification, and staff invites stay open. | `SIGNUPS_ENABLED` | **Off** (closed when the env var is unset or false) |
 
 > `recruiting_consent` is intentionally **off** until the attorney finalizes the
 > attestation text in `services/legal.py` (`RECRUITING_DIRECTORY_VERSION`,
@@ -68,5 +69,11 @@ It then appears in the Admin panel automatically, grouped by its `category`.
 
 ## Rollback
 Turn the flag **off** in the panel (or `PUT ... {enabled:false}`). Effect within
-~20s, no deploy. For the two current flags, "off" restores prior behavior exactly
-(no rerun gate / no recruiting-consent gate).
+~20s, no deploy. For `rerun_confirmation` and `recruiting_consent`, "off" restores
+prior behavior exactly (no rerun gate / no recruiting-consent gate).
+
+`signups_enabled` is the other way around: **off is the closed door** (the shipped
+default), and **on** is what reopens `POST /auth/register` and the signup screens.
+To reopen signups, turn the toggle on in Admin, Feature Toggles. That beats the
+env var. To make "open" the shipped default as well, set `SIGNUPS_ENABLED=true`
+on `coachlenz-backend` (that redeploys). A DB override still wins until you clear it.

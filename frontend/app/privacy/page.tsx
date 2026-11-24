@@ -45,6 +45,26 @@ export default function PrivacyPage() {
           identifiers.
         </p>
 
+        <h2 className="text-xl font-semibold text-gray-100 pt-2">Waitlist and marketing email</h2>
+        <p className="text-sm uppercase tracking-wide text-gold-400">Draft. Pending review by Jason and an attorney. Do not publish until Jason approves.</p>
+        <p>
+          If you join the waitlist we collect your first name, email, and role, plus an optional
+          school and sport. The roles are head coach, assistant coach, athletic director, principal
+          or admin, video coordinator, parent, and other. There is no Player role. We store the
+          IP address and the browser user agent, truncated to 300 characters, on the consent record
+          when you sign up and again when you confirm. That record also stores the consent sentence,
+          the button text you clicked, the consent version, and a hash of that text. You are not on
+          the list until you tap the confirm link in the email we send. After you confirm, we can
+          email you about the waitlist, free coaching resources, launch news, and pricing when we
+          open. A minor-track classification is not chosen on this form. We apply it only if we
+          later reclassify a contact, and that track does not receive the adult launch series.
+          Resend sends the emails. We do not send your IP address or user agent to Resend. Every
+          message links to <a href="https://app.coachlenz.com/privacy" className="text-brand-400 underline">https://app.coachlenz.com/privacy</a> and
+          has a one-click unsubscribe that does not need a sign-in. Unsubscribing, and a completed
+          deletion request for that email, removes the stored IP address and user agent from the
+          consent record. How long we keep the rest of the waitlist record is pending attorney review.
+        </p>
+
         <h2 className="text-xl font-semibold text-gray-100 pt-2">2. How we use film and student-athlete data</h2>
         <p>
           Film and its analysis are used only to provide the service you requested. We do not use

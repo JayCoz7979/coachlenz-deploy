@@ -31,6 +31,12 @@ FLAGS: dict[str, dict] = {
         "category": "Compliance",
         "env_default": "RECRUITING_CONSENT_ENABLED",
     },
+    "signups_enabled": {
+        "label": "New account signups",
+        "description": "When off, POST /auth/register returns 403 and the public app shows the coming-soon waitlist. Login, password reset, email verification, and staff invites stay open.",
+        "category": "Launch",
+        "env_default": "SIGNUPS_ENABLED",
+    },
 }
 
 _TTL_SECONDS = 20.0

@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import api from '@/lib/api'
 import { track, getAnonId, getSource } from '@/lib/funnel'
+import ComingSoon from '@/components/signup/ComingSoon'
+import { useSignupGate } from '@/components/signup/useSignupGate'
 
 type Sport = { value: string; label: string }
 type Phase = 'register' | 'email' | 'sport'
@@ -34,11 +36,25 @@ function OnboardingForm() {
   const [attestation, setAttestation] = useState('')
   const [alreadyConsented, setAlreadyConsented] = useState(false)
   const [dataConsent, setDataConsent] = useState(false)
+  const [sessionReady, setSessionReady] = useState(false)
+  const [signedIn, setSignedIn] = useState(false)
+  const gate = useSignupGate()
 
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, [k]: e.target.value }))
 
-  // Funnel: the visitor reached the signup page. Fires once on mount.
-  useEffect(() => { track('signup_view') }, [])
+  useEffect(() => {
+    setSignedIn(!!localStorage.getItem('access_token'))
+    setSessionReady(true)
+  }, [])
+
+  // Funnel: a real signup view. A closed door shows the waitlist instead, and that
+  // visit is a lead, not a signup_view. Signed-in coaches finishing verification
+  // still count, because they already registered.
+  useEffect(() => {
+    if (!sessionReady) return
+    if (!signedIn && gate !== 'open') return
+    track('signup_view')
+  }, [sessionReady, signedIn, gate])
 
   // On the sport step, load the student-data attestation text (and whether the org
   // already attested, in which case the checkbox is not needed).
@@ -122,6 +138,15 @@ function OnboardingForm() {
       router.push('/dashboard')
     } catch (err: any) { setError(err.response?.data?.detail || 'Could not save your sport.') }
     finally { setLoading(false) }
+  }
+
+  // A person who already registered still finishes email verification and sport
+  // selection here. Only a signed-out visitor is sent to the waitlist.
+  if (!sessionReady || (!signedIn && gate === 'loading')) {
+    return <div className="min-h-screen bg-gray-950" />
+  }
+  if (!signedIn && gate !== 'open') {
+    return <ComingSoon source="app-onboarding" />
   }
 
   const heading = phase === 'register' ? 'Start your 14-day free trial'

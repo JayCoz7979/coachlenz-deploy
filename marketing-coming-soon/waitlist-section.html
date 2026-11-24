@@ -1,0 +1,103 @@
+<!--
+  Paste this section onto the existing coachlenz.com homepage, in front of the
+  footer. Do not replace the page. The animated hero stays.
+  Posts to the CoachLenz waitlist. No secrets.
+-->
+<section id="waitlist" style="background:#1c1c1c;color:#f8f6f0;font-family:Georgia,sans-serif;padding:64px 20px;">
+  <div style="max-width:560px;margin:0 auto;">
+    <p style="letter-spacing:.18em;text-transform:uppercase;color:#C9A84C;font-size:12px;margin:0 0 8px;">Coming soon</p>
+    <h2 style="font-size:32px;margin:0 0 12px;">Be among the first to experience CoachLenz</h2>
+    <p style="font-size:16px;color:#f8f6f0;line-height:1.5;margin:0 0 20px;">Game film for school basketball and football. Join the waitlist and we'll email you when CoachLenz opens, plus a few free coaching resources before then. Already have an account? You can still <a href="https://app.coachlenz.com/login" style="color:#2d8c40;">sign in</a>.</p>
+    <form id="cl-waitlist" style="display:grid;gap:12px;">
+      <div id="cl-waitlist-error" hidden style="background:rgba(224,112,112,.12);color:#e07070;padding:12px;border-radius:4px;"></div>
+      <label>First name<br><input name="first_name" required maxlength="80" autocomplete="given-name" style="width:100%;height:44px;margin-top:4px;background:#3d3d3d;color:#f8f6f0;border:1px solid rgba(255,255,255,.12);padding:0 12px;"></label>
+      <label>Email<br><input name="email" type="email" required autocomplete="email" style="width:100%;height:44px;margin-top:4px;background:#3d3d3d;color:#f8f6f0;border:1px solid rgba(255,255,255,.12);padding:0 12px;"></label>
+      <label>I am a...<br>
+        <select name="role" required style="width:100%;height:44px;margin-top:4px;background:#3d3d3d;color:#f8f6f0;border:1px solid rgba(255,255,255,.12);padding:0 12px;">
+          <option value="">I am a...</option>
+          <option value="head_coach">Head Coach</option>
+          <option value="assistant_coach">Assistant Coach</option>
+          <option value="athletic_director">Athletic Director</option>
+          <option value="principal_admin">Principal or Admin</option>
+          <option value="video_coordinator">Video Coordinator</option>
+          <option value="parent">Parent</option>
+          <option value="other">Other</option>
+        </select>
+      </label>
+      <label>School (optional)<br><input name="school" maxlength="200" style="width:100%;height:44px;margin-top:4px;background:#3d3d3d;color:#f8f6f0;border:1px solid rgba(255,255,255,.12);padding:0 12px;"></label>
+      <label>Sport (optional)<br>
+        <select name="sport" style="width:100%;height:44px;margin-top:4px;background:#3d3d3d;color:#f8f6f0;border:1px solid rgba(255,255,255,.12);padding:0 12px;">
+          <option value="">Sport (optional)</option>
+          <option value="basketball">Basketball</option>
+          <option value="football">Football</option>
+          <option value="soccer">Soccer</option>
+          <option value="volleyball">Volleyball</option>
+          <option value="other">Other</option>
+        </select>
+      </label>
+      <p id="cl-consent" style="font-size:16px;color:#f8f6f0;line-height:1.5;">By clicking Send me the Halftime Sheet, you join the CoachLenz waitlist and agree that CoachLenz can email you about the waitlist, free coaching resources, launch news, and pricing when we open. You can unsubscribe anytime with one click. See our <a href="https://app.coachlenz.com/privacy" style="color:#2d8c40;">Privacy Policy</a>.</p>
+      <button type="submit" style="height:48px;background:#C9A84C;color:#1c1c1c;border:0;font-weight:700;letter-spacing:.04em;cursor:pointer;">Send me the Halftime Sheet</button>
+    </form>
+  </div>
+</section>
+<script>
+(function () {
+  var form = document.getElementById("cl-waitlist");
+  if (!form) return;
+  var errorBox = document.getElementById("cl-waitlist-error");
+  var ENDPOINT = "https://coachlenz-backend-production.up.railway.app/leads";
+  var STORE = "cl_wl_attr";
+  function clip(v) { return String(v || "").trim().slice(0, 120); }
+  try {
+    if (!sessionStorage.getItem(STORE)) {
+      var q0 = new URLSearchParams(window.location.search);
+      var host = "";
+      try { if (document.referrer) host = new URL(document.referrer).hostname; } catch (e) {}
+      sessionStorage.setItem(STORE, JSON.stringify({
+        utm_source: clip(q0.get("utm_source")),
+        utm_medium: clip(q0.get("utm_medium")),
+        utm_campaign: clip(q0.get("utm_campaign")),
+        utm_content: clip(q0.get("utm_content")),
+        utm_term: clip(q0.get("utm_term")),
+        referrer: clip(host),
+        landing_path: clip(location.pathname),
+        lead_magnet: clip(q0.get("lead_magnet") || q0.get("magnet")),
+        ref_code: clip(q0.get("ref"))
+      }));
+    }
+  } catch (e) {}
+  function show(message) { errorBox.hidden = false; errorBox.textContent = message; }
+  form.addEventListener("submit", function (event) {
+    event.preventDefault();
+    var data = new FormData(form);
+    var first = String(data.get("first_name") || "").trim();
+    var email = String(data.get("email") || "").trim();
+    var role = String(data.get("role") || "");
+    if (!first) { show("First name is required."); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { show("Enter a valid email address."); return; }
+    if (!role) { show("Please tell us your role."); return; }
+    var body = { email: email, first_name: first, role: role, source: "coachlenz-site-waitlist" };
+    var school = String(data.get("school") || "").trim();
+    var sport = String(data.get("sport") || "");
+    if (school) body.school = school;
+    if (sport) body.sport = sport;
+    try {
+      var saved = JSON.parse(sessionStorage.getItem(STORE) || "{}");
+      Object.keys(saved).forEach(function (key) { if (saved[key]) body[key] = saved[key]; });
+    } catch (e) {}
+    var button = form.querySelector("button");
+    button.disabled = true;
+    fetch(ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }).then(function (res) {
+      if (!res.ok) throw new Error("save failed");
+      form.outerHTML = '<p role="status" style="font-size:16px;color:#f8f6f0;">You\'re on the list.</p>';
+    }).catch(function () {
+      show("Could not join the waitlist. Please try again.");
+      button.disabled = false;
+    });
+  });
+})();
+</script>
