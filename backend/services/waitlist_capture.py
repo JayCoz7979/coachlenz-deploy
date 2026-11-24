@@ -109,7 +109,7 @@ def role_branch_for(role: str | None) -> str | None:
 
 def active_pair_id() -> str:
     from backend.config import settings
-    raw = (getattr(settings, "WAITLIST_CONSENT_PAIR", None) or "a").strip().lower()
+    raw = (getattr(settings, "WAITLIST_CONSENT_PAIR", None) or "b").strip().lower()
     return raw if raw in CONSENT_PAIRS else "b"
 
 

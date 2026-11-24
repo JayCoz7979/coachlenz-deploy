@@ -5,6 +5,7 @@ limited. The beacon only accepts the anonymous client events; the two signup ste
 are emitted server-side (auth.register, onboarding.choose_sports) so they cannot be
 spoofed from the browser.
 """
+import logging
 from datetime import datetime
 from typing import Optional
 
@@ -31,6 +32,7 @@ from backend.services.waitlist_capture import (
 # sports; the others are there so a coach in a different sport can still sign up.
 WAITLIST_SPORTS = ("basketball", "football", "soccer", "volleyball", "other")
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["funnel"])
 
 
@@ -188,7 +190,13 @@ async def capture_lead(body: LeadIn, request: Request, db: AsyncSession = Depend
             })
             await db.commit()
         except Exception:
-            pass
+            # The lead row is already committed. Log the consent-event failure
+            # (lead id only, never the address) instead of dropping it silently.
+            logger.exception("waitlist after_stored failed for lead %s", getattr(row, "id", None))
+            try:
+                await db.rollback()
+            except Exception:
+                pass
     except IntegrityError:
         # Two requests inserted the same email at once. The unique index already
         # kept a single row, so the visitor is on the list.
