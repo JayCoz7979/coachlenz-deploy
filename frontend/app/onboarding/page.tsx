@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import api from '@/lib/api'
 import { track, getAnonId, getSource } from '@/lib/funnel'
+import ComingSoon from '@/components/signup/ComingSoon'
+import { useSignupGate } from '@/components/signup/useSignupGate'
 
 type Sport = { value: string; label: string }
 type Phase = 'register' | 'email' | 'sport'
@@ -34,8 +36,16 @@ function OnboardingForm() {
   const [attestation, setAttestation] = useState('')
   const [alreadyConsented, setAlreadyConsented] = useState(false)
   const [dataConsent, setDataConsent] = useState(false)
+  const [sessionReady, setSessionReady] = useState(false)
+  const [signedIn, setSignedIn] = useState(false)
+  const gate = useSignupGate()
 
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, [k]: e.target.value }))
+
+  useEffect(() => {
+    setSignedIn(!!localStorage.getItem('access_token'))
+    setSessionReady(true)
+  }, [])
 
   // Funnel: the visitor reached the signup page. Fires once on mount.
   useEffect(() => { track('signup_view') }, [])
@@ -122,6 +132,15 @@ function OnboardingForm() {
       router.push('/dashboard')
     } catch (err: any) { setError(err.response?.data?.detail || 'Could not save your sport.') }
     finally { setLoading(false) }
+  }
+
+  // A person who already registered still finishes email verification and sport
+  // selection here. Only a signed-out visitor is sent to the waitlist.
+  if (!sessionReady || (!signedIn && gate === 'loading')) {
+    return <div className="min-h-screen bg-gray-950" />
+  }
+  if (!signedIn && gate !== 'open') {
+    return <ComingSoon source="app-onboarding" />
   }
 
   const heading = phase === 'register' ? 'Start your 14-day free trial'

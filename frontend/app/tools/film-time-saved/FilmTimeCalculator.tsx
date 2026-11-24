@@ -2,6 +2,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { track, getSource } from '@/lib/funnel'
+import TrialCta from '@/components/signup/TrialCta'
+import { useSignupGate } from '@/components/signup/useSignupGate'
 import api from '@/lib/api'
 import logo from '../../../public/coachlenz-logo.png'
 
@@ -10,6 +12,7 @@ export default function FilmTimeCalculator() {
   const [hours, setHours] = useState(3)
   const [email, setEmail] = useState('')
   const [sent, setSent] = useState(false)
+  const signupsOpen = useSignupGate() === 'open'
 
   // A visitor arriving on the tool is a top-of-funnel visitor, attributed by source.
   useEffect(() => { track('landing_view', { page: 'film-time-calculator' }) }, [])
@@ -65,11 +68,9 @@ export default function FilmTimeCalculator() {
           </div>
 
           <div className="text-center mt-8">
-            <Link href="/onboarding" onClick={() => track('cta_click', { cta: 'calculator' })}
-                  className="btn-primary text-lg px-8 py-3 inline-block">
-              Start your free trial
-            </Link>
-            <p className="text-sm text-gray-500 mt-3">14 days free. No credit card to start.</p>
+            <TrialCta openLabel="Start your free trial" onClick={() => track('cta_click', { cta: 'calculator' })}
+                  className="btn-primary text-lg px-8 py-3 inline-block" />
+            {signupsOpen && <p className="text-sm text-gray-500 mt-3">14 days free. No credit card to start.</p>}
           </div>
 
           <div className="card mt-10 text-center">

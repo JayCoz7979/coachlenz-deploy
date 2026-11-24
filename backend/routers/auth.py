@@ -11,7 +11,7 @@ from backend.services.abuse_prevention import get_risk_score, fingerprint_reques
 from backend.services.trial import TRIAL_DAYS
 from backend.services.legal import record_acceptance
 from backend.services.email_service import send_welcome_email, send_password_reset_email, send_email_verification_code
-from backend.services import twilio_verify
+from backend.services import feature_flags, twilio_verify
 from backend.utils.timeutils import to_naive_utc
 from backend.ratelimit import limiter
 import uuid
@@ -20,6 +20,13 @@ import hashlib
 from slugify import slugify
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+# Staff invites do not come through /auth/register. A head coach creates the user
+# at POST /staff/invite, and the invitee sets a password at /accept-invite via
+# POST /auth/reset-password. Closing signups must not touch either path.
+SIGNUPS_PAUSED_DETAIL = (
+    "Signups are paused. Join the waitlist and we will let you know when CoachLenz opens."
+)
 
 # Where the reset link points (the app the coach signs into).
 APP_URL = "https://app.coachlenz.com"
@@ -62,9 +69,19 @@ class LoginRequest(BaseModel):
 class RefreshRequest(BaseModel):
     refresh_token: str
 
+@router.get("/signups")
+async def signup_status(db: AsyncSession = Depends(get_db)):
+    """Public read of the new-account switch. False when SIGNUPS_ENABLED is unset
+    or false and no admin has turned the flag on. The homepage and /onboarding
+    use this to show the waitlist. It does not affect login."""
+    return {"signups_enabled": bool(await feature_flags.is_enabled(db, "signups_enabled"))}
+
+
 @router.post("/register")
 @limiter.limit("5/minute")
 async def register(body: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    if not await feature_flags.is_enabled(db, "signups_enabled"):
+        raise HTTPException(status_code=403, detail=SIGNUPS_PAUSED_DETAIL)
     if not body.accepted_terms:
         raise HTTPException(status_code=422, detail="You must accept the Terms of Service and Privacy Policy to create an account.")
 

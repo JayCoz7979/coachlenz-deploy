@@ -3,6 +3,8 @@ import { useEffect } from 'react'
 import Link from 'next/link'
 import { EXAMPLES, type ExampleKey } from '../../examples/reports'
 import { track } from '@/lib/funnel'
+import TrialCta from '@/components/signup/TrialCta'
+import { useSignupGate } from '@/components/signup/useSignupGate'
 import logo from '../../../public/coachlenz-logo.png'
 
 // Public proof page. No auth. Shows the illustrative Live Game Logger sample report in
@@ -10,6 +12,7 @@ import logo from '../../../public/coachlenz-logo.png'
 // actually opens and every visit is counted as a visitor.
 export default function SampleView({ sport }: { sport: string }) {
   const ex = EXAMPLES[sport as ExampleKey]
+  const signupsOpen = useSignupGate() === 'open'
 
   useEffect(() => {
     if (ex) track('landing_view', { page: `sample-${sport}` })
@@ -56,14 +59,16 @@ export default function SampleView({ sport }: { sport: string }) {
       {/* Logged-out CTA. The Live Game Logger is the free way in; AI film analysis is the upgrade. */}
       <section className="px-6 sm:px-8 py-12 text-center">
         <h2 className="text-xl font-bold mb-2">Want one for your team?</h2>
-        <p className="text-gray-400 text-sm mb-5">The Live Game Logger is free. Chart your next game from the sideline, we turn it into a breakdown like this, no cost and no credit card. When you want us to watch the film for you instead, that is the paid upgrade.</p>
-        <Link
-          href="/onboarding"
+        <p className="text-gray-400 text-sm mb-5">
+          {signupsOpen
+            ? 'The Live Game Logger is free. Chart your next game from the sideline, we turn it into a breakdown like this, no cost and no credit card. When you want us to watch the film for you instead, that is the paid upgrade.'
+            : 'CoachLenz is launching soon for school basketball and football game film. Join the waitlist and we will email you when it opens.'}
+        </p>
+        <TrialCta
+          openLabel="Start free"
           onClick={() => track('cta_click', { cta: `sample-${sport}` })}
           className="btn-primary text-lg px-8 py-3 inline-block"
-        >
-          Start free
-        </Link>
+        />
         <p className="text-sm text-gray-500 mt-4">
           Curious what film breakdown costs you in a season?{' '}
           <Link href="/tools/film-time-saved" className="text-brand-400 hover:underline">Run the 30-second calculator.</Link>

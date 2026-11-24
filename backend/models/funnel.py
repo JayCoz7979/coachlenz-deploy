@@ -27,4 +27,7 @@ class MarketingLead(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(String, nullable=False)
     source = Column(String)
+    # Optional waitlist context (migration 056). Null on older landing-page rows.
+    school = Column(String)
+    sport = Column(String)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)

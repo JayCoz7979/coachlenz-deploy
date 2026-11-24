@@ -1,6 +1,10 @@
 import type { Metadata } from 'next'
-import { EXAMPLES, type ExampleKey } from '../../examples/reports'
+import { type ExampleKey } from '../../examples/reports'
 import SampleView from './SampleView'
+import { closedPageRobots } from '@/lib/signups'
+
+// Request-time render so the noindex tag follows the live signup flag.
+export const dynamic = 'force-dynamic'
 
 // Public, no-login proof pages for cold outreach and SEO. Same illustrative sample
 // reports the in-app /examples route shows logged-in coaches, served here without the
@@ -20,19 +24,17 @@ const META: Record<ExampleKey, { title: string; description: string }> = {
   },
 }
 
-export function generateMetadata({ params }: { params: { sport: string } }): Metadata {
+export async function generateMetadata({ params }: { params: { sport: string } }): Promise<Metadata> {
+  const robots = await closedPageRobots()
   const m = META[params.sport as ExampleKey]
-  if (!m) return { title: 'Sample report' }
+  if (!m) return { title: 'Sample report', ...robots }
   return {
     title: m.title,
     description: m.description,
     alternates: { canonical: `/sample/${params.sport}` },
     openGraph: { title: m.title, description: m.description, type: 'article', url: `/sample/${params.sport}` },
+    ...robots,
   }
-}
-
-export function generateStaticParams() {
-  return (Object.keys(EXAMPLES) as ExampleKey[]).map((sport) => ({ sport }))
 }
 
 export default function Page({ params }: { params: { sport: string } }) {

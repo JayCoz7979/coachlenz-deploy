@@ -236,6 +236,13 @@ class Settings(BaseSettings):
     # keep working (the gate is at mint time, never at serve time).
     RECRUITING_CONSENT_ENABLED: bool = False
 
+    # New-account signups. DEFAULT FALSE so an unset value keeps registration
+    # closed (the public app is live before Stripe checkout works). A platform
+    # admin can turn it back on from Feature Toggles; that DB override wins over
+    # this env value and takes effect within about 20 seconds, no redeploy.
+    # Login, password reset, email verification, and staff invites ignore this.
+    SIGNUPS_ENABLED: bool = False
+
     class Config:
         env_file = ".env"
         case_sensitive = False
