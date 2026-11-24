@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import secrets
 from datetime import datetime, timedelta
 
@@ -93,6 +94,19 @@ def _property_value(value):
     return str(value)
 
 
+_TOKENLESS_UNSUBSCRIBE = re.compile(r"/unsubscribe(?:/one-click)?\?token=(?![A-Za-z0-9_-])")
+
+
+def refuse_if_tokenless_unsubscribe(payload: dict) -> None:
+    """Last check before a send: never mail an unsubscribe link with an empty
+    token, in the body or in List-Unsubscribe."""
+    parts = [payload.get("text") or "", payload.get("html") or ""]
+    parts += [str(v) for v in (payload.get("headers") or {}).values()]
+    for part in parts:
+        if _TOKENLESS_UNSUBSCRIBE.search(part):
+            raise RuntimeError("Refusing to send an unsubscribe link with an empty token.")
+
+
 class ResendGateway:
     """Live gateway. Not used in tests except with a mocked transport.
 
@@ -134,6 +148,7 @@ class ResendGateway:
         if not self._ready():
             return {}
         refuse_if_placeholder(payload.get("text") or "")
+        refuse_if_tokenless_unsubscribe(payload)
         scrubbed = scrub_resend_payload(payload)
         import resend
         resend.api_key = settings.RESEND_API_KEY
@@ -393,7 +408,8 @@ def one_click_unsubscribe_url(token: str) -> str:
 
 
 def _unsubscribe_line(token: str | None, broadcast: bool = False) -> str:
-    if token:
+    from backend.services.unsubscribe_token import is_valid_unsubscribe_token
+    if token and is_valid_unsubscribe_token(token):
         return f"Unsubscribe from CoachLenz emails with one click: {unsubscribe_url(token)}\n"
     if broadcast:
         # A Resend broadcast fills in this merge tag per contact.
@@ -488,10 +504,21 @@ def rendered_waitlist_emails(token: str = "sample-token") -> list[str]:
 
 
 def _lead_token(lead) -> str:
-    return getattr(lead, "unsubscribe_token", "") or ""
+    """The lead's unsubscribe token, or "" when it is missing or not a shape
+    any issuer makes. An empty token means no List-Unsubscribe header and the
+    reply-to-unsubscribe footer line, never a link that ends in "token="."""
+    from backend.services.unsubscribe_token import is_valid_unsubscribe_token
+    token = getattr(lead, "unsubscribe_token", "") or ""
+    return token if is_valid_unsubscribe_token(token) else ""
 
 
 def _headers(token: str) -> dict:
+    """RFC 8058 headers for a valid token. Empty (no List-Unsubscribe and no
+    List-Unsubscribe-Post) when there is no usable token, because a one-click
+    POST to a tokenless URL would answer 200 and unsubscribe nobody."""
+    from backend.services.unsubscribe_token import is_valid_unsubscribe_token
+    if not is_valid_unsubscribe_token(token):
+        return {}
     link = one_click_unsubscribe_url(token)
     reply = (settings.WAITLIST_REPLY_TO or "").strip()
     mailto = f"<mailto:{reply}?subject=unsubscribe>" if reply else ""
@@ -854,7 +881,7 @@ async def send_reminder(db, lead, now: datetime) -> str:
         "to": lead.email,
         "subject": "Still want on the CoachLenz waitlist?",
         "text": reminder_text(),
-        "headers": _headers(getattr(lead, "unsubscribe_token", "") or ""),
+        "headers": _headers(_lead_token(lead)),
         "kind": "reminder",
     })
     lead.reminder_sent_at = now

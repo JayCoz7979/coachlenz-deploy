@@ -83,7 +83,7 @@ def _lead(**kw):
         referrer="example.edu", created_at=datetime(2026, 11, 1, 12, 0, 0),
         confirmed_at=None, confirm_sent_at=None, confirm_token_hash=None,
         unsubscribed_at=None, reminder_sent_at=None, a1_sent_at=None,
-        unsubscribe_token="unsub-tok", has_account=False,
+        unsubscribe_token="unsub-tok-0123456789abcdefghijklmnopqrstuvw", has_account=False,
     )
     base.update(kw)
     return SimpleNamespace(**base)

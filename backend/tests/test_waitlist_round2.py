@@ -55,7 +55,7 @@ def _lead(**kw):
         created_at=datetime(2026, 11, 1, 12, 0, 0), confirmed_at=None,
         confirm_sent_at=None, confirm_token_hash=None, unsubscribed_at=None,
         reminder_sent_at=None, a1_sent_at=None, l1m_sent_at=None,
-        unsubscribe_token="unsub-tok", has_account=False,
+        unsubscribe_token="unsub-tok-0123456789abcdefghijklmnopqrstuvw", has_account=False,
     )
     base.update(kw)
     return SimpleNamespace(**base)
@@ -96,10 +96,10 @@ def email_on(monkeypatch):
 @pytest.mark.unit
 def test_marketing_footers_carry_a_working_unsubscribe_url(monkeypatch):
     monkeypatch.setattr(settings, "PUBLIC_APP_URL", "https://staging.example.com/")
-    url = "https://staging.example.com/unsubscribe?token=tok123"
-    assert mail.unsubscribe_url("tok123") == url
-    for text in (mail.c1_text("tok123"), mail.nurture_text("tok123"),
-                 mail.launch_text("tok123"), mail.l1m_text("tok123")):
+    url = "https://staging.example.com/unsubscribe?token=tok123_abcdefghijklmnopqrstuvwxyz0123456"
+    assert mail.unsubscribe_url("tok123_abcdefghijklmnopqrstuvwxyz0123456") == url
+    for text in (mail.c1_text("tok123_abcdefghijklmnopqrstuvwxyz0123456"), mail.nurture_text("tok123_abcdefghijklmnopqrstuvwxyz0123456"),
+                 mail.launch_text("tok123_abcdefghijklmnopqrstuvwxyz0123456"), mail.l1m_text("tok123_abcdefghijklmnopqrstuvwxyz0123456")):
         assert url in text
         assert "one click: " + url in text
 
@@ -115,8 +115,8 @@ def test_footer_without_a_token_never_promises_a_missing_link():
 @pytest.mark.unit
 def test_list_unsubscribe_header_targets_the_one_click_route(monkeypatch):
     monkeypatch.setattr(settings, "PUBLIC_APP_URL", "https://app.coachlenz.com")
-    headers = mail._headers("tok123")
-    assert headers["List-Unsubscribe"].startswith("<https://app.coachlenz.com/unsubscribe/one-click?token=tok123>")
+    headers = mail._headers("tok123_abcdefghijklmnopqrstuvwxyz0123456")
+    assert headers["List-Unsubscribe"].startswith("<https://app.coachlenz.com/unsubscribe/one-click?token=tok123_abcdefghijklmnopqrstuvwxyz0123456>")
     assert headers["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
     assert "waitlist/confirm?unsubscribe" not in headers["List-Unsubscribe"]
 
@@ -142,8 +142,8 @@ def test_c1_send_has_pdf_link_footer_unsubscribe_and_header(email_on):
     assert asyncio.run(mail.confirm_token(db, lead, meta)) == "confirmed"
     c1 = [p for p in gw.sends if p["kind"] == mail.TEMPLATE_C1][0]
     assert "https://app.coachlenz.com/waitlist/halftime-sheet.pdf" in c1["text"]
-    assert "https://app.coachlenz.com/unsubscribe?token=unsub-tok" in c1["text"]
-    assert "one-click?token=unsub-tok" in c1["headers"]["List-Unsubscribe"]
+    assert "https://app.coachlenz.com/unsubscribe?token=unsub-tok-0123456789abcdefghijklmnopqrstuvw" in c1["text"]
+    assert "one-click?token=unsub-tok-0123456789abcdefghijklmnopqrstuvw" in c1["headers"]["List-Unsubscribe"]
     for payload in gw.sends:
         assert "[" not in payload["text"]
 
@@ -165,7 +165,7 @@ def test_nurture_and_launch_skip_unsubscribed_leads(email_on):
     assert gw.sends == []
     active = _lead(role_branch="coach")
     assert asyncio.run(mail.send_nurture_step(_DB(), active)) == "sent"
-    assert "unsubscribe?token=unsub-tok" in gw.sends[0]["text"]
+    assert "unsubscribe?token=unsub-tok-0123456789abcdefghijklmnopqrstuvw" in gw.sends[0]["text"]
     assert "List-Unsubscribe" in gw.sends[0]["headers"]
 
 

@@ -153,7 +153,9 @@ def nurture_eligible(row) -> bool:
 
 def apply_repeat(row, body, source: str) -> None:
     """Fill empty columns only. Never blank a value, never downgrade consent,
-    never touch confirm or unsubscribe state."""
+    never touch confirm or unsubscribe state. A row with no usable unsubscribe
+    token (older rows) gets one, so its next email can carry a working link."""
+    ensure_unsubscribe_token(row)
     if not getattr(row, "source", None) and source:
         row.source = source
     for field in _FILL_IF_BLANK:
@@ -167,8 +169,24 @@ def apply_repeat(row, body, source: str) -> None:
         row.consent_text_version = consent_version()
 
 
-def new_lead_kwargs(email: str, source: str, body) -> dict:
+def new_unsubscribe_token() -> str:
+    """The one generator for lead and user unsubscribe tokens: 43 chars, URL-safe."""
     import secrets
+    return secrets.token_urlsafe(32)
+
+
+def ensure_unsubscribe_token(row) -> bool:
+    """Set a token when the row has none, or one no issuer makes. An existing
+    valid token is never replaced, because links already sent carry it.
+    Returns True when it set one."""
+    from backend.services.unsubscribe_token import is_valid_unsubscribe_token
+    if is_valid_unsubscribe_token(getattr(row, "unsubscribe_token", None)):
+        return False
+    row.unsubscribe_token = new_unsubscribe_token()
+    return True
+
+
+def new_lead_kwargs(email: str, source: str, body) -> dict:
     role = body.role
     values = {
         "email": email,
@@ -189,7 +207,7 @@ def new_lead_kwargs(email: str, source: str, body) -> dict:
         # Stored only. A ref code does not create a referral or a reward.
         "ref_code": body.ref_code,
         "has_account": False,
-        "unsubscribe_token": secrets.token_urlsafe(32),
+        "unsubscribe_token": new_unsubscribe_token(),
         "consent_text_version": consent_version() if role else None,
     }
     return values
