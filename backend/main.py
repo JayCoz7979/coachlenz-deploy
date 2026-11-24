@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
@@ -31,11 +32,16 @@ init_sentry("api")
 from .log_redaction import install as _install_log_redaction
 _install_log_redaction()
 
+from fastapi import Depends as _Depends
+from .game_ids import reject_malformed_game_id
+
 app = FastAPI(
     title="CoachLenz API",
     version="1.0.0",
     docs_url="/docs" if settings.ENVIRONMENT != "production" else None,
     redoc_url=None,
+    # Every route: a non-UUID game_id (path or query) is 404, not a 500.
+    dependencies=[_Depends(reject_malformed_game_id)],
 )
 
 app.state.limiter = limiter
@@ -44,6 +50,21 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 from fastapi.responses import JSONResponse
 from backend.services.film_upload import UploadConflict, upload_conflict_body
+
+
+from sqlalchemy.exc import DBAPIError as _DBAPIError
+from .game_ids import is_invalid_uuid_error
+
+
+@app.exception_handler(_DBAPIError)
+async def _invalid_uuid_handler(request: Request, exc: _DBAPIError):
+    # Backstop for ids the game_id dependency doesn't see (a run id, an id in a
+    # JSON body). A malformed UUID is a missing record, not a server error.
+    if is_invalid_uuid_error(exc):
+        logging.getLogger("coachlenz.api").warning(
+            "malformed UUID on %s %s answered 404", request.method, request.url.path)
+        return JSONResponse({"detail": "Not found"}, status_code=404)
+    raise exc
 
 
 @app.exception_handler(UploadConflict)

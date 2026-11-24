@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, func
 from pydantic import BaseModel
 from typing import Optional
-import uuid
+from backend.game_ids import require_game_id
 from backend.models.base import get_db
 from backend.models.user import User
 from backend.models.organization import Organization
@@ -53,15 +53,9 @@ async def create_game(body: GameCreate, user: User = Depends(get_current_user), 
     raise HTTPException(status_code=409, detail=USE_CHUNKED_DETAIL)
 
 def _require_game_id(game_id: str) -> None:
-    """Game ids are UUIDs. Anything else made asyncpg raise DataError, a 500.
-    Answer the same 404 as a missing or foreign game instead."""
-    try:
-        uuid.UUID(str(game_id))
-        ok = 32 <= len(str(game_id)) <= 36  # the lengths asyncpg accepts
-    except (ValueError, AttributeError, TypeError):
-        ok = False
-    if not ok:
-        raise HTTPException(status_code=404, detail="Game not found")
+    """Kept for the direct callers below. The app-wide dependency in main.py
+    (backend/game_ids.py) already answers 404 for a malformed id."""
+    require_game_id(game_id)
 
 
 @router.get("/{game_id}")
