@@ -543,15 +543,18 @@ async def finish_upload(db, user, org, token: str, body) -> dict:
     )
     _apply_game_date(game, getattr(body, "game_date", None))
     db.add(game)
-    await db.flush()
-    db.add(Job(
-        organization_id=org_id,
-        job_type="ingest",
-        # No source_url: the ingest worker takes the uploaded-file branch and
-        # presigns game.r2_key. A URL import sets source_url and is untouched.
-        payload={"game_id": str(game.id)},
-    ))
     try:
+        # The INSERT runs at flush. If the other request committed this same
+        # key after our existence check, the unique index fails here, not at
+        # commit, so the flush must sit inside the same handler.
+        await db.flush()
+        db.add(Job(
+            organization_id=org_id,
+            job_type="ingest",
+            # No source_url: the ingest worker takes the uploaded-file branch and
+            # presigns game.r2_key. A URL import sets source_url and is untouched.
+            payload={"game_id": str(game.id)},
+        ))
         await db.commit()
     except IntegrityError:
         # Unique r2_key: the other worker inserted this object first. Its

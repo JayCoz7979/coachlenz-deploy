@@ -185,3 +185,42 @@ async def test_four_simultaneous_completes_of_one_token_never_500(pg):
         from sqlalchemy import select, func
         n = await db.scalar(select(func.count()).select_from(Game).where(Game.organization_id == org_id))
     assert n == 1
+
+
+@pytest.mark.asyncio
+async def test_insert_that_loses_the_race_at_flush_returns_the_winning_game(pg, monkeypatch):
+    """Round 3: the other complete commits the same key after our existence check.
+
+    The unique r2_key index then fails at flush (the INSERT), not at commit. That
+    must return the winner's game, never raise (a raised IntegrityError is a 500).
+    """
+    from sqlalchemy import select, func
+    from backend.services import film_upload
+
+    org_id = await _seed(pg, trial=False)
+    token = await _prepared(pg, org_id)
+    real = film_upload._existing_game
+    state = {"first": True, "winner": None}
+
+    async def racing(db, oid, key):
+        if state["first"]:
+            state["first"] = False
+            async with pg() as other:
+                winner = Game(organization_id=oid, title="Winner", sport="football",
+                              r2_key=key, status="processing", file_size_bytes=1000)
+                other.add(winner)
+                await other.commit()
+                state["winner"] = str(winner.id)
+            return None
+        return await real(db, oid, key)
+
+    monkeypatch.setattr(film_upload, "_existing_game", racing)
+    async with pg() as db:
+        org = await db.get(Organization, org_id)
+        result = await finish_upload(db, _user(org_id), org, token, _body())
+    assert result["id"] == state["winner"]
+    async with pg() as db:
+        n = await db.scalar(select(func.count()).select_from(Game).where(Game.organization_id == org_id))
+        jobs = await db.scalar(select(func.count()).select_from(Job))
+    assert n == 1
+    assert jobs == 0  # the loser's ingest job rolled back with its game
