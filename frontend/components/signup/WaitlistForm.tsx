@@ -29,7 +29,7 @@ const ROLES: { value: string; label: string }[] = [
 export const CONSENT_LINE_A = "By joining, you agree that CoachLenz can email you about the waitlist, free coaching resources, launch news, and pricing when we open. You can unsubscribe anytime with one click. See our Privacy Policy."
 export const CONSENT_BUTTON_A = "Join the waitlist"
 export const WAITLIST_SUCCESS = "You're on the list."
-const MINOR_MESSAGE = "Thanks. CoachLenz is built for coaches and schools. Ask your coach to join the list."
+const MINOR_MESSAGE = "Thanks. We'll email you when CoachLenz opens. That note will not include pricing. Ask your coach to join the list."
 
 function ConsentLine({ line }: { line: string }) {
   const mark = 'Privacy Policy'
@@ -50,7 +50,7 @@ function problem(firstName: string, email: string, role: string, adult: '' | 'ye
   if (!email.trim()) return 'Email is required.'
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return 'Enter a valid email address.'
   if (!role) return 'Please tell us your role.'
-  if (role === 'player' && playerOn && !adult) return 'Please tell us if you are 18 or older.'
+  if (role === 'player' && playerOn && !adult) return 'Please tell us if you are 19 or older.'
   return ''
 }
 
@@ -99,11 +99,6 @@ export default function WaitlistForm({ source, id = 'waitlist' }: { source: stri
       setError(message)
       return
     }
-    if (role === 'player' && adult === 'no') {
-      setMinor(true)
-      setError('')
-      return
-    }
     setError('')
     setLoading(true)
     try {
@@ -112,7 +107,7 @@ export default function WaitlistForm({ source, id = 'waitlist' }: { source: stri
         first_name: firstName.trim(),
         role,
         source,
-        ...(role === 'player' ? { is_adult: true } : {}),
+        ...(role === 'player' ? { is_19_or_older: adult === 'yes' } : {}),
         ...(school.trim() ? { school: school.trim() } : {}),
         ...(sport ? { sport } : {}),
         ...readWaitlistAttribution(),
@@ -148,7 +143,7 @@ export default function WaitlistForm({ source, id = 'waitlist' }: { source: stri
       </div>
       {playerOn && role === 'player' && (
         <fieldset className="space-y-2">
-          <legend className="text-sm text-gray-100 mb-1">Are you 18 or older?</legend>
+          <legend className="text-sm text-gray-100 mb-1">Are you 19 or older?</legend>
           <label className="flex items-center gap-2 text-sm text-gray-100"><input type="radio" name={`${id}-adult`} checked={adult === 'yes'} onChange={() => setAdult('yes')} /> Yes</label>
           <label className="flex items-center gap-2 text-sm text-gray-100"><input type="radio" name={`${id}-adult`} checked={adult === 'no'} onChange={() => setAdult('no')} /> No</label>
         </fieldset>

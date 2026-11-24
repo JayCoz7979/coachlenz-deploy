@@ -16,7 +16,7 @@ ALTER TABLE marketing_leads
     ADD COLUMN IF NOT EXISTS sport text,
     ADD COLUMN IF NOT EXISTS role text,
     ADD COLUMN IF NOT EXISTS role_branch text,
-    ADD COLUMN IF NOT EXISTS is_adult boolean,
+    ADD COLUMN IF NOT EXISTS is_19_or_older boolean,
     ADD COLUMN IF NOT EXISTS consent_text_version text,
     ADD COLUMN IF NOT EXISTS lead_magnet text,
     ADD COLUMN IF NOT EXISTS utm_source text,

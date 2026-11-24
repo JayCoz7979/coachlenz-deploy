@@ -33,7 +33,7 @@ class MarketingLead(Base):
     sport = Column(String)
     role = Column(String)
     role_branch = Column(String)
-    is_adult = Column(Boolean)
+    is_19_or_older = Column(Boolean)
     consent_text_version = Column(String)
     lead_magnet = Column(String)
     utm_source = Column(String)

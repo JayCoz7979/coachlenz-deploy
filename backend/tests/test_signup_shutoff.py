@@ -325,6 +325,7 @@ def test_waitlist_all_fields():
     assert row.utm_content == "hero" and row.utm_term == "film"
     assert row.ref_code == "COACH1"
     assert row.source == "coachlenz-app-waitlist"
+    assert len(db.added) == 1
     assert row.has_account is False
 
 
@@ -334,14 +335,14 @@ def test_waitlist_repeat_fills_blanks_and_does_not_touch_another_row():
         email="other@school.edu", first_name="Pat", school="Other HS", sport="soccer",
         role="parent", role_branch="general", source="landing", lead_magnet="keep",
         utm_source=None, utm_content=None, consent_text_version="cl-waitlist-v1",
-        is_adult=None, created_at="keep-other",
+        is_19_or_older=None, created_at="keep-other",
     )
     existing = SimpleNamespace(
         email="coach@school.edu", first_name="Ada", school=None, sport=None,
         role=None, role_branch=None, source="landing", lead_magnet=None,
         utm_source=None, utm_medium=None, utm_campaign=None, utm_content=None, utm_term=None,
         referrer=None, landing_path=None, ref_code=None,
-        consent_text_version=None, is_adult=None, created_at="keep",
+        consent_text_version=None, is_19_or_older=None, created_at="keep",
     )
     db = _LeadDB(existing)
     out = _lead(_waitlist(school="Lincoln High", utm_source="ig"), db)
@@ -362,7 +363,7 @@ def test_repeat_does_not_blank_a_stored_value():
         role="parent", role_branch="general", source="landing", lead_magnet="keep-magnet",
         utm_source="keep", utm_medium=None, utm_campaign=None, utm_content=None, utm_term=None,
         referrer=None, landing_path=None, ref_code=None,
-        consent_text_version="cl-waitlist-v1", is_adult=None, created_at="keep",
+        consent_text_version="cl-waitlist-v1", is_19_or_older=None, created_at="keep",
     )
     db = _LeadDB(existing)
     out = _lead(funnel.LeadIn(email="coach@school.edu", school="Somewhere Else", source="landing"), db)
@@ -374,19 +375,40 @@ def test_repeat_does_not_blank_a_stored_value():
 
 
 @pytest.mark.unit
-def test_minor_player_is_not_stored(monkeypatch):
+def test_ref_code_has_no_reward_side_effects():
+    from backend.models.referral import Referral, ReferralCode
+    from backend.services.waitlist_capture import nurture_eligible
+    with_code = _LeadDB()
+    _lead(_waitlist(ref_code="COACH1"), with_code)
+    plain = _LeadDB()
+    _lead(_waitlist(email="plain@school.edu"), plain)
+    row = with_code.added[0]
+    other = plain.added[0]
+    assert row.ref_code == "COACH1" and other.ref_code is None
+    assert len(with_code.added) == 1 and len(plain.added) == 1
+    assert not isinstance(row, (Referral, ReferralCode))
+    assert row.role_branch == other.role_branch
+    assert nurture_eligible(row) == nurture_eligible(other)
+    assert with_code.commits == plain.commits
+
+
+@pytest.mark.unit
+def test_under_19_player_is_stored_on_the_minor_track(monkeypatch):
     monkeypatch.setattr(funnel.settings, "WAITLIST_PLAYER_ROLE_ENABLED", True)
     db = _LeadDB()
-    out = _lead(_waitlist(role="player", is_adult=False), db)
-    assert out["stored"] is False and out["minor"] is True
-    assert db.added == [] and db.commits == 0
+    out = _lead(_waitlist(role="player", is_19_or_older=False), db)
+    assert out["stored"] is True and out["minor"] is True
+    row = db.added[0]
+    assert row.role == "player"
+    assert row.role_branch == "player_hold"
+    assert row.is_19_or_older is False
 
 
 @pytest.mark.unit
 def test_player_role_rejected_when_flag_is_off():
     db = _LeadDB()
     with pytest.raises(HTTPException) as exc:
-        _lead(_waitlist(role="player", is_adult=True), db)
+        _lead(_waitlist(role="player", is_19_or_older=True), db)
     assert exc.value.status_code == 422
     assert db.added == []
 
@@ -562,7 +584,7 @@ def test_admin_csv_includes_waitlist_fields_and_is_admin_gated():
     assert getattr(dep, "dependency", None) is require_admin
     row = SimpleNamespace(
         email="coach@school.edu", first_name="=Ada", role="head_coach", role_branch="coach",
-        is_adult=None, school="Lincoln", sport="football", source="coachlenz-app-waitlist",
+        is_19_or_older=None, school="Lincoln", sport="football", source="coachlenz-app-waitlist",
         lead_magnet="halftime-sheet-v1", utm_source="ig", utm_medium="social",
         utm_campaign="launch", utm_content=None, utm_term=None, referrer=None,
         landing_path="/", ref_code=None, consent_text_version="cl-waitlist-v1",
@@ -571,7 +593,7 @@ def test_admin_csv_includes_waitlist_fields_and_is_admin_gated():
     )
     other = SimpleNamespace(
         email="other@school.edu", first_name="Pat", role="parent", role_branch="general",
-        is_adult=None, school="Other", sport=None, source="landing", lead_magnet=None,
+        is_19_or_older=None, school="Other", sport=None, source="landing", lead_magnet=None,
         utm_source=None, utm_medium=None, utm_campaign=None, utm_content=None, utm_term=None,
         referrer=None, landing_path=None, ref_code=None, consent_text_version=None,
         confirmed_at=None, unsubscribed_at=None, has_account=False, marketing_consent=False,

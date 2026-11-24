@@ -51,6 +51,12 @@ waitlist" and version `cl-waitlist-v1-a`. Pair B is "Send me the Halftime
 Sheet" and version `cl-waitlist-v1-b`. The snippet starts on pair A and
 replaces both strings from `GET /auth/signups` when that call succeeds.
 
+`ref` is stored as `ref_code` and does not grant a referral reward.
+
+`https://coachlenz.com/privacy` is a 404. Publish `privacy-redirect.html` at
+that path so it redirects to `https://app.coachlenz.com/privacy`. This file
+does not change Cloudflare or DNS by itself.
+
 The form only works when the page is served from `https://coachlenz.com` or
 `https://www.coachlenz.com`. Those origins are already allowed by the API.
 Opening the snippet as a local file will be blocked by the browser.

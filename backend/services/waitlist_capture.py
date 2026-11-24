@@ -149,8 +149,9 @@ def nurture_eligible(row) -> bool:
     )
 
 
-def is_minor_player(role: str | None, is_adult: bool | None) -> bool:
-    return role == "player" and is_adult is not True
+def is_minor_player(role: str | None, is_19_or_older: bool | None) -> bool:
+    """Alabama age of majority is 19. Under 19 is the minor track."""
+    return role == "player" and is_19_or_older is not True
 
 
 def apply_repeat(row, body, source: str) -> None:
@@ -164,8 +165,8 @@ def apply_repeat(row, body, source: str) -> None:
             setattr(row, field, incoming)
     if getattr(row, "role", None) and not getattr(row, "role_branch", None):
         row.role_branch = role_branch_for(row.role)
-    if body.role == "player" and getattr(row, "is_adult", None) is None and body.is_adult is True:
-        row.is_adult = True
+    if body.role == "player" and getattr(row, "is_19_or_older", None) is None:
+        row.is_19_or_older = body.is_19_or_older is True
     # Joining is the consent. Never clear a version already stored.
     if not getattr(row, "consent_text_version", None) and body.role:
         row.consent_text_version = consent_version()
@@ -182,7 +183,7 @@ def new_lead_kwargs(email: str, source: str, body) -> dict:
         "sport": body.sport,
         "role": role,
         "role_branch": role_branch_for(role),
-        "is_adult": True if role == "player" and body.is_adult is True else None,
+        "is_19_or_older": (body.is_19_or_older is True) if role == "player" else None,
         "lead_magnet": body.lead_magnet,
         "utm_source": body.utm_source,
         "utm_medium": body.utm_medium,
@@ -191,6 +192,7 @@ def new_lead_kwargs(email: str, source: str, body) -> dict:
         "utm_term": body.utm_term,
         "referrer": body.referrer,
         "landing_path": body.landing_path,
+        # Stored only. A ref code does not create a referral or a reward.
         "ref_code": body.ref_code,
         "has_account": False,
         "unsubscribe_token": secrets.token_urlsafe(32),

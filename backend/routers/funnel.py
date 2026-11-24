@@ -76,7 +76,7 @@ class LeadIn(BaseModel):
     school: Optional[str] = None
     sport: Optional[str] = None
     role: Optional[str] = None
-    is_adult: Optional[bool] = None
+    is_19_or_older: Optional[bool] = None
     lead_magnet: Optional[str] = None
     utm_source: Optional[str] = None
     utm_medium: Optional[str] = None
@@ -166,8 +166,7 @@ async def capture_lead(body: LeadIn, request: Request, db: AsyncSession = Depend
     source = canonicalize_source(body.source)
     if body.role == "player" and not settings.WAITLIST_PLAYER_ROLE_ENABLED:
         raise HTTPException(status_code=422, detail="Player isn't available on the waitlist yet.")
-    if is_minor_player(body.role, body.is_adult):
-        return {"ok": True, "stored": False, "minor": True}
+    minor = is_minor_player(body.role, body.is_19_or_older)
     try:
         existing = (await db.execute(
             select(MarketingLead).where(func.lower(MarketingLead.email) == email)
@@ -202,4 +201,7 @@ async def capture_lead(body: LeadIn, request: Request, db: AsyncSession = Depend
         except Exception:
             pass
         raise HTTPException(status_code=503, detail="Could not save that just now. Please try again.")
+    # ref_code is stored on the row and does not create a referral or a reward.
+    if minor:
+        return {"ok": True, "stored": True, "minor": True}
     return {"ok": True}
