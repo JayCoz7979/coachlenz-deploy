@@ -20,7 +20,18 @@ export default function UnsubscribePage() {
   useEffect(() => {
     const t = (new URLSearchParams(window.location.search).get('token') || '').trim()
     setToken(t)
-    setState(t ? 'confirm' : 'missing')
+    if (!t) { setState('missing'); return }
+    let cancel = false
+    // GET only shows the page. It does not opt the address out.
+    publicApi.get('/auth/unsubscribe', { params: { token: t } })
+      .then((res) => {
+        if (cancel) return
+        const status = Number(res.status)
+        if (!(status >= 200 && status < 300)) { setState('error'); return }
+        setState(res.data?.already_unsubscribed ? 'done' : 'confirm')
+      })
+      .catch(() => { if (!cancel) setState('error') })
+    return () => { cancel = true }
   }, [])
 
   const submit = async () => {

@@ -418,23 +418,36 @@ class UnsubscribeRequest(BaseModel):
 _UNSUBSCRIBED = {"ok": True, "message": "You're unsubscribed from CoachLenz marketing emails."}
 
 
-async def _unsubscribe_by_token(db: AsyncSession, token: str):
-    """Shared by GET and POST. Already-unsubscribed leads and users still get 200.
-    A re-joined lead has unsubscribed_at cleared, and this sets it again."""
+async def _lookup_unsubscribe(db: AsyncSession, token: str):
     from backend.services.unsubscribe_token import is_valid_unsubscribe_token
     token = (token or "").strip()
     if not is_valid_unsubscribe_token(token):
         raise HTTPException(status_code=400, detail="This unsubscribe link isn't valid.")
     u = (await db.execute(select(User).where(User.unsubscribe_token == token))).scalar_one_or_none()
-    if u is not None and u.marketing_opt_in:
-        u.marketing_opt_in = False
-        await db.commit()
     from backend.models.funnel import MarketingLead
-    from backend.services.waitlist_email import unsubscribe_lead
     lead = (await db.execute(
         select(MarketingLead).where(MarketingLead.unsubscribe_token == token)
     )).scalar_one_or_none()
+    return u, lead
+
+
+def _already_unsubscribed(user, lead) -> bool:
     if lead is not None:
+        return getattr(lead, "unsubscribed_at", None) is not None
+    if user is not None:
+        return not bool(getattr(user, "marketing_opt_in", False))
+    return False
+
+
+async def _unsubscribe_by_token(db: AsyncSession, token: str):
+    """POST only. A re-joined lead has unsubscribed_at cleared, and this sets it again.
+    A second POST still returns 200 and does not write another audit event."""
+    u, lead = await _lookup_unsubscribe(db, token)
+    if u is not None and u.marketing_opt_in:
+        u.marketing_opt_in = False
+        await db.commit()
+    if lead is not None:
+        from backend.services.waitlist_email import unsubscribe_lead
         await unsubscribe_lead(db, lead, "unsubscribe_link")
         await db.commit()
     return _UNSUBSCRIBED
@@ -443,8 +456,10 @@ async def _unsubscribe_by_token(db: AsyncSession, token: str):
 @router.get("/unsubscribe")
 @limiter.limit("20/minute")
 async def unsubscribe_get(request: Request, token: str = "", db: AsyncSession = Depends(get_db)):
-    """Same opt-out as POST, for a one-click link opened as GET. Idempotent."""
-    return await _unsubscribe_by_token(db, token)
+    """Read-only. Mail scanners prefetch GET, so this must not opt anyone out.
+    The confirm page uses it to decide what to show."""
+    u, lead = await _lookup_unsubscribe(db, token)
+    return {"ok": True, "already_unsubscribed": _already_unsubscribed(u, lead)}
 
 
 @router.post("/unsubscribe")

@@ -1,7 +1,7 @@
-"""Round 6: a second unsubscribe must not 500 on email_suppressions.
+"""A second unsubscribe must not 500, and it must not rewrite the first opt-out.
 
-One suppression row per address. Clicking the link again, or unsubscribing
-after the lead re-joins, refreshes that row and still opts the lead out.
+One suppression row per address. GET never changes state. POST and the admin
+route set unsubscribed_at once. suppressed_at and reason stay at that first write.
 """
 import asyncio
 import os
@@ -85,6 +85,8 @@ def test_one_click_post_and_get_return_200_twice():
         ))
         assert first.status_code == second.status_code == 200
         assert first.json()["ok"] is True and second.json()["ok"] is True
+        if method == "get":
+            assert first.json()["already_unsubscribed"] is False
 
 
 _URL = os.environ.get(
@@ -167,6 +169,17 @@ def test_rejoin_then_one_click_and_admin_unsubscribe_on_postgres():
             finally:
                 await conn.close()
 
+        async def event_count(address):
+            conn = await asyncpg.connect(url)
+            try:
+                return await conn.fetchval(
+                    "SELECT count(*) FROM marketing_consent_events "
+                    "WHERE lower(email) = lower($1) AND event_type = 'unsubscribed'",
+                    address,
+                )
+            finally:
+                await conn.close()
+
         try:
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -176,14 +189,23 @@ def test_rejoin_then_one_click_and_admin_unsubscribe_on_postgres():
                 token = row["unsubscribe_token"]
                 assert row["unsubscribed_at"] is None and token
 
+                preview = await client.get("/auth/unsubscribe", params={"token": token})
+                assert preview.status_code == 200
+                assert preview.json()["already_unsubscribed"] is False
+                assert (await state())["unsubscribed_at"] is None
+                assert await event_count(email) == 0
+
                 first = await client.post("/auth/unsubscribe", json={"token": token})
                 second = await client.post("/auth/unsubscribe", json={"token": token})
                 assert first.status_code == second.status_code == 200
                 assert (await state())["unsubscribed_at"] is not None
                 assert await suppression_count() == 1
+                assert await event_count(email) == 1
 
                 again = await client.get("/auth/unsubscribe", params={"token": token})
                 assert again.status_code == 200
+                assert again.json()["already_unsubscribed"] is True
+                assert await event_count(email) == 1
 
                 rejoined = await client.post("/leads", json=lead_body, headers={"user-agent": "Round6"})
                 assert rejoined.status_code == 200
@@ -198,8 +220,51 @@ def test_rejoin_then_one_click_and_admin_unsubscribe_on_postgres():
                 admin_first = await client.post("/admin/leads/unsubscribe", json={"email": email.upper()})
                 admin_second = await client.post("/admin/leads/unsubscribe", json={"email": email})
                 assert admin_first.status_code == admin_second.status_code == 200
+                assert admin_first.json()["updated"] is True
+                assert admin_second.json()["updated"] is False
                 assert (await state())["unsubscribed_at"] is not None
                 assert await suppression_count() == 1
+                # The first one-click wrote the suppression. reason stays that value.
+                conn = await asyncpg.connect(url)
+                try:
+                    reason = await conn.fetchval("SELECT reason FROM email_suppressions")
+                finally:
+                    await conn.close()
+                assert reason == "unsubscribe_link"
+
+                race_email = f"qa+r6-race-{uuid.uuid4().hex[:8]}@school.edu"
+                raced = await client.post("/leads", json={**lead_body, "email": race_email}, headers={"user-agent": "Round6"})
+                assert raced.status_code == 200
+
+                async def one_admin():
+                    async with Session() as session:
+                        return await admin_router.unsubscribe_lead_by_email(
+                            admin_router.EmailUnsubscribe(email=race_email), object(), session)
+
+                results = await asyncio.gather(*[one_admin() for _ in range(8)])
+                assert sum(1 for item in results if item["updated"] is True) == 1
+                assert await event_count(race_email) == 1
+
+                token_email = f"qa+r6-token-{uuid.uuid4().hex[:8]}@school.edu"
+                token_created = await client.post(
+                    "/leads", json={**lead_body, "email": token_email}, headers={"user-agent": "Round6"})
+                assert token_created.status_code == 200
+                conn = await asyncpg.connect(url)
+                try:
+                    token_row = await conn.fetchrow(
+                        "SELECT unsubscribe_token FROM marketing_leads WHERE lower(email) = lower($1)",
+                        token_email,
+                    )
+                finally:
+                    await conn.close()
+
+                async def one_token():
+                    async with Session() as session:
+                        return await auth_router._unsubscribe_by_token(session, token_row["unsubscribe_token"])
+
+                token_results = await asyncio.gather(*[one_token() for _ in range(8)])
+                assert all(item["ok"] is True for item in token_results)
+                assert await event_count(token_email) == 1
         finally:
             await engine.dispose()
 

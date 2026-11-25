@@ -889,7 +889,12 @@ async def send_reminder(db, lead, now: datetime) -> str:
 
 
 def suppression_statement(email: str, now, method: str):
-    """One suppression row per address. A second unsubscribe refreshes the time."""
+    """Insert the first suppression row only.
+
+    On conflict, do nothing. suppressed_at and reason stay at the values from
+    the first unsubscribe. That first pair is the evidence, and a later click
+    must not overwrite it.
+    """
     from sqlalchemy.dialects.postgresql import insert as pg_insert
     digest = email_sha256(email)
     ins = pg_insert(EmailSuppression).values(
@@ -897,10 +902,7 @@ def suppression_statement(email: str, now, method: str):
         suppressed_at=now,
         reason=method,
     )
-    return ins.on_conflict_do_update(
-        index_elements=["email_sha256"],
-        set_={"suppressed_at": ins.excluded.suppressed_at},
-    )
+    return ins.on_conflict_do_nothing(index_elements=["email_sha256"])
 
 
 async def record_suppression(db, email: str, now, method: str) -> None:
@@ -915,12 +917,41 @@ async def record_suppression(db, email: str, now, method: str) -> None:
         ))
 
 
+async def _claim_unsubscribed(db, lead, now) -> bool:
+    """True only for the call that sets unsubscribed_at.
+
+    The UPDATE matches rows that are still null, so concurrent callers cannot
+    all win. The first timestamp stays. Later calls do not write another
+    unsubscribed event.
+    """
+    if not (hasattr(db, "sync_session") and getattr(lead, "id", None) is not None):
+        if getattr(lead, "unsubscribed_at", None):
+            return False
+        lead.unsubscribed_at = now
+        return True
+    from sqlalchemy import update
+    from backend.models.funnel import MarketingLead
+    # unsubscribed_at stays at the first value. The suppression reason stays
+    # with it (ON CONFLICT DO NOTHING). That first pair is the evidence.
+    res = await db.execute(
+        update(MarketingLead)
+        .where(MarketingLead.id == lead.id, MarketingLead.unsubscribed_at.is_(None))
+        .values(unsubscribed_at=now)
+        .returning(MarketingLead.id)
+    )
+    won = res.scalar_one_or_none() is not None
+    if won:
+        lead.unsubscribed_at = now
+    return won
+
+
 async def unsubscribe_lead(db, lead, method: str = "unsubscribe_link") -> str:
     if lead is None:
         return "missing"
     now = datetime.utcnow()
-    if not getattr(lead, "unsubscribed_at", None):
-        lead.unsubscribed_at = now
+    won = await _claim_unsubscribed(db, lead, now)
+    if not won:
+        return "already"
     db.add(_event(lead, "unsubscribed", {"now": now}, unsubscribe_method=method))
     await record_suppression(db, lead.email, now, method)
     await redact_consent_network(db, lead.email)

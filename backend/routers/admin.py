@@ -116,8 +116,9 @@ async def unsubscribe_lead_by_email(
             account.marketing_opt_in = False
             updated = True
     for lead in leads:
-        if not getattr(lead, "unsubscribed_at", None):
-            await unsubscribe_lead(db, lead, "admin_email")
+        # updated is true only when this call won the conditional update.
+        # The audit event is written inside unsubscribe_lead for that winner only.
+        if await unsubscribe_lead(db, lead, "admin_email") == "unsubscribed":
             updated = True
     await db.commit()
     logger.warning("admin unsubscribe sha=%s updated=%s", digest, updated)
