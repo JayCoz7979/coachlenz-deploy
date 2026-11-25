@@ -1,0 +1,53 @@
+name: Postgres migrations
+
+# Real-Postgres gate for schema changes the unit suite cannot see. The live_game
+# report-type check only fails inside Postgres, so this job applies the migration
+# files to postgres:16 and runs the migration tests. Placeholders only: no prod
+# credentials, and this workflow never deploys.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: migrations-pg-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live-game-report-type:
+    name: live_game report type (postgres 16)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # 031_rls_app_role.sql grants to role postgres, so the service user, password,
+      # and database are all "postgres". Placeholders only.
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/postgres
+      SECRET_KEY: test-secret-key
+      ANTHROPIC_API_KEY: test-anthropic-key
+      MIGRATIONS_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      REQUIRE_PG_MIGRATION_TESTS: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies (pinned)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+      - name: Postgres migration tests
+        run: pytest backend/tests/test_live_game_report_type_pg.py -p no:cacheprovider -ra
