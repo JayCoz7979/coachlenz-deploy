@@ -88,18 +88,21 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_USER: test
+          # The superuser must be named postgres. Migration 031 grants default
+          # privileges FOR ROLE postgres, which does not exist if POSTGRES_USER
+          # is something else.
+          POSTGRES_USER: postgres
           POSTGRES_PASSWORD: test
           POSTGRES_DB: coachlenz_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U test -d coachlenz_test"
+          --health-cmd "pg_isready -U postgres -d coachlenz_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
     env:
-      DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/coachlenz_test
+      DATABASE_URL: postgresql+asyncpg://postgres:test@localhost:5432/coachlenz_test
       SECRET_KEY: test-secret-key
       ANTHROPIC_API_KEY: test-anthropic-key
       STRIPE_WEBHOOK_SECRET: whsec_test_placeholder
