@@ -26,8 +26,10 @@ router = APIRouter(prefix="/reports", tags=["reports"])
 SHARE_DEFAULT_DAYS = 7
 SHARE_MAX_DAYS = 30
 
-# Kept in step with tendency_reports.report_type CHECK (migration 056). An unknown
-# value used to fall through to the database constraint and surface as a 500.
+# App-level allowlist. An unknown value used to fall through to the database
+# constraint and surface as a 500. live_game inserts on Postgres depend on the
+# check widened in PR #296 (065_live_game_report_type.sql). This change adds no
+# migration of its own.
 REPORT_TYPES = ("opponent", "self_scout", "custom", "live_game")
 
 # Neutral titles for the public (no-login) shared-report view. The stored

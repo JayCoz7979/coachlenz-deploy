@@ -3,14 +3,13 @@ Tenant isolation for report generation and every route that takes a game, sessio
 report, or job id.
 
 The HTTP sweep runs inside the SQLite integration harness (test_api_integration),
-which is the repo's supported app-level DB test. A unit check locks the report_type
-allowlist to the Postgres CHECK in migration 056.
+which is the repo's supported app-level DB test. SQLite has no report_type check,
+so same-org live_game coverage here is app-level only. The Postgres check that
+allows live_game lives in PR #296.
 
 Cross-org responses are 404, never 403, so a miss does not confirm the id exists.
 """
-import re
 import uuid
-import pathlib
 
 import pytest
 
@@ -19,21 +18,9 @@ from backend.workers.worker_reports import GAME_NOT_IN_ORG
 
 pytestmark = pytest.mark.unit
 
-_MIGRATION = pathlib.Path(__file__).resolve().parents[1] / "migrations" / "056_report_type_live_game.sql"
-
 # Unique strings so a leaked play note cannot hide inside an unrelated 404 body.
 OURS = "xq-our-note-7f3a"
 THEIRS = "xq-rival-note-7f3a"
-
-
-def test_report_types_match_db_check():
-    sql = _MIGRATION.read_text(encoding="utf-8")
-    checks = re.findall(r"CHECK \(report_type IN \(([^)]*)\)\)", sql)
-    assert checks, "migration 056 must define the report_type check"
-    # The executable statement is last. The reverse recipe above it is narrower.
-    allowed = set(re.findall(r"'([^']+)'", checks[-1]))
-    assert allowed == set(REPORT_TYPES)
-    assert "live_game" in allowed
 
 
 def test_cross_org_failure_message_is_non_sensitive():
