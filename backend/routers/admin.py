@@ -108,7 +108,7 @@ async def unsubscribe_lead_by_email(
         select(User).where(func.lower(User.email) == raw)
     )).scalars().all()
     if not leads and not accounts:
-        logger.info("admin unsubscribe no-op sha=%s", digest)
+        logger.warning("admin unsubscribe no-op sha=%s", digest)
         return {"ok": True, "updated": False}
     updated = False
     for account in accounts:
@@ -120,7 +120,7 @@ async def unsubscribe_lead_by_email(
             await unsubscribe_lead(db, lead, "admin_email")
             updated = True
     await db.commit()
-    logger.info("admin unsubscribe sha=%s updated=%s", digest, updated)
+    logger.warning("admin unsubscribe sha=%s updated=%s", digest, updated)
     return {"ok": True, "updated": updated}
 
 

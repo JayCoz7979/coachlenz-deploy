@@ -55,7 +55,7 @@ jobs:
         run: pytest -m "not integration and not slow" -p no:cacheprovider -ra
 
   integration-tests:
-    name: integration tests (in-process ASGI + SQLite)
+    name: integration tests (Postgres 16)
     runs-on: ubuntu-latest
     needs: unit-tests
     services:

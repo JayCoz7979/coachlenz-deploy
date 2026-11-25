@@ -1,5 +1,7 @@
 # Runbook: unsubscribe replies
 
+Owner: TBD (Jason to assign who monitors support@coachlenz.com)
+
 Some waitlist leads have no usable one-click token. Their email only offers
 replying with "unsubscribe". Nothing reads that inbox automatically. A person
 does, then calls the admin route below.

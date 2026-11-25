@@ -888,6 +888,33 @@ async def send_reminder(db, lead, now: datetime) -> str:
     return "reminded"
 
 
+def suppression_statement(email: str, now, method: str):
+    """One suppression row per address. A second unsubscribe refreshes the time."""
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    digest = email_sha256(email)
+    ins = pg_insert(EmailSuppression).values(
+        email_sha256=digest,
+        suppressed_at=now,
+        reason=method,
+    )
+    return ins.on_conflict_do_update(
+        index_elements=["email_sha256"],
+        set_={"suppressed_at": ins.excluded.suppressed_at},
+    )
+
+
+async def record_suppression(db, email: str, now, method: str) -> None:
+    await db.execute(suppression_statement(email, now, method))
+    # Unit-test databases keep rows on .added and do not run the SQL.
+    bucket = getattr(db, "added", None)
+    if isinstance(bucket, list):
+        bucket.append(EmailSuppression(
+            email_sha256=email_sha256(email),
+            suppressed_at=now,
+            reason=method,
+        ))
+
+
 async def unsubscribe_lead(db, lead, method: str = "unsubscribe_link") -> str:
     if lead is None:
         return "missing"
@@ -895,11 +922,7 @@ async def unsubscribe_lead(db, lead, method: str = "unsubscribe_link") -> str:
     if not getattr(lead, "unsubscribed_at", None):
         lead.unsubscribed_at = now
     db.add(_event(lead, "unsubscribed", {"now": now}, unsubscribe_method=method))
-    db.add(EmailSuppression(
-        email_sha256=email_sha256(lead.email),
-        suppressed_at=now,
-        reason=method,
-    ))
+    await record_suppression(db, lead.email, now, method)
     await redact_consent_network(db, lead.email)
     if emails_enabled():
         try:

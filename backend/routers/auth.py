@@ -415,19 +415,15 @@ class UnsubscribeRequest(BaseModel):
     token: str
 
 
-@router.post("/unsubscribe")
-@limiter.limit("20/minute")
-async def unsubscribe(request: Request, body: UnsubscribeRequest, db: AsyncSession = Depends(get_db)):
-    """One-click marketing opt-out from an email link (public, no login). Flips the
-    coach's marketing_opt_in off by their stable unsubscribe token. Idempotent, and it
-    returns the same confirmation for every well-formed token whether or not it
-    matched, so the endpoint can't be used to probe which tokens are real. A token
-    with a shape no issuer makes gets 400."""
+_UNSUBSCRIBED = {"ok": True, "message": "You're unsubscribed from CoachLenz marketing emails."}
+
+
+async def _unsubscribe_by_token(db: AsyncSession, token: str):
+    """Shared by GET and POST. Already-unsubscribed leads and users still get 200.
+    A re-joined lead has unsubscribed_at cleared, and this sets it again."""
     from backend.services.unsubscribe_token import is_valid_unsubscribe_token
-    token = (body.token or "").strip()
+    token = (token or "").strip()
     if not is_valid_unsubscribe_token(token):
-        # Not a shape any issuer makes (see services/unsubscribe_token.py). The
-        # page shows its error state instead of a false "unsubscribed".
         raise HTTPException(status_code=400, detail="This unsubscribe link isn't valid.")
     u = (await db.execute(select(User).where(User.unsubscribe_token == token))).scalar_one_or_none()
     if u is not None and u.marketing_opt_in:
@@ -441,4 +437,22 @@ async def unsubscribe(request: Request, body: UnsubscribeRequest, db: AsyncSessi
     if lead is not None:
         await unsubscribe_lead(db, lead, "unsubscribe_link")
         await db.commit()
-    return {"ok": True, "message": "You're unsubscribed from CoachLenz marketing emails."}
+    return _UNSUBSCRIBED
+
+
+@router.get("/unsubscribe")
+@limiter.limit("20/minute")
+async def unsubscribe_get(request: Request, token: str = "", db: AsyncSession = Depends(get_db)):
+    """Same opt-out as POST, for a one-click link opened as GET. Idempotent."""
+    return await _unsubscribe_by_token(db, token)
+
+
+@router.post("/unsubscribe")
+@limiter.limit("20/minute")
+async def unsubscribe(request: Request, body: UnsubscribeRequest, db: AsyncSession = Depends(get_db)):
+    """One-click marketing opt-out from an email link (public, no login). Flips the
+    coach's marketing_opt_in off by their stable unsubscribe token. Idempotent, and it
+    returns the same confirmation for every well-formed token whether or not it
+    matched, so the endpoint can't be used to probe which tokens are real. A token
+    with a shape no issuer makes gets 400."""
+    return await _unsubscribe_by_token(db, body.token)
