@@ -65,7 +65,41 @@ class GUID(TypeDecorator):
 # backend.main, which pulls in every background worker and its heavy deps (boto3,
 # twilio, playwright, ...). The routers, services, auth, and DB are all real.
 from fastapi import FastAPI  # noqa: E402
-from backend.models.base import Base, engine, AsyncSessionLocal  # noqa: E402
+import backend.models.base as _models_base  # noqa: E402
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine  # noqa: E402
+
+# Pytest collection imports other test modules first, and those import backend
+# while DATABASE_URL is still the placeholder Postgres URL. Settings and the
+# engine are then already built. Point every captured handle at this file's
+# SQLite database before any request or worker runs.
+def _force_harness_sqlite():
+    import sys
+    url = os.environ["DATABASE_URL"]
+    if str(_models_base.engine.url).startswith("sqlite"):
+        return
+    old_engine = _models_base.engine
+    old_sessions = _models_base.AsyncSessionLocal
+    new_engine = create_async_engine(url, echo=False)
+    new_sessions = async_sessionmaker(new_engine, class_=AsyncSession, expire_on_commit=False)
+    _models_base.engine = new_engine
+    _models_base.AsyncSessionLocal = new_sessions
+    for mod in list(sys.modules.values()):
+        if mod is None:
+            continue
+        if getattr(mod, "engine", None) is old_engine:
+            mod.engine = new_engine
+        if getattr(mod, "AsyncSessionLocal", None) is old_sessions:
+            mod.AsyncSessionLocal = new_sessions
+
+_force_harness_sqlite()
+# Settings is built at first import. If that happened before this file set
+# FERNET_KEY, report encryption would fail closed. Copy the harness key over.
+from backend.config import settings as _settings  # noqa: E402
+if not _settings.FERNET_KEY:
+    _settings.FERNET_KEY = os.environ["FERNET_KEY"]
+Base = _models_base.Base
+engine = _models_base.engine
+AsyncSessionLocal = _models_base.AsyncSessionLocal
 from backend.models.organization import Organization  # noqa: E402
 from backend.models.user import User  # noqa: E402
 from backend.models.game import Game  # noqa: E402
@@ -80,13 +114,17 @@ from backend.models.grade_annotation import GradeAnnotation  # noqa: E402
 from backend.models.comms import Playlist, PlaylistClip  # noqa: E402
 from backend.models.report_chat import ReportChatMessage  # noqa: E402
 from backend.models.source_connection import SourceConnection  # noqa: E402
+from backend.models.legal import LegalAcceptance  # noqa: E402
+from backend.services.legal import DOCUMENT_VERSIONS  # noqa: E402
 from backend.services.auth import hash_password, create_access_token  # noqa: E402
 from backend.services.encryption import encrypt_json  # noqa: E402
 from backend.routers import scout_football, reports, scout, events, games  # noqa: E402
 # PII-bearing routers, mounted so the tenant-isolation sweep exercises the real
-# handlers. None of these pull in boto3/twilio/playwright at import (verified), so
-# the slim SQLite harness stays self-contained.
+# handlers. None of these pull in twilio/playwright at import (verified). clips
+# and upload import boto3 (a prod dependency) but do not open a network call
+# unless a route actually presigns.
 from backend.routers import roster, grades, playlists, report_chat, connections  # noqa: E402
+from backend.routers import jobs, live_game, ai_detect, clips, upload, ingest, admin  # noqa: E402
 
 app = FastAPI()
 app.include_router(scout_football.router)
@@ -99,6 +137,13 @@ app.include_router(grades.router)
 app.include_router(playlists.router)
 app.include_router(report_chat.router)
 app.include_router(connections.router)
+app.include_router(jobs.router)
+app.include_router(live_game.router)
+app.include_router(ai_detect.router)
+app.include_router(clips.router)
+app.include_router(upload.router)
+app.include_router(ingest.router)
+app.include_router(admin.router)
 
 
 @app.get("/health")
@@ -110,7 +155,7 @@ TABLES = [Organization.__table__, User.__table__, Game.__table__,
           Event.__table__, TendencyReport.__table__, Job.__table__, AgentLog.__table__,
           Clip.__table__, Team.__table__, RosterPlayer.__table__, GradeAnnotation.__table__,
           Playlist.__table__, PlaylistClip.__table__, ReportChatMessage.__table__,
-          SourceConnection.__table__]
+          SourceConnection.__table__, LegalAcceptance.__table__]
 
 # Swap the Postgres-only types on just the tables we create.
 for _t in TABLES:
@@ -140,6 +185,13 @@ async def setup_db():
         other = User(organization_id=org.id, name="Other Analyst", email="other@x.com",
                      hashed_password=hash_password("x"), role="member")
         db.add_all([analyst, reviewer, other])
+        await db.flush()
+        # Scout and film routes require the student-data attestation. Record it
+        # so the harness exercises those handlers instead of stopping at the gate.
+        db.add(LegalAcceptance(
+            organization_id=org.id, user_id=analyst.id, document="student_data",
+            version=DOCUMENT_VERSIONS["student_data"],
+        ))
         await db.commit()
         for u in (org, analyst, reviewer, other):
             await db.refresh(u)
@@ -379,6 +431,10 @@ async def run():
 
         # ── Cross-org isolation over the PII-bearing resources (COPPA/FERPA) ──
         await cross_org_pii_isolation(ac)
+
+        # ── Report game_id / session id tenant isolation (Sev1) ────────────
+        from backend.tests.test_report_org_isolation import run as report_org_isolation
+        await report_org_isolation(ac, tok, ids, check)
 
         # ── Entitlement gates fire on a real endpoint (trial vs paid) ──────
         await entitlement_gates(ac)
@@ -633,13 +689,27 @@ async def entitlement_gates(ac):
         for o in (torg, tuser):
             await db.refresh(o)
     ttok = {"Authorization": f"Bearer {create_access_token(str(tuser.id), str(torg.id))}"}
-    g1, g2 = str(uuid.uuid4()), str(uuid.uuid4())
+    # Games must belong to the caller. A random id is a 404 (tenant check), which
+    # would hide whether the trial lock still fires.
+    async with AsyncSessionLocal() as db:
+        tg1 = Game(id=uuid.uuid4(), organization_id=torg.id, title="Trial One",
+                   sport="basketball", status="ready")
+        tg2 = Game(id=uuid.uuid4(), organization_id=torg.id, title="Trial Two",
+                   sport="basketball", status="ready")
+        pg1 = Game(id=uuid.uuid4(), organization_id=uuid.UUID(ids["org"]), title="Paid One",
+                   sport="football", status="ready")
+        pg2 = Game(id=uuid.uuid4(), organization_id=uuid.UUID(ids["org"]), title="Paid Two",
+                   sport="football", status="ready")
+        db.add_all([tg1, tg2, pg1, pg2])
+        await db.commit()
+        g1, g2 = str(tg1.id), str(tg2.id)
+        paid = [str(pg1.id), str(pg2.id)]
 
     r = await ac.post("/reports", json={"title": "Multi", "sport": "basketball", "game_ids": [g1, g2]}, headers=ttok)
     check("trial multi-game report -> 403 (locked)", r.status_code == 403)
     r = await ac.post("/reports", json={"title": "Solo", "sport": "basketball", "game_ids": [g1]}, headers=ttok)
     check("trial single-game report -> 200 (allowed)", r.status_code == 200)
-    r = await ac.post("/reports", json={"title": "Multi", "sport": "football", "game_ids": [g1, g2]}, headers=tok("analyst"))
+    r = await ac.post("/reports", json={"title": "Multi", "sport": "football", "game_ids": paid}, headers=tok("analyst"))
     check("paid multi-game report -> 200 (control)", r.status_code == 200)
 
 
