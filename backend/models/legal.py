@@ -9,8 +9,8 @@ from .base import Base
 
 class LegalAcceptance(Base):
     """One row per accepted document. `document` is 'terms' | 'privacy' |
-    'student_data'; `version` records which text was accepted so a re-acceptance
-    can be required when the attorney finalizes/updates it."""
+    'student_data' | 'marketing' | 'recruiting_directory'; `version` records which
+    text was accepted so a re-acceptance can be required when it changes."""
     __tablename__ = "legal_acceptances"
     # One authoritative acceptance per (org, user, document, version); keeps the
     # consent ledger from accreting duplicates under the accept-flow race. Mirrors
@@ -27,4 +27,6 @@ class LegalAcceptance(Base):
     document = Column(String, nullable=False)
     version = Column(String, nullable=False)
     ip_address = Column(String)
+    # Nullable. Rows written before migration 060 stay null. Nothing reads this yet.
+    user_agent = Column(String)
     accepted_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)

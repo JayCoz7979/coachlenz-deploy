@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
@@ -15,6 +16,7 @@ from .routers import (
     playlists, assignments, packages, notifications, me, files, ingest, ai_detect,
     connections, scout, scout_football, onboarding, roster, staff, ad, recruiting, grades,
     legal, report_chat, learning, live_game, funnel, credits, agent, privacy,
+    waitlist_confirm,
 )
 from .workers.worker_ai_detect import AiDetectWorker
 from .workers.worker_analysis import AnalysisWorker
@@ -27,22 +29,57 @@ from .workers.worker_reports import ReportsWorker
 from .observability import init_sentry
 init_sentry("api")
 
+from .log_redaction import install as _install_log_redaction
+_install_log_redaction()
+
+from fastapi import Depends as _Depends
+from .game_ids import reject_malformed_game_id
+
 app = FastAPI(
     title="CoachLenz API",
     version="1.0.0",
     docs_url="/docs" if settings.ENVIRONMENT != "production" else None,
     redoc_url=None,
+    # Every route: a non-UUID game_id (path or query) is 404, not a 500.
+    dependencies=[_Depends(reject_malformed_game_id)],
 )
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+from fastapi.responses import JSONResponse
+from backend.services.film_upload import UploadConflict, upload_conflict_body
+
+
+from sqlalchemy.exc import DBAPIError as _DBAPIError
+from .game_ids import is_invalid_uuid_error
+
+
+@app.exception_handler(_DBAPIError)
+async def _invalid_uuid_handler(request: Request, exc: _DBAPIError):
+    # Backstop for ids the game_id dependency doesn't see (a run id, an id in a
+    # JSON body). A malformed UUID is a missing record, not a server error.
+    if is_invalid_uuid_error(exc):
+        logging.getLogger("coachlenz.api").warning(
+            "malformed UUID on %s %s answered 404", request.method, request.url.path)
+        return JSONResponse({"detail": "Not found"}, status_code=404)
+    raise exc
+
+
+@app.exception_handler(UploadConflict)
+async def _upload_conflict_handler(request: Request, exc: UploadConflict):
+    # Same status and detail as before, plus a code and Retry-After for "busy".
+    return JSONResponse(upload_conflict_body(exc), status_code=409, headers=exc.headers)
 
 # Every origin the browser app can be served from must be allowed, or the API
 # rejects it via CORS preflight. The app now lives at app.coachlenz.com (custom
 # domain); the Railway URL and the marketing site stay valid too. Deduped,
 # falsy-filtered so a missing settings.APP_URL never injects a bad origin.
 from backend.cors_config import build_allowed_origins
-_ALLOWED_ORIGINS = build_allowed_origins(settings.APP_URL, settings.ENVIRONMENT)
+_ALLOWED_ORIGINS = build_allowed_origins(
+    settings.APP_URL, settings.ENVIRONMENT, settings.CORS_EXTRA_ORIGINS,
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -50,6 +87,9 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Chunk uploads read the part ETag when a browser talks to this API directly
+    # (local storage). R2 uploads need the same header exposed on the bucket.
+    expose_headers=["ETag", "Retry-After", "X-Upload-Error"],
 )
 
 
@@ -121,6 +161,7 @@ app.include_router(report_chat.router)
 app.include_router(learning.router)
 app.include_router(live_game.router)
 app.include_router(funnel.router)
+app.include_router(waitlist_confirm.router)
 app.include_router(credits.router)
 app.include_router(agent.router)
 app.include_router(privacy.router)

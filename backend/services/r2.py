@@ -69,8 +69,9 @@ def generate_presigned_upload_url(key: str, content_type: str = "video/mp4") -> 
 
 def upload_fileobj(key: str, fileobj, content_type: str = "video/mp4"):
     """Stream a file-like object straight to R2 server-side (multipart under the
-    hood — bounded memory). Used by the proxy-upload endpoint so the browser never
-    has to PUT to R2 directly, sidestepping the need for R2 bucket CORS."""
+    hood, bounded memory). Used by the legacy single-request proxy. New film
+    uploads use presigned multipart part URLs so the browser does not send the
+    whole file through one API request."""
     if _use_local():
         os.makedirs(LOCAL_STORAGE_DIR, exist_ok=True)
         save_local_file(key, fileobj.read())

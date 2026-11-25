@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     # valid for its whole lifetime; the app refreshes presigned URLs as needed, so
     # a viewing session never needs a week. (Detection uses its own 1-2h expiries.)
     R2_PRESIGNED_EXPIRY_SECONDS: int = 86400  # 24 hours
+    # Local storage only (dev, tests, staging): how long a film complete waits
+    # for another request that holds the same upload's lock before it answers
+    # 409 "try again". R2 does not use this lock.
+    UPLOAD_LOCK_TIMEOUT_SECONDS: float = 120.0
 
     # Anthropic
     ANTHROPIC_API_KEY: str = ""
@@ -182,7 +186,16 @@ class Settings(BaseSettings):
 
     # App
     APP_URL: str = "https://coachlenz.com"
+    # Public frontend the coach opens. Waitlist confirm links use this.
+    # Unset keeps the production app host, so those links stay byte-identical.
+    PUBLIC_APP_URL: str = "https://app.coachlenz.com"
     ENVIRONMENT: str = "production"
+    # Optional comma-separated browser origins added to CORS. Empty means the
+    # allow-list is exactly the historical one. Exact origins only: wildcards
+    # are ignored, and production ignores anything that is not https.
+    # Staging sets this to its frontend origin when APP_URL is the API host
+    # (so local /files playback links resolve) and the page is served elsewhere.
+    CORS_EXTRA_ORIGINS: str = ""
     # Shared rate-limit storage. The API runs with multiple uvicorn workers, and
     # slowapi's default in-memory storage is PER-PROCESS, so each worker keeps its
     # own counter and the effective limit is ~Nx (N = worker count). Point this at
@@ -246,6 +259,23 @@ class Settings(BaseSettings):
     # Locked live pair is B (Halftime Sheet, version cl-halftime-v1). Pair A stays
     # in code and is not rendered. Anything other than "a" uses B.
     WAITLIST_CONSENT_PAIR: str = "b"
+
+    # Double opt-in and Resend for the waitlist. DEFAULT FALSE: the capture
+    # path stores the lead and makes zero Resend calls. No From address is
+    # assumed. Set WAITLIST_FROM_EMAIL (a coachlenz.com mailbox) before turning
+    # this on. Do not point it at cosbyaisolutions.com from this code.
+    WAITLIST_EMAIL_ENABLED: bool = False
+    # Explicit CoachLenz mailbox. Do not fall through to RESEND_DOMAIN.
+    WAITLIST_FROM_EMAIL: str = "Jay Cosby <support@coachlenz.com>"
+    WAITLIST_REPLY_TO: str = "support@coachlenz.com"
+    # Resend contact sync for the waitlist. Read only by the live gateway, and only
+    # while WAITLIST_EMAIL_ENABLED is on. Empty values keep every live Resend call
+    # refused (nothing is sent), so email cannot go out half configured.
+    # WAITLIST_RESEND_SEGMENT_IDS is a JSON object: {"<segment name>": "<segment id>"}.
+    WAITLIST_RESEND_TOPIC_ID: str = ""
+    WAITLIST_RESEND_SEGMENT_IDS: str = ""
+    # Hosted Halftime Sheet PDF. Empty means <PUBLIC_APP_URL>/waitlist/halftime-sheet.pdf.
+    WAITLIST_HALFTIME_SHEET_URL: str = ""
 
     class Config:
         env_file = ".env"

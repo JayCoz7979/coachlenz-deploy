@@ -7,6 +7,7 @@ import api from '@/lib/api'
 import { ChevronLeft, Tag, Play, Pause, Trash2, Clock, FileText, Loader2, CheckCircle, AlertCircle, Zap, Pencil, Check, X, Activity, TrendingUp, Users, Film, SkipForward, SkipBack, Star, StickyNote } from 'lucide-react'
 import Link from 'next/link'
 import ConfirmModal from '@/components/ConfirmModal'
+import { isGameId, gameLoadError } from '@/lib/gameId'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface AgentLogEntry {
@@ -1546,6 +1547,8 @@ export default function GamePage() {
   const { user, isLoading, fetchMe } = useAuth()
   const videoRef = useRef<HTMLVideoElement>(null)
   const [game, setGame] = useState<GameDetail | null>(null)
+  const [loadError, setLoadError] = useState<null | 'not_found' | 'error'>(null)
+  const [loadAttempt, setLoadAttempt] = useState(0)
   const [events, setEvents] = useState<TaggedEvent[]>([])
   const [currentTime, setCurrentTime] = useState(0)
   const [saving, setSaving] = useState(false)
@@ -1578,7 +1581,12 @@ export default function GamePage() {
 
   useEffect(() => {
     if (!user || !id) return
-    api.get(`/games/${id}`).then(r => { setGame(r.data); setScoutJersey(r.data.scout_jersey || ''); setOppJersey(r.data.opponent_jersey || ''); setAttackDir(r.data.scout_attack_dir_h1 || '') })
+    // A malformed id can never load: show not-found without calling the API.
+    if (!isGameId(id)) { setLoadError('not_found'); return }
+    setLoadError(null)
+    api.get(`/games/${id}`)
+      .then(r => { setGame(r.data); setScoutJersey(r.data.scout_jersey || ''); setOppJersey(r.data.opponent_jersey || ''); setAttackDir(r.data.scout_attack_dir_h1 || '') })
+      .catch(err => setLoadError(gameLoadError(err)))
     api.get(`/events?game_id=${id}`).then(r => setEvents(r.data)).catch(() => {})
     // Check if there's a running detect job
     api.get(`/games/${id}/auto-detect/status`).then(r => {
@@ -1590,7 +1598,7 @@ export default function GamePage() {
     fetchAgentLog()
     fetchScorecard()
     fetchRuns()
-  }, [user, id])
+  }, [user, id, loadAttempt])
 
   const fetchAgentLog = async () => {
     try {
@@ -1862,6 +1870,31 @@ export default function GamePage() {
       showToast('Failed to start report generation')
       setReportPending(false)
     }
+  }
+
+  if (!game && loadError) {
+    return (
+      <div className="flex h-screen overflow-hidden">
+        <Sidebar />
+        <main className="flex-1 flex items-center justify-center p-6">
+          <div className="card max-w-md w-full text-center space-y-4">
+            {loadError === 'not_found' ? (
+              <>
+                <h1 className="text-xl font-bold">Game not found</h1>
+                <p className="text-gray-400">This game doesn&apos;t exist, was deleted, or belongs to another program.</p>
+              </>
+            ) : (
+              <>
+                <h1 className="text-xl font-bold">We couldn&apos;t load this game</h1>
+                <p className="text-gray-400" role="alert">Check your connection and try again.</p>
+                <button type="button" className="btn-primary w-full" onClick={() => setLoadAttempt(n => n + 1)}>Try again</button>
+              </>
+            )}
+            <p className="text-sm"><Link href="/games" className="text-brand-400 hover:underline">Back to your games</Link></p>
+          </div>
+        </main>
+      </div>
+    )
   }
 
   if (!game) {

@@ -50,4 +50,8 @@ class MarketingLead(Base):
     unsubscribe_token = Column(String)
     resend_contact_id = Column(String)
     has_account = Column(Boolean, nullable=False, default=False)
+    reminder_sent_at = Column(DateTime(timezone=True))
+    a1_sent_at = Column(DateTime(timezone=True))
+    l1m_sent_at = Column(DateTime(timezone=True))
+    minor_reclass_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)

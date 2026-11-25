@@ -204,6 +204,8 @@ async def fulfill_request(request_id: str, body: FulfillIn, user: User = Depends
             raise HTTPException(status_code=400, detail="Resolve the org (verify step) before deletion")
         summary = await svc.execute_deletion(
             db, pr.organization_id, body.roster_player_ids, body.game_ids)
+        from backend.services.waitlist_email import redact_consent_network
+        await redact_consent_network(db, pr.requester_email)
         cert_id = f"CL-DEL-{datetime.utcnow().strftime('%Y%m%d')}-{str(pr.id)[:8]}"
         pr.certificate_id = cert_id
         pr.status = "completed"

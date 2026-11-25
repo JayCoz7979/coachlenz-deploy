@@ -1,8 +1,10 @@
 """
 Legal + COPPA/FERPA consent policy (beta-readiness P0 #2).
 
-Two consents are captured and enforced:
+Consents captured and enforced:
   - terms / privacy: accepted per user at signup (a required checkbox).
+  - marketing: optional signup checkbox. Recorded only when ticked. Not a
+    re-consent document, and an unticked box is a successful signup.
   - student_data: a per-ORG authority attestation made before any student-athlete
     roster data is entered — the COPPA/FERPA representation.
 
@@ -24,12 +26,17 @@ TERMS_VERSION = "2026-11-10"
 PRIVACY_VERSION = "2026-11-10"
 STUDENT_DATA_VERSION = "2026-07-31-draft"
 RECRUITING_DIRECTORY_VERSION = "2026-08-05-draft"
+# Optional signup checkbox ("Send me CoachLenz coaching tips and product updates.
+# You can unsubscribe anytime."). Not a re-consent document: leaving it unticked
+# is a valid signup, and ticking it records this version with the client IP.
+MARKETING_VERSION = "2026-11-23"
 
 DOCUMENT_VERSIONS = {
     "terms": TERMS_VERSION,
     "privacy": PRIVACY_VERSION,
     "student_data": STUDENT_DATA_VERSION,
     "recruiting_directory": RECRUITING_DIRECTORY_VERSION,
+    "marketing": MARKETING_VERSION,
 }
 
 # The disclosure a coach makes before publishing a player's recruiting profile
@@ -55,7 +62,12 @@ STUDENT_DATA_ATTESTATION = (
 )
 
 
-async def record_acceptance(db, organization_id, user_id, document: str, ip: str | None = None) -> None:
+def _clip_user_agent(user_agent: str | None) -> str | None:
+    text = (user_agent or "").strip()
+    return text[:512] or None
+
+
+async def record_acceptance(db, organization_id, user_id, document: str, ip: str | None = None, user_agent: str | None = None) -> None:
     """Log an acceptance of `document` at its current version. Caller commits.
 
     Idempotent: the insert is wrapped in a savepoint so a duplicate (the accept
@@ -70,6 +82,7 @@ async def record_acceptance(db, organization_id, user_id, document: str, ip: str
             db.add(LegalAcceptance(
                 organization_id=organization_id, user_id=user_id,
                 document=document, version=DOCUMENT_VERSIONS[document], ip_address=ip,
+                user_agent=_clip_user_agent(user_agent),
             ))
     except IntegrityError:
         pass  # already recorded at this version — idempotent

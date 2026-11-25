@@ -1,12 +1,19 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Boolean, Integer, BigInteger, Float, Date, DateTime, ForeignKey
+from sqlalchemy import Column, String, Boolean, Integer, BigInteger, Float, Date, DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from .base import Base
 
 class Game(Base):
     __tablename__ = "games"
+    # One stored object, one game. A duplicate complete (two requests, two API
+    # workers) hits this and rolls back instead of inserting a second row.
+    # NULL keys stay allowed: a URL import and a live-logger session have no
+    # film object yet, and Postgres treats those NULLs as distinct.
+    __table_args__ = (
+        UniqueConstraint("r2_key", name="games_r2_key_unique"),
+    )
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
     team_id = Column(UUID(as_uuid=True), ForeignKey("teams.id"))

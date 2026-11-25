@@ -1,0 +1,1169 @@
+"""Regression tests for large film uploads.
+
+Production uploads died at exactly 300s because the browser posted the whole file
+through the API and Railway's edge closed the request. The game row and the trial
+slot were created before any byte arrived, so each failure left an empty game and
+spent the trial.
+
+These tests run against the local storage stand-in (no R2, no network): a file
+larger than the single-request cap completes in chunks, an interrupted upload
+resumes, and a failed or abandoned upload leaves no game and does not reserve a
+trial slot.
+"""
+import asyncio
+import hashlib
+import inspect
+import multiprocessing
+import threading
+import uuid
+from types import SimpleNamespace
+from urllib.parse import urlparse
+
+import pytest
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
+from starlette.requests import Request
+
+from backend.models.game import Game
+from backend.routers import files as files_router
+from backend.routers.games import GameCreate, create_game
+from backend.routers.upload import upload_file_proxy
+from backend.services import film_upload, multipart_store as store
+from backend.services import r2
+from backend.services.film_upload import (
+    SINGLE_REQUEST_LIMIT,
+    abort_upload,
+    accept_relayed_part,
+    finish_upload,
+    sign_parts,
+    start_upload,
+)
+from backend.services.trial import reserve_trial_game_slot
+
+
+def _mp_complete(payload):
+    """Child process: assemble one local upload. Must be importable."""
+    root, key, upload_id, parts = payload
+    from backend.services import r2
+    from backend.services.multipart_store import complete_upload
+    r2.LOCAL_STORAGE_DIR = root
+    r2._r2_available = False
+    return complete_upload(key, upload_id, parts)
+
+
+class _Result:
+    def __init__(self, db):
+        self._db = db
+        self.rowcount = 1
+
+    def scalar_one(self):
+        # Student-data consent is present, so the upload gates get past it.
+        return 1
+
+    def scalar_one_or_none(self):
+        games = [obj for obj in self._db.added if isinstance(obj, Game)]
+        return games[-1] if games else None
+
+
+class MemDB:
+    """Records inserts. Consent lookups report a recorded attestation, and the
+    trial UPDATE reports one row so the real reserve helper accepts it."""
+
+    def __init__(self):
+        self.added = []
+        self.commits = 0
+
+    async def execute(self, *_a, **_k):
+        return _Result(self)
+
+    def add(self, obj):
+        self.added.append(obj)
+
+    async def flush(self):
+        for obj in self.added:
+            if getattr(obj, "id", None) is None:
+                obj.id = uuid.uuid4()
+
+    async def commit(self):
+        self.commits += 1
+
+    async def rollback(self):
+        pass
+
+
+def _org():
+    return SimpleNamespace(
+        id=uuid.uuid4(),
+        is_trial=True,
+        trial_ends_at=None,
+        trial_games_used=0,
+        subscription_tier="trial",
+        chosen_sports=["football"],
+        stripe_subscription_status=None,
+    )
+
+
+def _user(org):
+    return SimpleNamespace(
+        id=uuid.uuid4(),
+        organization_id=org.id,
+        email_verified=True,
+        role="owner",
+    )
+
+
+def _body(size, name="game.mp4"):
+    return GameCreate(
+        title="Broken Bow vs Sallisaw",
+        sport="football",
+        file_name=name,
+        file_size_bytes=size,
+        opponent="Sallisaw",
+        duration_seconds=3420,
+    )
+
+
+def _games(db):
+    return [obj for obj in db.added if isinstance(obj, Game)]
+
+
+@pytest.fixture
+def local_disk(tmp_path, monkeypatch):
+    monkeypatch.setattr(r2, "LOCAL_STORAGE_DIR", str(tmp_path))
+    return tmp_path
+
+
+@pytest.fixture
+def reserve_calls(monkeypatch):
+    calls = []
+    real = reserve_trial_game_slot
+
+    async def spy(db, org):
+        calls.append(str(org.id))
+        return await real(db, org)
+
+    monkeypatch.setattr(film_upload, "reserve_trial_game_slot", spy)
+    return calls
+
+
+def _files_client():
+    app = FastAPI()
+    app.include_router(files_router.router)
+    return TestClient(app)
+
+
+def _put(client, url, data: bytes):
+    parsed = urlparse(url)
+    res = client.put(f"{parsed.path}?{parsed.query}", content=data)
+    assert res.status_code == 200, res.text
+    return res
+
+
+def _request(content_length: int) -> Request:
+    scope = {
+        "type": "http",
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/upload/file",
+        "raw_path": b"/upload/file",
+        "query_string": b"",
+        "headers": [(b"content-length", str(content_length).encode())],
+        "client": ("203.0.113.8", 1234),
+        "server": ("test", 80),
+    }
+    return Request(scope)
+
+
+@pytest.mark.unit
+def test_proxy_rejects_a_body_over_the_single_request_limit():
+    # The legacy one-shot route must fail before it touches the database or storage.
+    # Railway closes that request at 300s; the cap sits far enough under it that a
+    # slow home connection still finishes.
+    assert film_upload.DEFAULT_PART_SIZE <= SINGLE_REQUEST_LIMIT
+    film_upload.enforce_proxy_limit(str(SINGLE_REQUEST_LIMIT))  # exactly the cap is allowed
+
+    class BoomDB:
+        async def execute(self, *_a, **_k):
+            raise AssertionError("oversized proxy upload touched the database")
+
+    fn = inspect.unwrap(upload_file_proxy)
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(fn(
+            game_id="unused",
+            request=_request(SINGLE_REQUEST_LIMIT + 1),
+            file=None,
+            user=SimpleNamespace(id="u"),
+            org=SimpleNamespace(id="o"),
+            db=BoomDB(),
+        ))
+    assert exc.value.status_code == 413
+    assert "chunk" in exc.value.detail.lower()
+
+
+@pytest.mark.unit
+def test_upload_larger_than_single_request_limit_completes_in_chunks_and_resumes(local_disk, reserve_calls):
+    # One byte over the proxy cap. With the production part size this is two chunks,
+    # and neither chunk is posted as one giant API body.
+    data = b"f" * (SINGLE_REQUEST_LIMIT + 1)
+    assert len(data) > SINGLE_REQUEST_LIMIT
+    org, user, db = _org(), None, MemDB()
+    user = _user(org)
+    started = asyncio.run(start_upload(db, user, org, _body(len(data))))
+    assert started["part_count"] >= 2
+    assert started["part_size"] <= SINGLE_REQUEST_LIMIT
+    assert _games(db) == []
+    assert reserve_calls == []
+
+    part_size = started["part_size"]
+    chunks = [
+        data[i:i + part_size]
+        for i in range(0, len(data), part_size)
+    ]
+    assert len(chunks) == started["part_count"]
+    client = _files_client()
+    token = started["upload_token"]
+
+    # Interrupt after the first chunk. Finishing now must not create a game or
+    # spend the trial, and the stored chunk has to still be there to resume.
+    first = sign_parts(org, token, [1], "http://testserver")
+    _put(client, first["parts"][0]["url"], chunks[0])
+    with pytest.raises(HTTPException) as incomplete:
+        asyncio.run(finish_upload(db, user, org, token, _body(len(data))))
+    assert incomplete.value.status_code == 409
+    assert _games(db) == []
+    assert reserve_calls == []
+    assert "trial game was not used" in incomplete.value.detail
+
+    # Resume: the status endpoint reports the chunk already stored, and only the
+    # missing ones are sent.
+    status = film_upload.upload_status(org, token)
+    have = {p["part_number"] for p in status["parts"]}
+    assert have == {1}
+    missing = [n for n in range(1, started["part_count"] + 1) if n not in have]
+    signed = sign_parts(org, token, missing, "http://testserver")
+    for part in signed["parts"]:
+        _put(client, part["url"], chunks[part["part_number"] - 1])
+
+    done = asyncio.run(finish_upload(db, user, org, token, _body(len(data))))
+    assert done["status"] == "processing"
+    games = _games(db)
+    assert len(games) == 1
+    assert games[0].r2_key == started["key"]
+    assert games[0].file_size_bytes == len(data)
+    assert games[0].title == "Broken Bow vs Sallisaw"
+    assert games[0].duration_seconds == 3420
+    from backend.models.job import Job
+    jobs = [obj for obj in db.added if isinstance(obj, Job)]
+    assert len(jobs) == 1
+    assert jobs[0].job_type == "ingest"
+    assert jobs[0].payload == {"game_id": str(games[0].id)}
+    assert "source_url" not in (jobs[0].payload or {})
+    assert reserve_calls == [str(org.id)]
+    assert db.commits == 1
+    assert r2.read_local_file(started["key"]) == data
+
+    # The multipart id is gone after assemble. Status still reports the film as
+    # stored so a retry finishes the game instead of sending the bytes again.
+    after = film_upload.upload_status(org, token)
+    assert after["assembled"] is True
+    assert after["bytes_received"] == len(data)
+
+    # Completing again returns the same game and does not reserve a second slot.
+    again = asyncio.run(finish_upload(db, user, org, token, _body(len(data))))
+    assert again["id"] == done["id"]
+    assert reserve_calls == [str(org.id)]
+    assert len(_games(db)) == 1
+
+
+@pytest.mark.unit
+def test_abandoned_or_failed_upload_leaves_no_game_and_no_trial_slot(local_disk, reserve_calls):
+    org = _org()
+    user = _user(org)
+    db = MemDB()
+    # Small on purpose: the failure is "never finished", not the file size.
+    size = 1500
+    started = asyncio.run(start_upload(db, user, org, _body(size), part_size=800))
+    store.write_part(started["key"], film_upload.read_session(started["upload_token"], org)["upid"], 1, b"a" * 800)
+
+    # Abandoned: chunks exist, complete was never called.
+    assert _games(db) == []
+    assert reserve_calls == []
+
+    # Explicit cancel drops the chunks and still does not touch the trial.
+    abort_upload(org, started["upload_token"])
+    with pytest.raises(HTTPException) as gone:
+        asyncio.run(finish_upload(db, user, org, started["upload_token"], _body(size)))
+    assert gone.value.status_code == 400
+    assert _games(db) == []
+    assert reserve_calls == []
+
+    # Storage finished, but the trial slot is already gone. No game is inserted.
+    started2 = asyncio.run(start_upload(db, user, org, _body(size), part_size=800))
+    session = film_upload.read_session(started2["upload_token"], org)
+    store.write_part(session["key"], session["upid"], 1, b"b" * 800)
+    store.write_part(session["key"], session["upid"], 2, b"c" * 700)
+
+    async def deny(db, org):
+        reserve_calls.append("denied")
+        return False
+
+    # Patch only for this call. The earlier spy was installed by the fixture;
+    # replace it with a hard deny so the slot is not taken.
+    film_upload.reserve_trial_game_slot = deny
+    try:
+        with pytest.raises(HTTPException) as denied:
+            asyncio.run(finish_upload(db, user, org, started2["upload_token"], _body(size)))
+    finally:
+        film_upload.reserve_trial_game_slot = reserve_trial_game_slot
+    assert denied.value.status_code == 403
+    assert "trial game was not used" in denied.value.detail
+    assert _games(db) == []
+    assert db.commits == 0
+
+
+@pytest.mark.unit
+def test_over_20gb_is_rejected_before_any_storage_or_game(local_disk, monkeypatch, reserve_calls):
+    def boom(*_a, **_k):
+        raise AssertionError("oversized upload reached storage")
+
+    monkeypatch.setattr(store, "create_upload", boom)
+    org, user, db = _org(), None, MemDB()
+    user = _user(org)
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(start_upload(db, user, org, _body(film_upload.max_upload_bytes() + 1)))
+    assert exc.value.status_code == 413
+    assert _games(db) == []
+    assert reserve_calls == []
+
+
+@pytest.mark.unit
+def test_create_game_does_not_insert_a_row_or_reserve_a_trial(local_disk, monkeypatch, reserve_calls):
+    def boom(*_a, **_k):
+        raise AssertionError("POST /games touched storage")
+
+    monkeypatch.setattr(store, "create_upload", boom)
+    org = _org()
+    user = _user(org)
+    db = MemDB()
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(create_game(body=_body(1000), user=user, org=org, db=db))
+    assert exc.value.status_code == 409
+    assert "chunk" in exc.value.detail.lower()
+    assert _games(db) == []
+    assert reserve_calls == []
+    assert db.commits == 0
+
+
+@pytest.mark.unit
+def test_relay_accepts_one_chunk_and_rejects_a_body_over_the_part(local_disk):
+    org = _org()
+    user = _user(org)
+    db = MemDB()
+    started = asyncio.run(start_upload(db, user, org, _body(1500), part_size=800))
+    token = started["upload_token"]
+    session = film_upload.read_session(token, org)
+    ok = accept_relayed_part(org, token, 1, b"r" * 800)
+    assert ok["size"] == 800
+    parts = store.list_parts(session["key"], session["upid"])
+    assert [p["part_number"] for p in parts] == [1]
+    with pytest.raises(HTTPException) as exc:
+        accept_relayed_part(org, token, 1, b"r" * 801)
+    assert exc.value.status_code == 413
+    assert _games(db) == []
+
+
+@pytest.mark.unit
+def test_retrying_the_same_chunk_overwrites_it_and_then_completes(local_disk, reserve_calls):
+    org, user, db = _org(), None, MemDB()
+    user = _user(org)
+    started = asyncio.run(start_upload(db, user, org, _body(1500), part_size=800))
+    session = film_upload.read_session(started["upload_token"], org)
+    key, upid = session["key"], session["upid"]
+    store.write_part(key, upid, 1, b"x" * 800)
+    # The connection died after a partial chunk. The retry sends the whole part again.
+    store.write_part(key, upid, 1, b"y" * 800)
+    listed = store.list_parts(key, upid)
+    assert [(p["part_number"], p["size"]) for p in listed] == [(1, 800)]
+    with open(store._part_path(upid, 1), "rb") as fh:
+        assert fh.read(1) == b"y"
+    store.write_part(key, upid, 2, b"z" * 700)
+    done = asyncio.run(finish_upload(db, user, org, started["upload_token"], _body(1500)))
+    assert r2.read_local_file(key) == (b"y" * 800) + (b"z" * 700)
+    assert len(_games(db)) == 1
+    assert reserve_calls == [str(org.id)]
+    assert done["id"]
+
+
+@pytest.mark.unit
+def test_assembled_size_must_match_the_declared_size(local_disk, monkeypatch, reserve_calls):
+    org, user, db = _org(), None, MemDB()
+    user = _user(org)
+    started = asyncio.run(start_upload(db, user, org, _body(1500), part_size=800))
+    session = film_upload.read_session(started["upload_token"], org)
+    store.write_part(session["key"], session["upid"], 1, b"a" * 800)
+    store.write_part(session["key"], session["upid"], 2, b"b" * 700)
+
+    def lie(*_a, **_k):
+        return 1500 + 10
+
+    monkeypatch.setattr(store, "complete_upload", lie)
+    deleted = []
+    monkeypatch.setattr(store, "delete_object", lambda key: deleted.append(key))
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(finish_upload(db, user, org, started["upload_token"], _body(1500)))
+    assert exc.value.status_code == 413
+    assert deleted == [session["key"]]
+    assert _games(db) == []
+    assert reserve_calls == []
+
+
+class _OneSlotDB(MemDB):
+    """The trial UPDATE succeeds once, then reports rowcount 0. Mirrors the
+    conditional UPDATE in reserve_trial_game_slot."""
+
+    def __init__(self):
+        super().__init__()
+        self.used = 0
+
+    async def execute(self, stmt, *_a, **_k):
+        from sqlalchemy.sql.dml import Update
+        if isinstance(stmt, Update) and "trial_games_used" in str(stmt):
+            if self.used < 1:
+                self.used += 1
+                return SimpleNamespace(rowcount=1, scalar_one=lambda: 1, scalar_one_or_none=lambda: None)
+            return SimpleNamespace(rowcount=0, scalar_one=lambda: 1, scalar_one_or_none=lambda: None)
+        # Existence lookups are per object key. The other film must not look
+        # like a duplicate of this one, or the second complete would return it.
+        return SimpleNamespace(rowcount=1, scalar_one=lambda: 1, scalar_one_or_none=lambda: None)
+
+
+@pytest.mark.unit
+def test_two_uploads_cannot_both_take_the_one_trial_slot(local_disk):
+    org, user = _org(), None
+    user = _user(org)
+    db = _OneSlotDB()
+    first = asyncio.run(start_upload(db, user, org, _body(1000, "a.mp4"), part_size=1000))
+    second = asyncio.run(start_upload(db, user, org, _body(1000, "b.mp4"), part_size=1000))
+    for token, byte in ((first, b"a"), (second, b"b")):
+        session = film_upload.read_session(token["upload_token"], org)
+        store.write_part(session["key"], session["upid"], 1, byte * 1000)
+
+    ok = asyncio.run(finish_upload(db, user, org, first["upload_token"], _body(1000, "a.mp4")))
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(finish_upload(db, user, org, second["upload_token"], _body(1000, "b.mp4")))
+    assert exc.value.status_code == 403
+    assert len(_games(db)) == 1
+    assert _games(db)[0].r2_key == first["key"]
+    assert ok["id"] == str(_games(db)[0].id)
+    assert db.used == 1
+
+
+@pytest.mark.unit
+def test_duplicate_complete_that_loses_the_insert_race_returns_the_same_game(local_disk, monkeypatch):
+    from sqlalchemy.exc import IntegrityError
+
+    org, user = _org(), None
+    user = _user(org)
+    db = MemDB()
+    started = asyncio.run(start_upload(db, user, org, _body(1000), part_size=1000))
+    session = film_upload.read_session(started["upload_token"], org)
+    store.write_part(session["key"], session["upid"], 1, b"q" * 1000)
+    first = asyncio.run(finish_upload(db, user, org, started["upload_token"], _body(1000)))
+    winner = _games(db)[0]
+
+    # The second request passed the "no row yet" check before the first commit
+    # became visible, then the unique key rejected its insert.
+    async def miss_then_hit(db_, org_id, key):
+        if not getattr(db_, "_race_seen", False):
+            db_._race_seen = True
+            return None
+        return winner
+
+    real_commit = db.commit
+
+    async def conflict_once():
+        if not getattr(db, "_conflicted", False):
+            db._conflicted = True
+            raise IntegrityError("INSERT", {}, Exception("games_r2_key_unique"))
+        await real_commit()
+
+    async def rollback():
+        db.added[:] = [obj for obj in db.added if obj is winner or not isinstance(obj, type(winner))]
+
+    monkeypatch.setattr(film_upload, "_existing_game", miss_then_hit)
+    monkeypatch.setattr(db, "commit", conflict_once)
+    monkeypatch.setattr(db, "rollback", rollback)
+    again = asyncio.run(finish_upload(db, user, org, started["upload_token"], _body(1000)))
+    assert again["id"] == first["id"]
+    assert len(_games(db)) == 1
+
+
+@pytest.mark.unit
+def test_local_complete_race_keeps_the_object_and_returns_the_game(local_disk, monkeypatch):
+    """Both completes listed the parts. The first assembled and removed them.
+    The second complete_upload then raises MultipartError. That used to be a 502.
+    The object is already the right size, so the second call returns the game."""
+    from backend.services.multipart_store import MultipartError
+
+    org, user, db = _org(), None, MemDB()
+    user = _user(org)
+    org.is_trial = False
+    started = asyncio.run(start_upload(db, user, org, _body(1000), part_size=1000))
+    session = film_upload.read_session(started["upload_token"], org)
+    store.write_part(session["key"], session["upid"], 1, b"q" * 1000)
+    first = asyncio.run(finish_upload(db, user, org, started["upload_token"], _body(1000)))
+
+    real_list = store.list_parts
+
+    def still_listed(*a, **k):
+        try:
+            return real_list(*a, **k)
+        except MultipartError:
+            return [{"part_number": 1, "etag": '"gone"', "size": 1000}]
+
+    monkeypatch.setattr(store, "list_parts", still_listed)
+    again = asyncio.run(finish_upload(db, user, org, started["upload_token"], _body(1000)))
+    assert again["id"] == first["id"]
+    assert r2.read_local_file(session["key"]) == b"q" * 1000
+
+
+@pytest.mark.unit
+def test_trial_loser_deletes_its_orphan_but_not_another_games_object(local_disk, monkeypatch):
+    org, user, db = _org(), None, MemDB()
+    user = _user(org)
+    started = asyncio.run(start_upload(db, user, org, _body(1000), part_size=1000))
+    session = film_upload.read_session(started["upload_token"], org)
+    store.write_part(session["key"], session["upid"], 1, b"q" * 1000)
+    first = asyncio.run(finish_upload(db, user, org, started["upload_token"], _body(1000)))
+    winner = _games(db)[0]
+    deleted = []
+    monkeypatch.setattr(store, "delete_object", lambda key: deleted.append(key))
+
+    async def deny(db_, org_):
+        return False
+
+    calls = {"n": 0}
+
+    async def miss_then_hit(db_, org_id, key):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return None
+        return winner
+
+    monkeypatch.setattr(film_upload, "reserve_trial_game_slot", deny)
+    monkeypatch.setattr(film_upload, "_existing_game", miss_then_hit)
+    again = asyncio.run(finish_upload(db, user, org, started["upload_token"], _body(1000)))
+    assert again["id"] == first["id"]
+    assert deleted == []
+
+
+class _RaceDB(MemDB):
+    """Thread-safe stand-in that rejects a second game for the same object key."""
+
+    def __init__(self):
+        super().__init__()
+        self._lock = threading.Lock()
+        self._committed = []
+
+    async def execute(self, *_a, **_k):
+        with self._lock:
+            return _Result(self)
+
+    def add(self, obj):
+        with self._lock:
+            super().add(obj)
+
+    async def flush(self):
+        with self._lock:
+            await super().flush()
+
+    async def commit(self):
+        from sqlalchemy.exc import IntegrityError
+        with self._lock:
+            pending = [
+                obj for obj in self.added
+                if isinstance(obj, Game) and not getattr(obj, "_committed", False)
+            ]
+            if any(obj.r2_key in self._committed for obj in pending):
+                raise IntegrityError("dup", {}, Exception("games_r2_key_unique"))
+            claimed = set(self._committed)
+            for obj in pending:
+                if obj.r2_key in claimed:
+                    continue
+                obj._committed = True
+                self._committed.append(obj.r2_key)
+                claimed.add(obj.r2_key)
+            self.commits += 1
+
+    async def rollback(self):
+        with self._lock:
+            self.added[:] = [
+                obj for obj in self.added
+                if not isinstance(obj, Game) or getattr(obj, "_committed", False)
+            ]
+
+
+@pytest.mark.unit
+def test_five_concurrent_local_completes_keep_one_film_and_one_game(local_disk):
+    # Two non-zero parts, large enough that overlapping writes would show up
+    # in the digest. Five processes assemble the same upload (staging runs
+    # four). Five threads then complete it through finish_upload.
+    part_a = bytes((i % 251) + 1 for i in range(256 * 1024))
+    part_b = bytes(((i * 7) % 251) + 1 for i in range(256 * 1024))
+    source = part_a + part_b
+    org = _org()
+    org.is_trial = False
+    user = _user(org)
+    db = _RaceDB()
+    started = asyncio.run(start_upload(
+        db, user, org, _body(len(source)), part_size=len(part_a),
+    ))
+    session = film_upload.read_session(started["upload_token"], org)
+    store.write_part(session["key"], session["upid"], 1, part_a)
+    store.write_part(session["key"], session["upid"], 2, part_b)
+    parts = store.list_parts(session["key"], session["upid"])
+    ctx = multiprocessing.get_context("fork")
+    payload = (str(local_disk), session["key"], session["upid"], parts)
+    with ctx.Pool(5) as pool:
+        sizes = pool.map(_mp_complete, [payload] * 5)
+    assert sizes == [len(source)] * 5
+    stored = r2.read_local_file(session["key"])
+    assert stored is not None
+    assert hashlib.md5(stored).hexdigest() == hashlib.md5(source).hexdigest()
+
+    # A second upload, completed five times through finish_upload, must agree
+    # on one game id and the same bytes. The file writes overlap; the insert
+    # race is what the unique key rejects.
+    started2 = asyncio.run(start_upload(
+        db, user, org, _body(len(source), "second.mp4"), part_size=len(part_a),
+    ))
+    session2 = film_upload.read_session(started2["upload_token"], org)
+    store.write_part(session2["key"], session2["upid"], 1, part_a)
+    store.write_part(session2["key"], session2["upid"], 2, part_b)
+    barrier = threading.Barrier(5)
+    results = []
+    errors = []
+
+    def _one():
+        barrier.wait()
+        try:
+            results.append(asyncio.run(finish_upload(
+                db, user, org, started2["upload_token"], _body(len(source), "second.mp4"),
+            )))
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_one) for _ in range(5)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == [], errors
+    assert [row["id"] for row in results] == [results[0]["id"]] * 5
+    stored2 = r2.read_local_file(session2["key"])
+    assert hashlib.md5(stored2).hexdigest() == hashlib.md5(source).hexdigest()
+
+
+@pytest.mark.unit
+def test_missing_part_file_is_incomplete_unless_the_object_is_already_there(local_disk, monkeypatch):
+    org = _org()
+    org.is_trial = False
+    user = _user(org)
+    db = MemDB()
+    started = asyncio.run(start_upload(db, user, org, _body(1000), part_size=1000))
+    session = film_upload.read_session(started["upload_token"], org)
+    store.write_part(session["key"], session["upid"], 1, b"q" * 1000)
+
+    def missing(*_a, **_k):
+        raise FileNotFoundError("part")
+
+    monkeypatch.setattr(store, "complete_upload", missing)
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(finish_upload(db, user, org, started["upload_token"], _body(1000)))
+    assert exc.value.status_code == 409
+    assert exc.value.detail == film_upload.MSG_INCOMPLETE
+
+    # The object is already the declared size (another process finished the
+    # rename). A missing part file is not a 502.
+    r2.save_local_file(session["key"], b"q" * 1000)
+    done = asyncio.run(finish_upload(db, user, org, started["upload_token"], _body(1000)))
+    assert done["status"] == "processing"
+    assert len(_games(db)) == 1
+
+
+@pytest.mark.unit
+def test_presign_rejects_over_20gb_before_touching_the_database():
+    from backend.routers.upload import presign_upload, UploadRequest
+    import inspect
+
+    class BoomDB:
+        async def execute(self, *_a, **_k):
+            raise AssertionError("presign touched the database")
+
+    fn = inspect.unwrap(presign_upload)
+    body = UploadRequest(
+        game_id="g", file_name="huge.mp4",
+        file_size_bytes=film_upload.max_upload_bytes() + 1,
+    )
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(fn(body, user=SimpleNamespace(id="u"), org=SimpleNamespace(id="o"), db=BoomDB()))
+    assert exc.value.status_code == 413
+
+
+@pytest.mark.unit
+def test_link_import_and_live_logger_still_create_their_own_games():
+    import inspect
+    from backend.routers import ingest, live_game, scout_football
+
+    url_src = inspect.getsource(ingest.ingest_from_url)
+    assert "Game(" in url_src
+    assert "reserve_trial_game_slot" in url_src
+    assert 'job_type="ingest"' in url_src
+    assert "source_url" in url_src
+
+    live_src = inspect.getsource(live_game.create_session)
+    assert "Game(" in live_src
+    assert 'status="live"' in live_src
+    assert "reserve_trial_game_slot" not in live_src
+
+    scout_src = inspect.getsource(scout_football.create_session)
+    assert "Game(" in scout_src
+    assert "reserve_trial_game_slot" not in scout_src
+
+
+# BUG-2b (local storage): finish_upload listed and checked the parts before it
+# took the per-upload lock. A complete that arrived while the winner was
+# removing the part directory saw a partial set and returned 409, or could hit
+# a FileNotFoundError between listdir and open (a 500). These tests pin the
+# fix: list, check and assemble all run under the lock.
+
+
+def _prepared_upload(org, user, db, parts=3, part_size=64 * 1024, name="race2b.mp4"):
+    chunks = [bytes(((i * (n + 3)) % 251) + 1 for i in range(part_size)) for n in range(parts)]
+    source = b"".join(chunks)
+    started = asyncio.run(start_upload(db, user, org, _body(len(source), name), part_size=part_size))
+    session = film_upload.read_session(started["upload_token"], org)
+    for n, chunk in enumerate(chunks, start=1):
+        store.write_part(session["key"], session["upid"], n, chunk)
+    return started["upload_token"], session, source
+
+
+class _SlowRmtree:
+    """Stand-in for the shutil module inside multipart_store. rmtree removes the
+    part files one at a time with a pause between, which holds open the window
+    in which another complete used to list a half-deleted directory."""
+
+    def __init__(self, pause=0.01, on_first_delete=None):
+        import os as _os
+        import shutil as _shutil
+        self._os = _os
+        self._shutil = _shutil
+        self.pause = pause
+        self.on_first_delete = on_first_delete
+        self.copyfileobj = _shutil.copyfileobj
+
+    def rmtree(self, path, ignore_errors=False):
+        import time
+        names = sorted(self._os.listdir(path)) if self._os.path.isdir(path) else []
+        for i, name in enumerate(n for n in names if n.isdigit()):
+            self._os.remove(self._os.path.join(path, name))
+            if i == 0 and self.on_first_delete is not None:
+                hook, self.on_first_delete = self.on_first_delete, None
+                hook()
+            time.sleep(self.pause)
+        self._shutil.rmtree(path, ignore_errors=ignore_errors)
+
+
+@pytest.mark.unit
+def test_complete_arriving_while_parts_are_removed_returns_the_same_game(local_disk, monkeypatch):
+    """Deterministic BUG-2b interleave: the loser starts after the winner has
+    assembled the film and deleted the first part file. It must wait for the
+    lock and return 200 with the winner's game, never 409."""
+    org = _org()
+    org.is_trial = False
+    user = _user(org)
+    db = _RaceDB()
+    token, session, source = _prepared_upload(org, user, db)
+    loser = {}
+
+    def run_loser():
+        try:
+            loser["result"] = asyncio.run(finish_upload(db, user, org, token, _body(len(source), "race2b.mp4")))
+        except HTTPException as exc:
+            loser["status"] = exc.status_code
+        except Exception as exc:  # a 500 in the app
+            loser["error"] = exc
+
+    thread = threading.Thread(target=run_loser)
+
+    def start_loser():
+        thread.start()
+        # Old code: the loser lists the half-deleted directory and answers 409
+        # well inside this wait. Fixed code: it blocks on the lock.
+        thread.join(timeout=0.5)
+
+    monkeypatch.setattr(store, "shutil", _SlowRmtree(on_first_delete=start_loser))
+    winner = asyncio.run(finish_upload(db, user, org, token, _body(len(source), "race2b.mp4")))
+    thread.join(timeout=10)
+    assert not thread.is_alive()
+    assert "status" not in loser and "error" not in loser, loser
+    assert loser["result"]["id"] == winner["id"]
+    assert hashlib.md5(r2.read_local_file(session["key"])).hexdigest() == hashlib.md5(source).hexdigest()
+
+
+def _race(n, iterations, local_disk, monkeypatch):
+    import random
+    import time
+    monkeypatch.setattr(store, "shutil", _SlowRmtree(pause=0.005))
+    for it in range(iterations):
+        org = _org()
+        org.is_trial = False
+        user = _user(org)
+        db = _RaceDB()
+        token, session, source = _prepared_upload(org, user, db, name=f"loop{it}.mp4")
+        barrier = threading.Barrier(n)
+        results, errors = [], []
+
+        def one():
+            barrier.wait()
+            time.sleep(random.random() * 0.03)
+            try:
+                results.append(asyncio.run(finish_upload(
+                    db, user, org, token, _body(len(source), f"loop{it}.mp4"),
+                )))
+            except HTTPException as exc:
+                errors.append(exc.status_code)
+            except Exception as exc:
+                errors.append(type(exc).__name__)
+
+        threads = [threading.Thread(target=one) for _ in range(n)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert errors == [], f"iteration {it}: {errors}"
+        assert len(results) == n
+        assert {row["id"] for row in results} == {results[0]["id"]}
+        assert len(_games(db)) == 1
+        stored = r2.read_local_file(session["key"])
+        assert hashlib.md5(stored).hexdigest() == hashlib.md5(source).hexdigest()
+
+
+@pytest.mark.unit
+def test_five_staggered_completes_all_return_200_with_one_game_looped(local_disk, monkeypatch):
+    _race(5, 20, local_disk, monkeypatch)
+
+
+@pytest.mark.unit
+def test_two_staggered_completes_both_return_200_with_one_game_looped(local_disk, monkeypatch):
+    _race(2, 20, local_disk, monkeypatch)
+
+
+def _mp_finish(payload):
+    """Child process: one finish_upload against shared local disk."""
+    import random
+    import time
+    root, org, user, token, size, name, barrier = payload
+    from backend.services import r2 as _r2
+    _r2.LOCAL_STORAGE_DIR = root
+    _r2._r2_available = False
+    barrier.wait()
+    time.sleep(random.random() * 0.03)
+    try:
+        asyncio.run(finish_upload(MemDB(), user, org, token, _body(size, name)))
+        return 200
+    except HTTPException as exc:
+        return exc.status_code
+    except Exception as exc:
+        return type(exc).__name__
+
+
+@pytest.mark.unit
+def test_five_processes_completing_one_upload_all_return_200_looped(local_disk, monkeypatch):
+    """Staging runs several API processes. The lock is a file lock, so it must
+    hold across processes too. Each child has its own stand-in DB (the 409 came
+    before any DB work), so this checks status codes and bytes, not the id."""
+    monkeypatch.setattr(store, "shutil", _SlowRmtree(pause=0.005))
+    ctx = multiprocessing.get_context("fork")
+    with ctx.Manager() as manager:
+        for it in range(10):
+            org = _org()
+            org.is_trial = False
+            user = _user(org)
+            token, session, source = _prepared_upload(org, user, MemDB(), name=f"mp{it}.mp4")
+            barrier = manager.Barrier(5)
+            payload = (str(local_disk), org, user, token, len(source), f"mp{it}.mp4", barrier)
+            with ctx.Pool(5) as pool:
+                codes = pool.map(_mp_finish, [payload] * 5)
+            assert codes == [200] * 5, f"iteration {it}: {codes}"
+            stored = r2.read_local_file(session["key"])
+            assert hashlib.md5(stored).hexdigest() == hashlib.md5(source).hexdigest()
+
+
+@pytest.mark.unit
+def test_truly_incomplete_upload_still_gets_409_under_the_lock(local_disk):
+    org = _org()
+    org.is_trial = False
+    user = _user(org)
+    db = MemDB()
+    started = asyncio.run(start_upload(db, user, org, _body(3000), part_size=1000))
+    session = film_upload.read_session(started["upload_token"], org)
+    store.write_part(session["key"], session["upid"], 1, b"a" * 1000)
+    store.write_part(session["key"], session["upid"], 3, b"c" * 1000)
+    for _ in range(2):
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(finish_upload(db, user, org, started["upload_token"], _body(3000)))
+        assert exc.value.status_code == 409
+        assert exc.value.detail == film_upload.MSG_INCOMPLETE
+    assert _games(db) == []
+    # The lock was released: the missing part arrives and the upload finishes.
+    store.write_part(session["key"], session["upid"], 2, b"b" * 1000)
+    done = asyncio.run(finish_upload(db, user, org, started["upload_token"], _body(3000)))
+    assert done["status"] == "processing"
+    assert r2.read_local_file(session["key"]) == b"a" * 1000 + b"b" * 1000 + b"c" * 1000
+
+
+def _vanishing_listdir(monkeypatch, upload_id):
+    """list_parts has listed a part and seen it as a file, then the part is
+    removed before it is opened, as when another process is removing the
+    directory. The next open raises FileNotFoundError."""
+    import builtins
+    import os as _os
+    real_open = builtins.open
+    fired = []
+
+    def racing_open(path, *a, **k):
+        name = _os.path.basename(str(path))
+        if not fired and name.isdigit() and upload_id in str(path):
+            fired.append(path)
+            _os.remove(path)
+        return real_open(path, *a, **k)
+
+    monkeypatch.setattr(store, "open", racing_open, raising=False)
+    return fired
+
+
+@pytest.mark.unit
+def test_list_parts_file_not_found_is_handled_not_a_500(local_disk, monkeypatch):
+    org = _org()
+    org.is_trial = False
+    user = _user(org)
+    db = MemDB()
+    token, session, source = _prepared_upload(org, user, db, parts=2, part_size=1000)
+
+    # The film is already assembled at the declared size: the vanished part is
+    # the winner cleaning up, so this complete returns 200 with a game.
+    r2.save_local_file(session["key"], source)
+    _vanishing_listdir(monkeypatch, session["upid"])
+    done = asyncio.run(finish_upload(db, user, org, token, _body(len(source), "race2b.mp4")))
+    assert done["status"] == "processing"
+    assert len(_games(db)) == 1
+
+    # The same race during a status poll is also not a 500.
+    _vanishing_listdir(monkeypatch, session["upid"])
+    status = film_upload.upload_status(org, token)
+    assert status["assembled"] is True
+
+
+@pytest.mark.unit
+def test_list_parts_file_not_found_without_an_object_is_a_client_error(local_disk, monkeypatch):
+    org = _org()
+    org.is_trial = False
+    user = _user(org)
+    db = MemDB()
+    token, session, source = _prepared_upload(org, user, db, parts=2, part_size=1000)
+    _vanishing_listdir(monkeypatch, session["upid"])
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(finish_upload(db, user, org, token, _body(len(source), "race2b.mp4")))
+    assert exc.value.status_code == 400
+    assert _games(db) == []
+
+
+# Bounded lock wait (Harriet's retest 3 note): the local lock used to wait
+# forever on the event loop. It now retries a non-blocking flock until
+# UPLOAD_LOCK_TIMEOUT_SECONDS, answers a retryable 409, and runs in a thread.
+
+
+def _hold_lock(upload_id):
+    import fcntl
+    import os as _os
+    fd = _os.open(store._lock_path(upload_id), _os.O_CREAT | _os.O_RDWR, 0o644)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    return fd
+
+
+def _release(fd):
+    import fcntl
+    import os as _os
+    fcntl.flock(fd, fcntl.LOCK_UN)
+    _os.close(fd)
+
+
+@pytest.mark.unit
+def test_lock_deadline_returns_retryable_409_and_releases_cleanly(local_disk, monkeypatch):
+    import fcntl
+    import os as _os
+    import time
+    monkeypatch.setattr(r2.settings, "UPLOAD_LOCK_TIMEOUT_SECONDS", 0.3, raising=False)
+    org = _org()
+    org.is_trial = False
+    user = _user(org)
+    db = MemDB()
+    token, session, source = _prepared_upload(org, user, db, parts=2, part_size=1000)
+    holder = _hold_lock(session["upid"])
+    try:
+        started = time.monotonic()
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(finish_upload(db, user, org, token, _body(len(source), "race2b.mp4")))
+        waited = time.monotonic() - started
+    finally:
+        _release(holder)
+    assert exc.value.status_code == 409
+    assert exc.value.detail == film_upload.MSG_BUSY
+    assert 0.25 <= waited < 5
+    assert _games(db) == []
+    # The timed-out waiter left nothing locked: a non-blocking lock succeeds.
+    fd = _os.open(store._lock_path(session["upid"]), _os.O_RDWR)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        _os.close(fd)
+    # The parts are intact, so the retry finishes the upload.
+    done = asyncio.run(finish_upload(db, user, org, token, _body(len(source), "race2b.mp4")))
+    assert done["status"] == "processing"
+    assert r2.read_local_file(session["key"]) == source
+
+
+@pytest.mark.unit
+def test_event_loop_stays_responsive_while_another_holder_has_the_lock(local_disk, monkeypatch):
+    monkeypatch.setattr(r2.settings, "UPLOAD_LOCK_TIMEOUT_SECONDS", 10, raising=False)
+    org = _org()
+    org.is_trial = False
+    user = _user(org)
+    db = MemDB()
+    token, session, source = _prepared_upload(org, user, db, parts=2, part_size=1000)
+    holder = _hold_lock(session["upid"])
+
+    async def scenario():
+        ticks = 0
+        task = asyncio.create_task(finish_upload(db, user, org, token, _body(len(source), "race2b.mp4")))
+        # While the lock is held elsewhere, the loop must keep running.
+        for _ in range(40):
+            await asyncio.sleep(0.01)
+            ticks += 1
+        assert not task.done()
+        _release(holder)
+        result = await asyncio.wait_for(task, timeout=5)
+        return ticks, result
+
+    import time
+    started = time.monotonic()
+    ticks, result = asyncio.run(scenario())
+    assert ticks == 40
+    assert time.monotonic() - started < 5
+    assert result["status"] == "processing"
+    assert r2.read_local_file(session["key"]) == source
+
+
+@pytest.mark.unit
+def test_upload_lock_times_out_with_upload_busy_and_is_a_no_op_on_r2(local_disk, monkeypatch):
+    org = _org()
+    token, session, source = _prepared_upload(org, _user(org), MemDB(), parts=1, part_size=1000)
+    holder = _hold_lock(session["upid"])
+    try:
+        with pytest.raises(store.UploadBusy):
+            with store.upload_lock(session["upid"], timeout=0.05):
+                pass
+    finally:
+        _release(holder)
+    # R2 mode: no lock file, no flock, no wait.
+    monkeypatch.setattr(store, "_local", lambda: False)
+
+    def boom(*_a, **_k):
+        raise AssertionError("R2 path touched the local lock")
+
+    monkeypatch.setattr(store, "_lock_path", boom)
+    monkeypatch.setattr(store, "_acquire", boom)
+    with store.upload_lock("anything", timeout=0.01):
+        pass
+
+
+# ---- Round 2: busy vs incomplete 409 are distinguishable (code + Retry-After) ----
+
+@pytest.mark.unit
+def test_busy_409_carries_a_code_and_retry_after(local_disk, monkeypatch):
+    monkeypatch.setattr(r2.settings, "UPLOAD_LOCK_TIMEOUT_SECONDS", 0.2, raising=False)
+    org = _org()
+    org.is_trial = False
+    user = _user(org)
+    db = MemDB()
+    token, session, source = _prepared_upload(org, user, db, parts=2, part_size=1000)
+    holder = _hold_lock(session["upid"])
+    try:
+        with pytest.raises(film_upload.UploadConflict) as exc:
+            asyncio.run(finish_upload(db, user, org, token, _body(len(source), "busy.mp4")))
+    finally:
+        _release(holder)
+    err = exc.value
+    assert err.status_code == 409
+    assert err.detail == film_upload.MSG_BUSY  # unchanged text for older clients
+    assert err.code == film_upload.UPLOAD_BUSY_CODE
+    assert err.headers["Retry-After"] == str(film_upload.BUSY_RETRY_AFTER_SECONDS)
+    assert err.headers["X-Upload-Error"] == "upload_busy"
+    assert film_upload.upload_conflict_body(err) == {
+        "detail": film_upload.MSG_BUSY, "code": "upload_busy",
+        "retry_after_seconds": film_upload.BUSY_RETRY_AFTER_SECONDS,
+    }
+
+
+@pytest.mark.unit
+def test_incomplete_409_has_its_own_code_and_no_retry_after(local_disk):
+    org = _org()
+    org.is_trial = False
+    user = _user(org)
+    db = MemDB()
+    started = asyncio.run(start_upload(db, user, org, _body(2000), part_size=1000))
+    session = film_upload.read_session(started["upload_token"], org)
+    store.write_part(session["key"], session["upid"], 1, b"q" * 1000)  # part 2 missing
+    with pytest.raises(film_upload.UploadConflict) as exc:
+        asyncio.run(finish_upload(db, user, org, started["upload_token"], _body(2000)))
+    err = exc.value
+    assert err.status_code == 409
+    assert err.detail == film_upload.MSG_INCOMPLETE
+    assert err.code == film_upload.UPLOAD_INCOMPLETE_CODE
+    assert "Retry-After" not in err.headers
+    assert film_upload.upload_conflict_body(err) == {"detail": film_upload.MSG_INCOMPLETE, "code": "upload_incomplete"}
+    assert _games(db) == []
+
+
+@pytest.mark.unit
+def test_api_returns_the_conflict_body_and_headers_and_exposes_them_to_the_browser():
+    from backend import main
+    probe = FastAPI()
+    probe.add_exception_handler(film_upload.UploadConflict, main._upload_conflict_handler)
+
+    @probe.get("/busy")
+    async def _busy():
+        raise film_upload.UploadConflict(film_upload.MSG_BUSY, film_upload.UPLOAD_BUSY_CODE, 5)
+
+    @probe.get("/incomplete")
+    async def _incomplete():
+        raise film_upload.UploadConflict(film_upload.MSG_INCOMPLETE, film_upload.UPLOAD_INCOMPLETE_CODE)
+
+    client = TestClient(probe)
+    busy = client.get("/busy")
+    assert busy.status_code == 409
+    assert busy.json() == {"detail": film_upload.MSG_BUSY, "code": "upload_busy", "retry_after_seconds": 5}
+    assert busy.headers["retry-after"] == "5"
+    assert busy.headers["x-upload-error"] == "upload_busy"
+    inc = client.get("/incomplete")
+    assert inc.status_code == 409
+    assert inc.json() == {"detail": film_upload.MSG_INCOMPLETE, "code": "upload_incomplete"}
+    assert "retry-after" not in inc.headers
+    # The real app registers the handler and lets browser JS read the headers.
+    assert main.app.exception_handlers.get(film_upload.UploadConflict) is main._upload_conflict_handler
+    cors = [m for m in main.app.user_middleware if m.cls.__name__ == "CORSMiddleware"][0]
+    exposed = cors.kwargs.get("expose_headers") or cors.options.get("expose_headers")
+    assert {"ETag", "Retry-After", "X-Upload-Error"} <= set(exposed)

@@ -79,6 +79,7 @@ async def signup_status(db: AsyncSession = Depends(get_db)):
     pair = active_consent()
     return {
         "signups_enabled": bool(await feature_flags.is_enabled(db, "signups_enabled")),
+        "waitlist_email_enabled": bool(settings.WAITLIST_EMAIL_ENABLED),
         "consent_pair": pair["id"],
         "consent_version": pair["version"],
         "consent_button": pair["button"],
@@ -138,16 +139,22 @@ async def register(body: RegisterRequest, request: Request, db: AsyncSession = D
     # Log the Terms + Privacy acceptance the user made at signup (with the IP).
     # uvicorn --proxy-headers makes request.client.host the real end-user IP.
     ip = request.client.host if request.client else None
+    headers = getattr(request, "headers", None)
+    user_agent = headers.get("user-agent") if headers is not None and hasattr(headers, "get") else None
     user.signup_ip = ip  # persisted on commit below — chargeback/dispute evidence
-    await record_acceptance(db, org.id, user.id, "terms", ip=ip)
-    await record_acceptance(db, org.id, user.id, "privacy", ip=ip)
+    await record_acceptance(db, org.id, user.id, "terms", ip=ip, user_agent=user_agent)
+    await record_acceptance(db, org.id, user.id, "privacy", ip=ip, user_agent=user_agent)
 
     # Marketing permission (opt-IN only). If the coach ticked the box, record the
     # consent + timestamp and log it with the IP for the audit trail, same as terms.
+    # Opt-in only. An unticked box stores an explicit false so the INSERT does not
+    # send NULL (the column is NOT NULL) and the in-memory user matches the row.
     if body.marketing_opt_in:
         user.marketing_opt_in = True
         user.marketing_opt_in_at = datetime.utcnow()
-        await record_acceptance(db, org.id, user.id, "marketing", ip=ip)
+        await record_acceptance(db, org.id, user.id, "marketing", ip=ip, user_agent=user_agent)
+    else:
+        user.marketing_opt_in = False
 
     if referred_by:
         from backend.models.referral import Referral
@@ -408,17 +415,59 @@ class UnsubscribeRequest(BaseModel):
     token: str
 
 
+_UNSUBSCRIBED = {"ok": True, "message": "You're unsubscribed from CoachLenz marketing emails."}
+
+
+async def _lookup_unsubscribe(db: AsyncSession, token: str):
+    from backend.services.unsubscribe_token import is_valid_unsubscribe_token
+    token = (token or "").strip()
+    if not is_valid_unsubscribe_token(token):
+        raise HTTPException(status_code=400, detail="This unsubscribe link isn't valid.")
+    u = (await db.execute(select(User).where(User.unsubscribe_token == token))).scalar_one_or_none()
+    from backend.models.funnel import MarketingLead
+    lead = (await db.execute(
+        select(MarketingLead).where(MarketingLead.unsubscribe_token == token)
+    )).scalar_one_or_none()
+    return u, lead
+
+
+def _already_unsubscribed(user, lead) -> bool:
+    if lead is not None:
+        return getattr(lead, "unsubscribed_at", None) is not None
+    if user is not None:
+        return not bool(getattr(user, "marketing_opt_in", False))
+    return False
+
+
+async def _unsubscribe_by_token(db: AsyncSession, token: str):
+    """POST only. A re-joined lead has unsubscribed_at cleared, and this sets it again.
+    A second POST still returns 200 and does not write another audit event."""
+    u, lead = await _lookup_unsubscribe(db, token)
+    if u is not None and u.marketing_opt_in:
+        u.marketing_opt_in = False
+        await db.commit()
+    if lead is not None:
+        from backend.services.waitlist_email import unsubscribe_lead
+        await unsubscribe_lead(db, lead, "unsubscribe_link")
+        await db.commit()
+    return _UNSUBSCRIBED
+
+
+@router.get("/unsubscribe")
+@limiter.limit("20/minute")
+async def unsubscribe_get(request: Request, token: str = "", db: AsyncSession = Depends(get_db)):
+    """Read-only. Mail scanners prefetch GET, so this must not opt anyone out.
+    The confirm page uses it to decide what to show."""
+    u, lead = await _lookup_unsubscribe(db, token)
+    return {"ok": True, "already_unsubscribed": _already_unsubscribed(u, lead)}
+
+
 @router.post("/unsubscribe")
 @limiter.limit("20/minute")
 async def unsubscribe(request: Request, body: UnsubscribeRequest, db: AsyncSession = Depends(get_db)):
     """One-click marketing opt-out from an email link (public, no login). Flips the
     coach's marketing_opt_in off by their stable unsubscribe token. Idempotent, and it
-    returns the same confirmation whether or not the token matched, so the endpoint
-    can't be used to probe which tokens are real."""
-    token = (body.token or "").strip()
-    if token:
-        u = (await db.execute(select(User).where(User.unsubscribe_token == token))).scalar_one_or_none()
-        if u is not None and u.marketing_opt_in:
-            u.marketing_opt_in = False
-            await db.commit()
-    return {"ok": True, "message": "You're unsubscribed from CoachLenz marketing emails."}
+    returns the same confirmation for every well-formed token whether or not it
+    matched, so the endpoint can't be used to probe which tokens are real. A token
+    with a shape no issuer makes gets 400."""
+    return await _unsubscribe_by_token(db, body.token)

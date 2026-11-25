@@ -15,6 +15,7 @@ import { SPORTS, SPORT_META } from '@/lib/sports'
 // standalone build); the public/ folder is not bundled with output:'standalone'.
 import logo from '../../public/coachlenz-logo.png'
 import ThemeMenu from '@/components/theme/ThemeMenu'
+import { planTitle, trialDaysLeftText } from '@/lib/trialText'
 
 const NAV: { section: string; items: NavItem[] }[] = [
   {
@@ -68,9 +69,6 @@ interface NavItem {
 // Sport tabs, sourced from the single sports list (mirrors backend CHOOSABLE_SPORTS).
 const ALL_SPORTS = SPORTS.map(k => ({ key: k as string, ...SPORT_META[k] }))
 
-const TIER_LABELS: Record<string, string> = {
-  trial: 'Trial', coach: 'Coach', athletic_dept: 'Athletic Dept', district: 'District', enterprise: 'Enterprise',
-}
 
 export default function OSShell({ title, children }: { title: string; children: ReactNode }) {
   const { user, isLoading, fetchMe, logout } = useAuth()
@@ -140,9 +138,10 @@ export default function OSShell({ title, children }: { title: string; children: 
         })}
         <div className="sidebar-foot">
           <div className="plan-chip">
-            <div className="pn">{TIER_LABELS[org.subscription_tier] || 'CoachLenz'} Plan</div>
+            <div className="pn">{planTitle(org.subscription_tier)}</div>
             <div className="pi">
-              {org.is_trial ? `Trial · ${org.trial_days_remaining} days left` : org.name}
+              {/* Same days-left text as the sidebar cards, from one helper. */}
+              {org.is_trial ? (trialDaysLeftText(org) || 'Trial') : org.name}
             </div>
           </div>
           <div className="signed-as">{user.email}</div>
