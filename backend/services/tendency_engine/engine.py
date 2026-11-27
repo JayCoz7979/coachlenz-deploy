@@ -107,6 +107,14 @@ async def run_tendency_engine(sport: str, events: List[Event]) -> Dict[str, Any]
             result["scouting"] = build_basketball_scouting_report(events, result, six_cat)
         result["data_confidence"] = _coverage_report(events)
         result["player_tendencies"] = analyze_players(events, sport)
+        # Review layer (flag-gated, default off): a deterministic possession
+        # reconstruction + an uncertain-call review queue, surfaced for the report.
+        # maybe_build_possession_context returns None when the flag is off, so the
+        # result is byte-identical until BB_POSSESSION_CONTEXT_ENABLED is set.
+        from .possession_context import maybe_build_possession_context
+        possession_context = maybe_build_possession_context(events)
+        if possession_context is not None:
+            result["possession_context"] = possession_context
         return result
 
     else:

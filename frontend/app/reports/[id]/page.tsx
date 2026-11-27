@@ -8,6 +8,7 @@ import Link from 'next/link'
 import { ChevronLeft, Loader2, FileText, AlertTriangle, TrendingUp, Shield, Zap, Target, Printer, Download, ChevronDown, Share2, Star, Trash2 } from 'lucide-react'
 import ConfirmModal from '@/components/ConfirmModal'
 import FieldHeatMap from '@/components/report/FieldHeatMap'
+import PossessionReview from '@/components/report/PossessionReview'
 import BasketballShotChart from '@/components/report/BasketballShotChart'
 import LiveShotChart from '@/components/report/LiveShotChart'
 import PlayerShotSpots from '@/components/report/PlayerShotSpots'
@@ -868,6 +869,12 @@ export default function ReportPage() {
             <div style={{ marginBottom: 28 }}>
               <FieldHeatMap summary={report.summary} />
             </div>
+          )}
+
+          {/* Possession review (basketball): renders only when the report summary
+              carries a possession_context blob (flag-gated at generation time). */}
+          {report.summary && typeof report.summary !== 'string' && report.summary.possession_context && (
+            <PossessionReview context={report.summary.possession_context} />
           )}
 
           {/* Run/Pass tendency matrix (football) — §12 Map 4 */}
