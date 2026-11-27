@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "node scripts/gen-sitemap-dates.mjs && next build",
+    "seo:check": "node scripts/seo-check.mjs",
     "start": "next start",
     "lint": "next lint"
   },
