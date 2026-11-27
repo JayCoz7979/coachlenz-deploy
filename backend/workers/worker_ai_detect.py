@@ -752,6 +752,24 @@ class AiDetectWorker(BaseWorker):
             sport = (game.sport or "football").lower()
             org_id = game.organization_id
             self._sport = sport  # lets the grade pass pick the right prompt/context
+            # ── Per-run cost cap (money-safety) ──────────────────────────────
+            # The most this analysis may spend before it would LOSE money at the
+            # cheapest bundle. Once the running spend reaches it, the discretionary
+            # Opus passes (verify, then grade) stop, so a pathological game (a long,
+            # busy deep-basketball film can hit $64 of Opus) degrades to break-even
+            # instead of a loss. Detection already ran, so the coach still gets a
+            # report. Normal runs cost a fraction of this and never trip it.
+            self._cost_capped = False
+            self._verify_skipped = 0
+            self._grade_skipped = 0
+            self._cost_cap_usd = 0.0
+            if getattr(settings, "DETECT_RUN_COST_CAP_ENABLED", True):
+                from backend.services import credits as _credits_mod
+                _deep = bool(getattr(self, "_multipass", False) or getattr(self, "_grade", False))
+                _cr = _credits_mod.credits_for(sport=sport, deep=_deep, is_rerun=False)
+                _derived = _credits_mod.run_cost_cap_usd(_cr)
+                _abs = float(getattr(settings, "DETECT_RUN_COST_CAP_USD", 0.0) or 0.0)
+                self._cost_cap_usd = min(_derived, _abs) if _abs > 0 else _derived
             self._film_height = game.film_height  # gates the EAGLE EYE jersey pass
             # Team attribution context for the vision prompts (which jerseys = scouted team).
             self._team_context = _build_team_context(game.scout_jersey, game.opponent_jersey)
@@ -1581,6 +1599,10 @@ class AiDetectWorker(BaseWorker):
                             "opus_calls": (_opus.get("calls") or 0),
                             "verify_threshold": VERIFY_CONFIDENCE_THRESHOLD,
                             "verify_cap_per_batch": MAX_VERIFY_PER_BATCH,
+                            "cost_cap_usd": getattr(self, "_cost_cap_usd", 0.0),
+                            "cost_capped": getattr(self, "_cost_capped", False),
+                            "verify_skipped": getattr(self, "_verify_skipped", 0),
+                            "grade_skipped": getattr(self, "_grade_skipped", 0),
                             "grade": getattr(self, "_grade", False),
                             "mode": "deep" if getattr(self, "_multipass", False) else "fast",
                             # timeliness + film-quality context for the detection-quality gate
@@ -1592,6 +1614,24 @@ class AiDetectWorker(BaseWorker):
                             "film_width": getattr(game, "film_width", None),
                             "has_scoreboard": getattr(self, "_has_scoreboard", True)},
                 )
+
+                # Money-safety transparency (UATP): if the cost cap gated the Opus
+                # passes, say so plainly instead of hiding the reduced depth.
+                if getattr(self, "_cost_capped", False):
+                    await log_agent_action(
+                        game_id=game_id, organization_id=str(org_id), job_id=job_id,
+                        phase="cost_cap", level="warn",
+                        action=f"Cost cap reached (${self._cost_cap_usd}) - stopped the optional Opus passes to protect margin",
+                        reason=(f"This run hit its ${self._cost_cap_usd} ceiling (what a "
+                                f"{'deep' if getattr(self, '_multipass', False) else 'standard'} {getattr(self, '_sport', '')} "
+                                f"analysis earns at the cheapest bundle). I stopped the optional Opus passes so the breakdown never "
+                                f"costs more than it earns. {getattr(self, '_verify_skipped', 0)} play(s) skipped re-verify, "
+                                f"{getattr(self, '_grade_skipped', 0)} skipped grading. Detection is complete; the shakiest reads stay flagged for your eyes."),
+                        detail={"cost_cap_usd": getattr(self, "_cost_cap_usd", 0.0),
+                                "verify_skipped": getattr(self, "_verify_skipped", 0),
+                                "grade_skipped": getattr(self, "_grade_skipped", 0),
+                                "total_usd": cost.get("total_usd")},
+                    )
 
         except Exception as e:
             # UATP failure transparency — say WHY, never fail silently.
@@ -2134,6 +2174,11 @@ class AiDetectWorker(BaseWorker):
             with tempfile.TemporaryDirectory() as tmp:
                 async def run(i, p):
                     async with sem:
+                        # Money-safety: stop grading (another Opus pass) once this run
+                        # has hit its cost cap. Ungraded plays simply carry no grade.
+                        if self._cost_cap_reached():
+                            self._grade_skipped += 1
+                            return
                         try:
                             resp, got = await self._grade_one_play(client, video_source, p, tmp, i)
                             if got and self._apply_grade(p, resp):
@@ -2341,6 +2386,18 @@ class AiDetectWorker(BaseWorker):
             total += cost
             models[model] = {**d, "cost_usd": round(cost, 4)}
         return {"models": models, "total_usd": round(total, 4)}
+
+    def _cost_cap_reached(self) -> bool:
+        """True once this run's measured spend has reached its per-run cost cap. Gates
+        the discretionary Opus passes (verify, then grade) so a pathological game
+        degrades to break-even instead of a loss. No cap (<=0) -> always False."""
+        cap = getattr(self, "_cost_cap_usd", 0.0) or 0.0
+        if cap <= 0:
+            return False
+        if self._cost_summary().get("total_usd", 0.0) >= cap:
+            self._cost_capped = True
+            return True
+        return False
 
     @staticmethod
     def _batch_motion_score(batch) -> float:
@@ -2665,7 +2722,13 @@ class AiDetectWorker(BaseWorker):
         # these frames per play - this collapses that duplication. A lone verify is left
         # uncached (a single cache-write with no read would be pure overhead).
         verify_frames = self._with_cache(frames) if len(weak) >= 2 else frames
-        for m in weak:
+        for _vi, m in enumerate(weak):
+            # Money-safety: stop the expensive, discretionary Opus verify once this run
+            # has hit its cost cap. Remaining weak plays keep their pre-verify confidence
+            # and stay flagged for review (honest, not silently marked "verified").
+            if self._cost_cap_reached():
+                self._verify_skipped += (len(weak) - _vi)
+                break
             cand = {k: m.get(k) for k in self._VERIFY_KEYS}
             user_txt = "CANDIDATE READ:\n" + json.dumps(cand, default=str)
             if m.get("contradictions"):
@@ -2728,7 +2791,13 @@ class AiDetectWorker(BaseWorker):
             key=lambda m: (not m.get("consistency_flag"), float(m.get("confidence") or 0)),
         )[:MAX_VERIFY_PER_BATCH]
         verify_frames = self._with_cache(frames) if len(weak) >= 2 else frames
-        for m in weak:
+        for _vi, m in enumerate(weak):
+            # Money-safety: stop the expensive, discretionary Opus verify once this run
+            # has hit its cost cap. Remaining weak plays keep their pre-verify confidence
+            # and stay flagged for review (honest, not silently marked "verified").
+            if self._cost_cap_reached():
+                self._verify_skipped += (len(weak) - _vi)
+                break
             cand = {k: m.get(k) for k in self._VERIFY_KEYS_BB}
             user_txt = "CANDIDATE READ:\n" + json.dumps(cand, default=str)
             if m.get("contradictions"):

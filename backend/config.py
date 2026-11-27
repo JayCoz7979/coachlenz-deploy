@@ -53,6 +53,17 @@ class Settings(BaseSettings):
     DETECT_VERIFY_CONFIDENCE_THRESHOLD: float = 0.65
     DETECT_MAX_VERIFY_PER_BATCH: int = 3
 
+    # Per-run cost cap (money-safety guarantee). A single analysis must never cost more
+    # than the credits charged for it cover at the CHEAPEST bundle ($0.70/credit), so a
+    # pathological game (a long, busy deep-basketball film can hit $64 of Opus) degrades
+    # the DISCRETIONARY Opus passes (the verify pass, then grading) to break-even instead
+    # of turning into a loss. Detection already ran, so the coach still gets a report;
+    # only the shakiest plays go un-reverified. Normal runs cost a small fraction of the
+    # cap and never trip it. The cap is derived from the charged credits; the absolute
+    # override (>0) lets ops tighten or widen it, and ENABLED=false turns the guard off.
+    DETECT_RUN_COST_CAP_ENABLED: bool = True
+    DETECT_RUN_COST_CAP_USD: float = 0.0   # 0 = derive from credits; >0 = hard USD cap
+
     # Basketball frames-per-window (COGS vs recall knob). Basketball samples densely
     # because shots/steals happen in under a second; cost scales ~linearly with frames.
     # Env-tunable so a 120/100/80 same-game comparison can find the floor that holds
