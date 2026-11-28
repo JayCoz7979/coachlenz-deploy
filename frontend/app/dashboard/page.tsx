@@ -112,16 +112,16 @@ export default function DashboardPage() {
 
   const t = (id: string) => setOpen(open === id ? null : id)
 
-  // Primary next action. One dominant step: the free Live Game Logger is the way in;
+  // Primary next action. One dominant step: the Live Game Logger ($7 one-time Live Tracker);
   // a returning coach is pointed at their next game and latest breakdown.
   const hasGames = games.length > 0
   const hero = {
     title: hasGames ? 'Ready for your next opponent?' : 'Turn your next game into a coordinator breakdown',
     sub: hasGames
       ? 'Chart a live game from the sideline and get the tendencies, player keys, and adjustments, or open your latest breakdown.'
-      : 'Chart your game from the sideline and CoachLenz writes the tendencies, player keys, and adjustments. The Live Game Logger is free, no credit card.',
+      : 'Chart your game from the sideline and CoachLenz writes the tendencies, player keys, and adjustments. The Live Tracker is $7, one time.',
     ctaHref: '/live',
-    ctaLabel: hasGames ? 'Start a live game' : 'Log your first game free',
+    ctaLabel: hasGames ? 'Start a live game' : 'Log your first game',
     ghostHref: report ? '/tendencies' : '/examples',
     ghostLabel: report ? 'Open latest breakdown' : 'See a sample report',
   }
@@ -131,7 +131,7 @@ export default function DashboardPage() {
       {/* ── PRIMARY ACTION HERO ── */}
       <div className="hero">
         <div className="hero-main">
-          <div className="hero-eyebrow">▶ Live Game Logger · Free</div>
+          <div className="hero-eyebrow">▶ Live Game Logger · $7 one time</div>
           <div className="hero-title">{hero.title}</div>
           <div className="hero-sub">{hero.sub}</div>
         </div>
@@ -328,7 +328,7 @@ function Setup({ hasSport, hasGames, hasReport }: { hasSport: boolean; hasGames:
   const steps = [
     { label: 'Account created', done: true },
     { label: 'Sport locked in', done: hasSport },
-    { label: 'Log your first game', done: hasGames, href: '/live', cta: 'Log a game free' },
+    { label: 'Log your first game', done: hasGames, href: '/live', cta: 'Log a game' },
     { label: 'Get your first breakdown', done: hasReport, href: '/live', cta: 'Open the logger' },
   ]
   const doneCount = steps.filter(s => s.done).length

@@ -19,7 +19,7 @@ interface User {
   role: string
   // Capability strings for this user's role (from GET /me). UI gates off these.
   permissions: string[]
-  // Email confirmation gates the free Live Game Logger. Optional for back-compat with
+  // Email confirmation gates the Live Game Logger. Optional for back-compat with
   // any cached /me response that predates the field.
   email_verified?: boolean
   marketing_opt_in?: boolean

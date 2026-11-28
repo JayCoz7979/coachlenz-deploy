@@ -44,6 +44,11 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 from backend.cors_config import build_allowed_origins
 _ALLOWED_ORIGINS = build_allowed_origins(settings.APP_URL, settings.ENVIRONMENT)
 
+# Added BEFORE CORSMiddleware so it sits INSIDE it: an unhandled exception becomes a
+# JSON 500 that still carries the CORS headers (see backend/error_middleware.py).
+from backend.error_middleware import JSONServerErrorMiddleware
+app.add_middleware(JSONServerErrorMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_ALLOWED_ORIGINS,

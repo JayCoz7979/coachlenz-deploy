@@ -13,6 +13,7 @@ import { SPORT_META } from '@/lib/sports'
 import {
   TERM_SYSTEMS, GAME_TYPES, WEATHER, SURFACES, LEAGUE_FORMATS, type Sport, type TermSystem,
 } from '@/components/live/fields'
+import Paywall, { isPaywallError, paywallMessage } from '@/components/live/Paywall'
 import { Zap, Loader2, ChevronRight } from 'lucide-react'
 
 const LIVE_SPORTS: Sport[] = ['football', 'flag_football', 'basketball']
@@ -101,12 +102,16 @@ export default function LiveSetupPage() {
   // Set when the backend requires the one-time student-data (COPPA/FERPA)
   // attestation before a session can be created. `retry` re-runs start().
   const [consent, setConsent] = useState<{ attestation: string } | null>(null)
+  // $7 Live Tracker access, from the server (null = not known yet). Everyone pays,
+  // including existing accounts; the real gate is server-side on every /live write.
+  const [access, setAccess] = useState<boolean | null>(null)
+  const [paywallMsg, setPaywallMsg] = useState('')
 
   useEffect(() => { fetchMe() }, [])
   useEffect(() => {
     if (isLoading) return
     if (!user) { router.push('/login'); return }
-    // The free Live Game Logger requires a CONFIRMED email: that verified address is
+    // The Live Game Logger requires a CONFIRMED email: that verified address is
     // the lead we capture. An unverified coach is sent back to finish onboarding
     // (which starts on the email-verify step). Only redirect on an explicit false, so a
     // cached /me response that predates the field never locks anyone out.
@@ -114,7 +119,11 @@ export default function LiveSetupPage() {
   }, [isLoading, user, router])
   useEffect(() => {
     if (!user) return
-    api.get('/live/sessions').then(r => setSessions(r.data.sessions || [])).catch(() => {})
+    api.get('/live/sessions').then(r => {
+      setSessions(r.data.sessions || [])
+      const a = r.data.access
+      if (a && typeof a.live_tracker === 'boolean') { setAccess(a.live_tracker); setPaywallMsg(paywallMessage(a)) }
+    }).catch(() => {})
     // Restrict the logger to the sport the account chose at sign-up: default the
     // picker to it and limit the chips to it.
     api.get('/onboarding/status').then(r => {
@@ -145,6 +154,7 @@ export default function LiveSetupPage() {
       router.push(`/live/${r.data.session_id}`)
     } catch (e: any) {
       const d = e?.response?.data?.detail
+      if (isPaywallError(e)) { setAccess(false); setPaywallMsg(paywallMessage(e)); setBusy(false); return }
       // A student-consent 403 opens the one-time attestation panel (not a dead end).
       if (e?.response?.status === 403 && d && typeof d === 'object' && d.code === 'student_consent_required') {
         setConsent({ attestation: d.attestation })
@@ -177,7 +187,7 @@ export default function LiveSetupPage() {
           <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800 }}>Live Game Logger</h1>
         </div>
         <p style={{ color: 'var(--text3)', fontSize: 13, marginBottom: 18 }}>
-          Chart every play from the sideline. Generate a halftime breakdown in one tap.
+          Chart every play from the sideline. Get the Halftime Sheet at the break.
         </p>
 
         {error && <div style={{ background: 'var(--redl)', color: 'var(--red)', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 13 }}>{error}</div>}
@@ -199,9 +209,11 @@ export default function LiveSetupPage() {
           </div>
         )}
 
+        {access === false && <Paywall message={paywallMsg} />}
+
         {sessions.length > 0 && (
           <div style={card}>
-            <div style={section}>Resume a game</div>
+            <div style={section}>{access === false ? 'Your past games (view only)' : 'Resume a game'}</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {sessions.map(s => (
                 <Link key={s.session_id} href={`/live/${s.session_id}`} style={{
@@ -219,6 +231,7 @@ export default function LiveSetupPage() {
           </div>
         )}
 
+        {access !== false && (<>
         <div style={card}>
           <div style={section}>Sport</div>
           <Chips options={(lockedSports.length ? LIVE_SPORTS.filter(s => lockedSports.includes(s)) : LIVE_SPORTS).map(s => ({ value: s, label: `${SPORT_META[s].emoji} ${SPORT_META[s].label}` }))} value={sport} onChange={v => setSport(v as Sport)} />
@@ -273,9 +286,10 @@ export default function LiveSetupPage() {
         }}>
           {busy ? <Loader2 size={18} className="animate-spin" /> : <Zap size={18} />} Start Logging
         </button>
+        </>)}
 
         <div style={{ marginTop: 18, textAlign: 'center' }}>
-          <Link href="/dashboard" style={{ fontSize: 13, color: 'var(--text3)' }}>← back to dashboard</Link>
+          <Link href="/dashboard" style={{ fontSize: 13, color: 'var(--text3)', display: 'inline-flex', alignItems: 'center', minHeight: 44, padding: '0 10px' }}>← back to dashboard</Link>
         </div>
       </div>
     </div>

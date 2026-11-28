@@ -14,7 +14,7 @@ const TIERS = [
     annualPrice: '$99',
     annual: '$99/yr (2 months free)',
     desc: 'One head coach, add assistant coaches',
-    features: ['Head coach + assistant seats', 'Assistants: view-only or analysis access', 'Your own credit wallet', 'Free Live Game Logger', 'Buy analysis credits as you need them'],
+    features: ['Head coach + assistant seats', 'Assistants: view-only or analysis access', 'Your own credit wallet', 'Buy analysis credits as you need them'],
   },
   {
     key: 'athletic_dept',
@@ -23,7 +23,7 @@ const TIERS = [
     annualPrice: '$299',
     annual: '$299/yr (2 months free)',
     desc: 'The whole school, all sports, one subscription',
-    features: ['All sports, unlimited coach seats', 'Shared school-wide credit pool', 'Per-sport and per-coach credit caps', 'AD dashboard controls', 'Free Live Game Logger'],
+    features: ['All sports, unlimited coach seats', 'Shared school-wide credit pool', 'Per-sport and per-coach credit caps', 'AD dashboard controls'],
     featured: true,
   },
 ]
@@ -181,7 +181,7 @@ export default function BillingPage() {
                 </div>
               )}
               <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 14 }}>
-                Purchased credits never expire while your subscription is active. Standard football is {credits.analysis_costs?.standard?.football ?? 29} credits, deep + grade is {credits.analysis_costs?.deep_grade?.football ?? 55}. Regenerating a report from an analysis you already ran is free; re-analyzing the film runs a new analysis at full price. The Live Game Logger is always free.
+                Purchased credits never expire while your subscription is active. Standard football is {credits.analysis_costs?.standard?.football ?? 29} credits, deep + grade is {credits.analysis_costs?.deep_grade?.football ?? 55}. Regenerating a report from an analysis you already ran is free; re-analyzing the film runs a new analysis at full price.
               </div>
               <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' as const }}>
                 {(credits.bundles || []).map((b: any) => (
@@ -200,7 +200,7 @@ export default function BillingPage() {
           )}
 
           <p style={{ fontSize: 11, color: 'var(--text3)', textAlign: 'center' }}>
-            Purchased credits are separate, never expire while your account is active, and stay yours if you cancel (only the monthly included allotment resets). The Live Game Logger is always free.
+            Purchased credits are separate, never expire while your account is active, and stay yours if you cancel (only the monthly included allotment resets).
             {!annualAvailable && (
               <>{' '}<a href={`mailto:${SALES_EMAIL}`} style={{ color: 'var(--green3)' }}>Contact us</a> for annual billing.</>
             )}

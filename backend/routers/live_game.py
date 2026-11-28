@@ -30,6 +30,13 @@ Endpoints (prefix /live):
     DELETE /play/{event_id}         delete one logged play
     POST   /play/{event_id}/flag    toggle a play as a Coaching Point (+ optional note)
     POST   /report                  queue a halftime or full-game report
+    GET    /access                  does this org have the $7 Live Tracker?
+
+Access: the Live Game Logger + Halftime Sheet is a $7 one-time purchase for EVERY
+account, new and existing (no grandfathering). Every write route depends on
+``require_live_tracker`` (402 + paywall payload when unpaid). The read routes stay
+readable so past games remain viewable, and report ``access.live_tracker``.
+See backend/services/live_tracker.py.
 """
 from datetime import date
 from typing import Optional, List, Dict, Any
@@ -51,13 +58,16 @@ from backend.services.auth import get_current_user, get_current_org
 from backend.services.agent_log import log_agent_action
 from backend.services.sports import assert_sport_allowed
 from backend.services.legal import assert_student_consent
+from backend.services.live_game_report import live_report_block_message
+from backend.services.live_tracker import require_live_tracker, access_payload
+from backend.workers.worker_reports import _apply_event_filter
 
-# The Live Game Logger is the permanent FREE tier and is INTENTIONALLY UNGATED: any
-# coach, on any plan (trial, expired, or never-paid 'free'), can chart a game and
-# generate its report at no cost. It is cheap to serve (manual charting plus one
-# report-writing LLM call, not the paid AI film-detection path), which makes it the
-# zero-cost acquisition wedge. Do NOT add trial/subscription/usage gates to these
-# routes. AI film analysis (routers/ai_detect.py) is the paid upgrade; gate there.
+# The Live Game Logger + Halftime Sheet is the $7 one-time "Live Tracker" offer.
+# Product decision (Nov 28): everyone pays $7, including current users; there is no
+# grandfathering and no plan/trial/admin bypass. The gate is server-side here:
+# every WRITE route depends on require_live_tracker (402 when unpaid). The READ
+# routes (list, open a game) stay available so past games remain viewable. Student-
+# data consent and the sport lock still apply on top of the payment gate.
 router = APIRouter(prefix="/live", tags=["live-game"])
 
 # The three sports the live logger supports (mirrors the flag football / football /
@@ -98,6 +108,9 @@ _EXTRA_KEYS = (
     "special_situation", "set_play_name", "intended_outcome",
     # logging metadata
     "penalty_type", "penalty_on", "penalty_jersey", "is_quick_log", "client_uid",
+    # scoreboard: points this play put on the board, and for which team (us|them).
+    # score_us / score_them above are the score AFTER the play.
+    "points_scored", "points_team",
 )
 
 
@@ -317,7 +330,7 @@ def _play_to_event(org_id, game_id, p: PlayEntry) -> Event:
 
 def _event_to_play(e: Event) -> Dict[str, Any]:
     extra = e.extra_data or {}
-    return {
+    out: Dict[str, Any] = {
         "event_id": str(e.id),
         "side": e.side,
         "possession": extra.get("possession"),
@@ -339,6 +352,14 @@ def _event_to_play(e: Event) -> Dict[str, Any]:
         "client_uid": extra.get("client_uid"),
         "extra": extra,
     }
+    # Surface the sport-specific fields (opp_play_type, st_unit, shot_zone, ...) at the
+    # top level too, the same shape the logger built the play in. Without this a
+    # reloaded opponent play rendered as "play · null yd" in the Play Log because the
+    # UI only saw the first-class columns. Columns above always win.
+    for k, v in extra.items():
+        if k not in out and v is not None:
+            out[k] = v
+    return out
 
 
 # ── session intake ───────────────────────────────────────────────────────────
@@ -346,7 +367,7 @@ def _event_to_play(e: Event) -> Dict[str, Any]:
 async def create_session(
     body: SessionCreate,
     user: User = Depends(get_current_user),
-    org: Organization = Depends(get_current_org),
+    org: Organization = Depends(require_live_tracker),
     db: AsyncSession = Depends(get_db),
 ):
     sport = (body.sport or "").lower()
@@ -424,6 +445,7 @@ async def create_session(
 @router.get("/sessions")
 async def list_sessions(
     user: User = Depends(get_current_user),
+    org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
@@ -449,13 +471,16 @@ async def list_sessions(
             "play_count": len(cnt.scalars().all()),
             "created_at": g.created_at.isoformat() if g.created_at else None,
         })
-    return {"sessions": out}
+    # Past games stay listable without the purchase; access tells the UI whether to
+    # show the logger or the $7 paywall.
+    return {"sessions": out, "access": access_payload(org)}
 
 
 @router.get("/session/{session_id}")
 async def get_session(
     session_id: str,
     user: User = Depends(get_current_user),
+    org: Organization = Depends(get_current_org),
     db: AsyncSession = Depends(get_db),
 ):
     game = await _load_session(db, session_id, user.organization_id)
@@ -472,7 +497,15 @@ async def get_session(
         "status": game.status,
         "config": (meta.extra_data if meta else {}) or {},
         "plays": plays,
+        # Read-only for an unpaid org: logging, edits, and reports are refused server-side.
+        "access": access_payload(org),
     }
+
+
+@router.get("/access")
+async def live_access(org: Organization = Depends(get_current_org)):
+    """Whether this org can use the logger (paid the $7 Live Tracker), plus where to buy."""
+    return access_payload(org)
 
 
 # ── logging ──────────────────────────────────────────────────────────────────
@@ -480,6 +513,7 @@ async def get_session(
 async def add_plays(
     body: PlaysBatch,
     user: User = Depends(get_current_user),
+    _paid: Organization = Depends(require_live_tracker),
     db: AsyncSession = Depends(get_db),
 ):
     game = await _load_session(db, body.session_id, user.organization_id)
@@ -545,6 +579,7 @@ async def edit_play(
     event_id: str,
     body: PlayEdit,
     user: User = Depends(get_current_user),
+    _paid: Organization = Depends(require_live_tracker),
     db: AsyncSession = Depends(get_db),
 ):
     ev = await _load_play(db, event_id, user.organization_id)
@@ -575,6 +610,7 @@ async def edit_play(
 async def delete_play(
     event_id: str,
     user: User = Depends(get_current_user),
+    _paid: Organization = Depends(require_live_tracker),
     db: AsyncSession = Depends(get_db),
 ):
     ev = await _load_play(db, event_id, user.organization_id)
@@ -588,6 +624,7 @@ async def flag_play(
     event_id: str,
     body: FlagRequest,
     user: User = Depends(get_current_user),
+    _paid: Organization = Depends(require_live_tracker),
     db: AsyncSession = Depends(get_db),
 ):
     """Flag/unflag a play as a Coaching Point. is_highlight is what the report's
@@ -605,7 +642,7 @@ async def flag_play(
 async def generate_report(
     body: ReportRequest,
     user: User = Depends(get_current_user),
-    org: Organization = Depends(get_current_org),
+    org: Organization = Depends(require_live_tracker),
     db: AsyncSession = Depends(get_db),
 ):
     game = await _load_session(db, body.session_id, user.organization_id)
@@ -616,14 +653,21 @@ async def generate_report(
     ev = await db.execute(
         select(Event).where(Event.game_id == game.id, Event.event_type == "play")
     )
-    plays = ev.scalars().all()
-    if not plays:
-        raise HTTPException(status_code=422,
-                            detail="No plays logged yet. Log at least one play before generating a report.")
+    plays = list(ev.scalars().all())
 
     # params carries the report scope + the event filter the worker applies to narrow
     # the report to that segment (whole game / a half / a single quarter).
     event_filter, label = _scope_filter(game.sport, scope, body.period)
+    # Same filter the reports worker applies, so "plays in this scope" means the
+    # same set here and in the report. Thin or empty scope is a 422 with the
+    # coach-facing sentence. Nothing is inserted, no job is queued, and the
+    # model is not called. 422 (not a 200 without report_id) keeps the current
+    # logger page working: it already shows response detail and stays on the log.
+    scoped = _apply_event_filter(plays, event_filter)
+    blocked = live_report_block_message(len(scoped))
+    if blocked:
+        raise HTTPException(status_code=422, detail=blocked)
+
     params: Dict[str, Any] = {"scope": scope, "label": label}
     if event_filter:
         params["event_filter"] = event_filter
@@ -653,9 +697,9 @@ async def generate_report(
         organization_id=str(org.id),
         job_id=str(job.id),
         phase="live_logger",
-        reason=f"{label} report queued from {len(plays)} logged plays.",
+        reason=f"{label} report queued from {len(scoped)} logged plays.",
         level="info",
-        detail={"report_id": str(report.id), "scope": scope, "plays": len(plays)},
+        detail={"report_id": str(report.id), "scope": scope, "plays": len(scoped)},
     )
     return {"report_id": str(report.id), "session_id": str(game.id),
-            "scope": scope, "status": "queued", "plays": len(plays)}
+            "scope": scope, "status": "queued", "plays": len(scoped)}

@@ -36,6 +36,11 @@ class Organization(Base):
     signup_source = Column(String)
     referral_code = Column(String, unique=True)
     referred_by_org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"))
+    # $7 one-time Live Tracker purchase (Live Game Logger + Halftime Sheet), migration
+    # 066. NULL = not purchased. Set ONLY by the verified Stripe webhook after a paid
+    # checkout (routers/billing.py). No grandfathering: existing orgs start NULL.
+    live_tracker_purchased_at = Column(DateTime(timezone=True))
+    live_tracker_checkout_session_id = Column(String)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
