@@ -52,8 +52,10 @@ def test_legacy_main(modname):
 
 
 @pytest.mark.integration
-def test_legacy_api_integration():
+async def test_legacy_api_integration():
     # Self-contained: httpx ASGITransport against a throwaway SQLite DB.
     # Needs aiosqlite + httpx; skipped by the fast gate via the integration marker.
+    # run() is async. Calling it without awaiting returns a coroutine and the
+    # suite reports a pass without executing a single request.
     mod = importlib.import_module("backend.tests.test_api_integration")
-    mod.run()
+    await mod.run()

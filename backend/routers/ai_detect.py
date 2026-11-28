@@ -51,6 +51,7 @@ async def accuracy_benchmark(
     Ground truth = manually tagged plays. Prediction = AI auto-detected plays.
     Returns recall, precision, and per-attribute agreement on matched plays.
     """
+    await _require_game(game_id, user, db)
     res = await db.execute(
         select(Event).where(Event.game_id == game_id, Event.organization_id == user.organization_id)
     )
@@ -157,6 +158,7 @@ async def rederive_downs(
     (coach tags or AI reads), filling in the gaps. Only fills missing values."""
     from backend.services.derive_downs import fill_down_distance
 
+    await _require_game(game_id, user, db)
     res = await db.execute(
         select(Event)
         .where(Event.game_id == game_id, Event.organization_id == user.organization_id)
@@ -319,10 +321,8 @@ async def coverage_scorecard(
     """Instant detection scorecard, no manual tagging required. Reports how complete
     the AI reads are (fill rate per field) and how confident (confident vs flagged),
     so a coach can judge a game's data quality before game-planning around it."""
-    gres = await db.execute(
-        select(Game).where(Game.id == game_id, Game.organization_id == user.organization_id))
-    game = gres.scalar_one_or_none()
-    sport = (game.sport if game else "football").lower()
+    game = await _require_game(game_id, user, db)
+    sport = (game.sport or "football").lower()
     is_bb = sport == "basketball"
 
     res = await db.execute(
@@ -443,6 +443,7 @@ async def trigger_auto_detect(
     stale_cutoff = datetime.utcnow() - timedelta(minutes=10)
     await db.execute(
         update(Job).where(
+            Job.organization_id == user.organization_id,
             Job.job_type == "ai_detect",
             Job.payload["game_id"].as_string() == game_id,
             Job.status == "running",
@@ -454,6 +455,7 @@ async def trigger_auto_detect(
     # Block only if a genuinely active job exists (queued, or running-and-fresh).
     existing = await db.execute(
         select(Job).where(
+            Job.organization_id == user.organization_id,
             Job.job_type == "ai_detect",
             Job.payload["game_id"].as_string() == game_id,
             or_(
@@ -474,6 +476,7 @@ async def trigger_auto_detect(
     if _is_billable_run(dry_run, test) and await feature_flags.is_enabled(db, "rerun_confirmation"):
         prior = await db.execute(
             select(Job.id).where(
+                Job.organization_id == user.organization_id,
                 Job.job_type == "ai_detect",
                 Job.payload["game_id"].as_string() == game_id,
                 Job.status == "done",
@@ -631,7 +634,11 @@ async def detect_status(
     # Most recent detect job
     job_result = await db.execute(
         select(Job)
-        .where(Job.job_type == "ai_detect", Job.payload["game_id"].as_string() == game_id)
+        .where(
+            Job.organization_id == user.organization_id,
+            Job.job_type == "ai_detect",
+            Job.payload["game_id"].as_string() == game_id,
+        )
         .order_by(Job.created_at.desc())
         .limit(1)
     )
@@ -659,7 +666,9 @@ async def detect_status(
             or (job_status == "running" and job_locked_at is not None and job_locked_at >= stale_cutoff)
         )
         if not active:
-            await db.execute(update(Game).where(Game.id == game_id).values(status="ready"))
+            await db.execute(update(Game).where(
+                Game.id == game_id, Game.organization_id == user.organization_id,
+            ).values(status="ready"))
             await db.commit()
             game_status = "ready"
 
@@ -667,6 +676,7 @@ async def detect_status(
     count_result = await db.execute(
         select(func.count(Event.id)).where(
             Event.game_id == game_id,
+            Event.organization_id == user.organization_id,
             Event.extra_data["auto_detected"].as_boolean() == True,
         )
     )
@@ -676,6 +686,7 @@ async def detect_status(
     review_result = await db.execute(
         select(func.count(Event.id)).where(
             Event.game_id == game_id,
+            Event.organization_id == user.organization_id,
             Event.extra_data["auto_detected"].as_boolean() == True,
             Event.extra_data["needs_review"].as_boolean() == True,
         )
