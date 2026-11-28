@@ -6,8 +6,9 @@ Outside production, CoachLenz must only ever talk to Stripe in TEST mode:
   * the webhook ignores any event whose ``livemode`` does not match the environment
     (production expects livemode=true, everything else livemode=false).
 
-"Production" means ENVIRONMENT == "production" (the config default), the same test
-the rest of the app uses (docs URL, R2 vs local files).
+"Production" means ENVIRONMENT is EXPLICITLY "production". ENVIRONMENT has no default:
+config.Settings refuses to load when it is unset or blank, so a service that forgot
+to set it never starts (and so can never be mistaken for production with a live key).
 """
 from typing import Any, Optional
 

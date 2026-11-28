@@ -14,19 +14,82 @@ data or a whole team's film by accident:
 - Whole-film deletion only happens for game_ids the admin explicitly passes (a
   school-authorized removal of shared team film), via the existing game delete.
 
+Email-matched personal data (not student data, no org): a coach who asked for the free
+Halftime Sheet PDF has a `halftime_pdf_leads` row keyed by email (name, email, optional
+phone, consent text, IPs, timestamps). Access requests export it and deletion requests
+delete it, matched case-insensitively on the requester's email. The row's token_hash is
+a security credential, not personal data, and is never exported.
+`live_tracker_extra_payments` (the $7 double-payment refund ledger) holds no email,
+name, or contact data, only Stripe ids, an amount, and the org id; it is org-keyed
+billing data, removed with the org (FK ON DELETE CASCADE), so it is not email-matched.
+
 The certificate reports exactly what was removed — no category is claimed that the
 fulfillment did not actually do.
 """
 import html
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.roster import RosterPlayer
 from backend.models.game import Game
 from backend.models.event import Event
 from backend.models.analysis_run import AnalysisRunArchive
+from backend.models.halftime_lead import HalftimePdfLead
+
+# Exported per lead. token_hash is deliberately absent (credential, not personal data).
+LEAD_EXPORT_FIELDS = (
+    "id", "name", "email", "phone", "source", "status", "consent_text", "consented_at",
+    "submit_ip", "confirmation_sent_at", "confirmation_send_count", "confirmed_at",
+    "confirmed_ip", "pdf_sent_at", "unsubscribed_at", "created_at", "updated_at",
+)
+
+
+def _norm_email(email) -> str:
+    return str(email or "").strip().lower()
+
+
+async def find_leads_by_email(db: AsyncSession, email) -> list:
+    """Halftime PDF leads for this email (case-insensitive). Empty email -> none."""
+    e = _norm_email(email)
+    if not e:
+        return []
+    res = await db.execute(select(HalftimePdfLead).where(func.lower(HalftimePdfLead.email) == e))
+    return list(res.scalars().all())
+
+
+def lead_export_record(lead) -> dict:
+    out = {}
+    for f in LEAD_EXPORT_FIELDS:
+        v = getattr(lead, f, None)
+        if hasattr(v, "isoformat"):
+            v = v.isoformat()
+        elif v is not None and not isinstance(v, (str, int, float, bool)):
+            v = str(v)
+        out[f] = v
+    return out
+
+
+async def export_personal_data_by_email(db: AsyncSession, email) -> dict:
+    """Everything CoachLenz holds that is keyed by this email outside an org account."""
+    leads = await find_leads_by_email(db, email)
+    return {
+        "email": _norm_email(email),
+        "halftime_pdf_leads": [lead_export_record(l) for l in leads],
+    }
+
+
+async def delete_leads_by_email(db: AsyncSession, email, dry_run: bool = False) -> int:
+    """Delete this email's Halftime PDF lead rows. Returns the count. Caller commits.
+    dry_run counts without deleting."""
+    leads = await find_leads_by_email(db, email)
+    if not dry_run:
+        for l in leads:
+            await db.delete(l)
+        if leads:
+            await db.flush()
+    return len(leads)
 
 
 def _scrub_play_dict(play: dict, jersey: str) -> tuple[dict, bool]:
@@ -189,6 +252,9 @@ def render_certificate(*, certificate_id: str, request, summary: dict) -> str:
                     f"<strong>{summary['archive_plays_scrubbed']}</strong> plays")
     if summary.get("games_deleted"):
         cats.append(f"Game film deleted (school-authorized): <strong>{summary['games_deleted']}</strong>")
+    if summary.get("halftime_leads_deleted"):
+        cats.append(f"Halftime Sheet PDF sign-up records deleted (matched by the requester's email): "
+                    f"<strong>{summary['halftime_leads_deleted']}</strong>")
     if not cats:
         cats.append("No matching records were found to delete.")
     cat_html = "".join(f"<li>{c}</li>" for c in cats)

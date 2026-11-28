@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 from typing import Optional
 
@@ -171,7 +172,7 @@ class Settings(BaseSettings):
     # OUTBOUND SAFETY: lead emails (confirmation + PDF) go ONLY to addresses on
     # LEAD_EMAIL_ALLOWLIST (comma-separated emails and/or "@domain" entries) unless a
     # human sets LEAD_EMAIL_LIVE_SEND=true. Default off, so a staging deploy (even one
-    # that forgot to set ENVIRONMENT) can never email a real coach. Production needs
+    # that misconfigures ENVIRONMENT) can never email a real coach. Production needs
     # LEAD_EMAIL_LIVE_SEND=true set deliberately.
     LEAD_EMAIL_LIVE_SEND: bool = False
     LEAD_EMAIL_ALLOWLIST: str = ""
@@ -204,7 +205,14 @@ class Settings(BaseSettings):
 
     # App
     APP_URL: str = "https://coachlenz.com"
-    ENVIRONMENT: str = "production"
+    # REQUIRED, no default (Stage 2 round 2, LOW 1). It used to default to
+    # "production", so a staging service that forgot to set it ran as production and
+    # would accept a live Stripe key. Now an unset or blank ENVIRONMENT stops the
+    # process at import (Settings() raises), on the API and every worker. Every
+    # Railway service must set it explicitly: "production" on production, anything
+    # else (e.g. "staging") elsewhere. Only the exact value "production" (case and
+    # surrounding spaces ignored) counts as production; see services/stripe_mode.py.
+    ENVIRONMENT: str
     # Shared rate-limit storage. The API runs with multiple uvicorn workers, and
     # slowapi's default in-memory storage is PER-PROCESS, so each worker keeps its
     # own counter and the effective limit is ~Nx (N = worker count). Point this at
@@ -257,6 +265,16 @@ class Settings(BaseSettings):
     # FALSE so it ships dormant until the frontend checkbox is live; existing links
     # keep working (the gate is at mint time, never at serve time).
     RECRUITING_CONSENT_ENABLED: bool = False
+
+    @field_validator("ENVIRONMENT")
+    @classmethod
+    def _environment_must_be_explicit(cls, v: str) -> str:
+        v = (v or "").strip().lower()
+        if not v:
+            raise ValueError(
+                "ENVIRONMENT is not set. Set it explicitly ('production' on production, "
+                "e.g. 'staging' elsewhere); there is no default.")
+        return v
 
     class Config:
         env_file = ".env"
