@@ -152,3 +152,34 @@ on `report_type == "live_game"`. Stats layer is unit-tested in `test_live_game_r
 Reachable at `/live` via a **Live Game** entry in the OSShell sidebar (Analysis
 section, "New" badge) — the only edit made to an existing file, one nav item, no
 color/style change.
+
+## Free printable Halftime Sheet (PDF lead form)
+
+`/live-tracker` also offers a blank, printable Halftime Sheet tracker (PDF) for free, in
+exchange for a name and a valid email. The $7 Live Tracker stays the page's primary CTA.
+
+- **Form:** name and email required. Phone is **optional** and never required. There is a
+  required consent checkbox for email follow-up, and it links `/privacy`. CoachLenz never
+  texts the phone number. There is no SMS anywhere in this flow.
+- **API:** `POST /leads/halftime-pdf` (`backend/routers/lead_magnet.py`) returns
+  `{ok, download_path}`, and the page shows the download link right after submit.
+  `GET /leads/halftime-pdf/download/{token}` serves the PDF only for a token issued by a
+  successful submit (unknown token: 404).
+- **Validation (server-side, `backend/services/email_check.py`):** email format check, a
+  built-in disposable-domain blocklist, then an async MX lookup (an A/AAAA record counts
+  when there is no MX). NXDOMAIN, no mail records, or a null MX all mean rejected. If the
+  resolver itself is down or times out, the address is accepted and a warning is logged,
+  so a DNS hiccup never drops a real coach.
+- **Abuse controls:** a per-IP rate limit (`5/minute;30/hour` on submit, `30/minute` on
+  download) and a hidden `website` honeypot. A tripped honeypot gets a normal-looking 200,
+  and nothing is stored and no link is returned.
+- **Storage:** table `lead_magnet_leads` (migration `067`), with `source='halftime_pdf'`,
+  `created_at` / `updated_at`, the consent text the visitor agreed to, IP, and user agent.
+  There is one row per `(lower(email), source)`, and a repeat submit refreshes that row
+  and returns the same link.
+- **The PDF** (`backend/services/halftime_pdf.py`) is generated in-process, with no new
+  dependency and nothing in object storage. Page 1 is Football / Flag Football: a play
+  chart plus halftime summary boxes. Page 2 is Basketball: player tallies plus halftime
+  summary boxes.
+- **Before any follow-up email is sent to these leads**, add an unsubscribe path for them.
+  Today unsubscribe tokens exist only for user accounts, and this PR sends no lead email.

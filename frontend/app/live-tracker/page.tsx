@@ -10,12 +10,16 @@
  * (test mode on staging). Stripe returns to ?checkout=success (we wait for the webhook
  * grant, then link to /live) or ?checkout=cancel (nothing charged, nothing granted).
  * Access is only ever granted server-side by the webhook after a PAID session.
+ *
+ * Secondary, below the $7 offer: the printable Halftime Sheet PDF, free for a name and a
+ * validated email (phone optional, never texted). See components/live/HalftimePdfForm.
  */
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import api from '@/lib/api'
 import { rememberNext } from '@/lib/postAuth'
+import HalftimePdfForm from '@/components/live/HalftimePdfForm'
 import { Zap, FileBarChart, ClipboardList, CheckCircle2, Loader2 } from 'lucide-react'
 import logo from '../../public/coachlenz-logo.png'
 
@@ -215,6 +219,11 @@ export default function LiveTrackerPage() {
             <li>Each play saves as you log it. If the signal drops once a game is open, plays wait on your phone and sync when the connection returns.</li>
             <li>Your games and reports stay in your CoachLenz account.</li>
           </ul>
+        </div>
+
+        <div id="printable-halftime-sheet" className="card" style={{ marginBottom: 22 }}>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>Free printable Halftime Sheet</div>
+          <HalftimePdfForm />
         </div>
       </main>
 

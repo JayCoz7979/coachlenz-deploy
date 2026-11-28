@@ -27,3 +27,4 @@ from .credits import OrgCredits, CreditLedger
 from .agent_approval import AgentApproval
 from .analysis_run import AnalysisRunArchive
 from .privacy_request import PrivacyRequest
+from .lead_magnet import LeadMagnetLead
