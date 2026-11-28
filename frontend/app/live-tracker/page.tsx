@@ -10,12 +10,16 @@
  * mode on staging). Signed-out coach -> login / signup -> back here with ?checkout=1,
  * which starts checkout automatically. Stripe returns to /live-tracker/success (access is
  * granted by the signed webhook, never by the redirect) or to ?checkout=cancelled.
+ *
+ * Secondary offer: the free printable Halftime Sheet PDF, double opt-in. The PDF is
+ * emailed only after the coach confirms (see components/live/HalftimePdfForm.tsx).
  */
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import api from '@/lib/api'
 import { rememberNext } from '@/lib/postAuth'
+import HalftimePdfForm from '@/components/live/HalftimePdfForm'
 import { Loader2, Zap, ClipboardList, Timer, Check } from 'lucide-react'
 // Static import so the transparent lockup is emitted to /_next/static/media
 // (public/ is not bundled with output:'standalone').
@@ -173,6 +177,11 @@ export default function LiveTrackerPage() {
               <span><b style={{ display: 'block', fontSize: 15 }}>{i + 1}. {s.t}</b><span style={{ fontSize: 14, color: 'var(--text3)' }}>{s.d}</span></span>
             </div>
           ))}
+        </section>
+
+        <section id="halftime-pdf" style={card}>
+          <h2 style={h2}>Free printable Halftime Sheet (PDF)</h2>
+          <HalftimePdfForm />
         </section>
 
         <section style={card}>

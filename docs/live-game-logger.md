@@ -151,3 +151,23 @@ on `report_type == "live_game"`. Stats layer is unit-tested in `test_live_game_r
 Reachable at `/live` via a **Live Game** entry in the OSShell sidebar (Analysis
 section, "New" badge) — the only edit made to an existing file, one nav item, no
 color/style change.
+
+## Free printable Halftime Sheet PDF (double opt-in lead form)
+
+The `/live-tracker` page also offers a free printable Halftime Sheet (2 pages: one for Football and Flag Football, one for Basketball) in exchange for a name and an email address. Phone is optional and is never texted. There is no SMS anywhere.
+
+Flow (double opt-in):
+
+1. `POST /leads/halftime-sheet` `{name, email, phone?, consent, company}`. The server checks the format, blocks common disposable domains, and checks MX/domain (falling back to A/AAAA records; a DNS outage fails open, because nothing is delivered until the inbox owner clicks). It stores the lead in `halftime_pdf_leads` with `status='pending'` and `source='halftime_pdf'`, then emails a single-use confirmation link that expires in 24 hours. `company` is a honeypot: if it is filled in, the server returns the normal success answer and stores nothing.
+2. The coach opens `/live-tracker/halftime-sheet/confirm?token=…` and clicks **Confirm my email**. That sends `POST /leads/halftime-sheet/confirm {token}`, which sets `status='confirmed'`, `confirmed_at`, and `confirmed_ip`, and only **then** emails the PDF as an attachment. No endpoint returns the PDF. Confirming is a click, not an automatic page load, so a mail scanner that prefetches links cannot use up the token.
+3. Expired, used, or replaced links show a clear message and a resend option: `POST /leads/halftime-sheet/resend {token}` or `{email}`. Each new link replaces the old one.
+
+Security:
+- Tokens are stored only as `HMAC-SHA256(SECRET_KEY, token)`.
+- Single use is enforced by an atomic `UPDATE … WHERE token_used_at IS NULL AND token_expires_at > now`.
+- Rate limits per IP: submit 5/min and 30/hr, resend 3/min and 20/hr, confirm 20/min. Each address also has a 60-second resend cooldown, which starts only after a send succeeds.
+- Submit and resend give the same answer for every address, so they can't be used to look up who is on the list.
+
+Outbound safety (staging): lead emails are sent through the existing Resend provider **only** to `LEAD_EMAIL_ALLOWLIST` addresses (comma-separated emails or `@domain` entries) unless `LEAD_EMAIL_LIVE_SEND=true`. That flag defaults to off, so staging cannot email a real coach. Set `LEAD_CONFIRM_BASE_URL` to the staging frontend so confirm links do not point at production.
+
+Code: `backend/routers/halftime_leads.py`, `backend/services/halftime_leads.py`, `backend/services/halftime_pdf.py`, migration `067_halftime_pdf_leads.sql`. UI: `frontend/components/live/HalftimePdfForm.tsx`, `frontend/app/live-tracker/halftime-sheet/confirm/page.tsx`. Tests: `backend/tests/test_halftime_leads.py` (unit), `backend/tests/test_halftime_leads_pg.py` (real Postgres, skipped unless `MIGRATIONS_TEST_DATABASE_URL` is set), `frontend/tests/halftime-lead.test.ts`.
