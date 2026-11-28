@@ -132,9 +132,13 @@ async def _load_session(db: AsyncSession, session_id: str, org_id) -> Game:
     return game
 
 
-async def _meta_event(db: AsyncSession, game_id) -> Optional[Event]:
+async def _meta_event(db: AsyncSession, game_id, org_id) -> Optional[Event]:
     result = await db.execute(
-        select(Event).where(Event.game_id == game_id, Event.event_type == META_EVENT_TYPE)
+        select(Event).where(
+            Event.game_id == game_id,
+            Event.organization_id == org_id,
+            Event.event_type == META_EVENT_TYPE,
+        )
     )
     return result.scalar_one_or_none()
 
@@ -497,11 +501,15 @@ async def list_sessions(
     games = result.scalars().all()
     out = []
     for g in games:
-        meta = await _meta_event(db, g.id)
+        meta = await _meta_event(db, g.id, user.organization_id)
         data = (meta.extra_data if meta else {}) or {}
         # cheap play count
         cnt = await db.execute(
-            select(Event).where(Event.game_id == g.id, Event.event_type == "play")
+            select(Event).where(
+                Event.game_id == g.id,
+                Event.organization_id == user.organization_id,
+                Event.event_type == "play",
+            )
         )
         out.append({
             "session_id": str(g.id),
@@ -525,10 +533,13 @@ async def get_session(
     # READ-ONLY and intentionally not paywalled: an unpaid coach can still open a past
     # game. Resuming logging is gated on the write routes (POST /plays etc).
     game = await _load_session(db, session_id, user.organization_id)
-    meta = await _meta_event(db, game.id)
+    meta = await _meta_event(db, game.id, user.organization_id)
     plays_result = await db.execute(
-        select(Event).where(Event.game_id == game.id, Event.event_type == "play")
-        .order_by(Event.created_at.asc())
+        select(Event).where(
+            Event.game_id == game.id,
+            Event.organization_id == user.organization_id,
+            Event.event_type == "play",
+        ).order_by(Event.created_at.asc())
     )
     plays = [_event_to_play(e) for e in plays_result.scalars().all()]
     return {
@@ -555,7 +566,11 @@ async def add_plays(
     # reconnect flush that re-sends queued plays can never create duplicates. Plays with
     # no client_uid (legacy/online path) are always written.
     existing = await db.execute(
-        select(Event).where(Event.game_id == game.id, Event.event_type == "play")
+        select(Event).where(
+            Event.game_id == game.id,
+            Event.organization_id == user.organization_id,
+            Event.event_type == "play",
+        )
     )
     existing_uids = {
         (e.extra_data or {}).get("client_uid")
@@ -599,7 +614,7 @@ async def add_plays(
 
 async def _absorb_new_jerseys(db: AsyncSession, game: Game, plays: List[PlayEntry]) -> None:
     """Save jersey numbers entered on the fly to the session roster (our side)."""
-    meta = await _meta_event(db, game.id)
+    meta = await _meta_event(db, game.id, game.organization_id)
     if not meta:
         return
     data = dict(meta.extra_data or {})
@@ -696,7 +711,11 @@ async def generate_report(
         raise HTTPException(status_code=422, detail=f"scope must be one of: {', '.join(VALID_SCOPES)}")
 
     ev = await db.execute(
-        select(Event).where(Event.game_id == game.id, Event.event_type == "play")
+        select(Event).where(
+            Event.game_id == game.id,
+            Event.organization_id == user.organization_id,
+            Event.event_type == "play",
+        )
     )
     plays = list(ev.scalars().all())
 
@@ -717,7 +736,7 @@ async def generate_report(
     if event_filter:
         params["event_filter"] = event_filter
 
-    meta = await _meta_event(db, game.id)
+    meta = await _meta_event(db, game.id, user.organization_id)
     team_name = ((meta.extra_data if meta else {}) or {}).get("team_name") or "Us"
     report = TendencyReport(
         organization_id=org.id,
