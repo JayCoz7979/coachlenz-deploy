@@ -83,7 +83,7 @@ def _org(oid="o1"):
 
 
 def _report(**kw):
-    base = dict(id="r1", organization_id="o1", generated_at=None, error_reason="boom")
+    base = dict(id="r1", organization_id="o1", generated_at=None, error_reason="boom", report_type="opponent")
     base.update(kw)
     return SimpleNamespace(**base)
 

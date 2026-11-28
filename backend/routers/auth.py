@@ -301,6 +301,12 @@ async def send_email_code(request: Request, user: User = Depends(get_current_use
     if exp is not None and exp > datetime.utcnow() + timedelta(minutes=14):
         raise HTTPException(status_code=429, detail="A code was just sent. Please wait a minute before requesting another.")
     code = f"{secrets.randbelow(1000000):06d}"
+    # Remember the previous code/expiry so a failed send can be undone. The new code
+    # is stored before sending (so it is verifiable the instant the email lands), but
+    # if the send fails the cooldown must NOT start: otherwise a 502 is followed by a
+    # 429 for a minute and the coach cannot retry. Restoring the prior values also
+    # keeps any earlier, still-valid code working.
+    prev_hash, prev_expires = user.email_verify_code_hash, user.email_verify_expires
     await db.execute(update(User).where(User.id == user.id).values(
         email_verify_code_hash=_sha256(code),
         email_verify_expires=datetime.utcnow() + timedelta(minutes=15),
@@ -309,6 +315,11 @@ async def send_email_code(request: Request, user: User = Depends(get_current_use
     try:
         await send_email_verification_code(user.email, user.name, code)
     except Exception:
+        await db.execute(update(User).where(User.id == user.id).values(
+            email_verify_code_hash=prev_hash,
+            email_verify_expires=prev_expires,
+        ))
+        await db.commit()
         raise HTTPException(status_code=502, detail="Could not send the verification email. Try again in a moment.")
     return {"ok": True, "message": f"We sent a 6-digit code to {user.email}."}
 

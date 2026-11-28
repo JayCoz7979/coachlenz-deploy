@@ -167,6 +167,43 @@ class FulfillIn(BaseModel):
     note: Optional[str] = None
 
 
+_EMPTY_STUDENT_SUMMARY = {"players_deleted": 0, "events_scrubbed": 0, "archive_plays_scrubbed": 0,
+                          "games_deleted": 0, "per_player": []}
+
+
+async def _run_deletion(db: AsyncSession, pr: PrivacyRequest, body: "FulfillIn", *, dry_run: bool) -> dict:
+    """Student-data erasure (org-scoped, needs the resolved org) PLUS deletion of the
+    email-keyed Halftime PDF lead rows matched on the requester's email. A lead-only
+    request (no student ids to act on) needs no org: a coach who only asked for the PDF
+    has no account."""
+    wants_student_data = bool(body.roster_player_ids or body.game_ids)
+    if wants_student_data and not pr.organization_id:
+        raise HTTPException(status_code=400, detail="Resolve the org (verify step) before deletion")
+    if pr.organization_id:
+        summary = await svc.execute_deletion(
+            db, pr.organization_id, body.roster_player_ids, body.game_ids, dry_run=dry_run)
+    else:
+        summary = {**_EMPTY_STUDENT_SUMMARY, "per_player": [], "dry_run": dry_run}
+    summary["halftime_leads_deleted"] = await svc.delete_leads_by_email(
+        db, pr.requester_email, dry_run=dry_run)
+    return summary
+
+
+@router.get("/admin/privacy-requests/{request_id}/export")
+async def export_request_data(request_id: str, user: User = Depends(require_admin),
+                              db: AsyncSession = Depends(get_db)):
+    """Email-matched personal data export for a VERIFIED request (access or deletion):
+    the Halftime PDF lead rows for the requester's email. Identity must be verified
+    first, so nothing is disclosed on an unverified request."""
+    pr = (await db.execute(select(PrivacyRequest).where(PrivacyRequest.id == request_id))).scalar_one_or_none()
+    if not pr:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if pr.status not in ("verified", "completed"):
+        raise HTTPException(status_code=409, detail="Verify the request before exporting data")
+    data = await svc.export_personal_data_by_email(db, pr.requester_email)
+    return {"ok": True, "reference": str(pr.id), "request_type": pr.request_type, "data": data}
+
+
 @router.post("/admin/privacy-requests/{request_id}/preview")
 async def preview_fulfillment(request_id: str, body: FulfillIn, user: User = Depends(require_admin),
                               db: AsyncSession = Depends(get_db)):
@@ -178,10 +215,7 @@ async def preview_fulfillment(request_id: str, body: FulfillIn, user: User = Dep
         raise HTTPException(status_code=404, detail="Request not found")
     if pr.request_type != "deletion":
         raise HTTPException(status_code=400, detail="Preview applies to deletion requests only")
-    if not pr.organization_id:
-        raise HTTPException(status_code=400, detail="Resolve the org (verify step) before previewing")
-    summary = await svc.execute_deletion(
-        db, pr.organization_id, body.roster_player_ids, body.game_ids, dry_run=True)
+    summary = await _run_deletion(db, pr, body, dry_run=True)
     # Defensive: a dry run must leave no pending changes.
     await db.rollback()
     return {"ok": True, "preview": summary}
@@ -200,10 +234,7 @@ async def fulfill_request(request_id: str, body: FulfillIn, user: User = Depends
         raise HTTPException(status_code=409, detail="Verify the request before fulfilling it")
 
     if pr.request_type == "deletion":
-        if not pr.organization_id:
-            raise HTTPException(status_code=400, detail="Resolve the org (verify step) before deletion")
-        summary = await svc.execute_deletion(
-            db, pr.organization_id, body.roster_player_ids, body.game_ids)
+        summary = await _run_deletion(db, pr, body, dry_run=False)
         cert_id = f"CL-DEL-{datetime.utcnow().strftime('%Y%m%d')}-{str(pr.id)[:8]}"
         pr.certificate_id = cert_id
         pr.status = "completed"
@@ -211,7 +242,8 @@ async def fulfill_request(request_id: str, body: FulfillIn, user: User = Depends
         note = (f"deleted players={summary['players_deleted']}, "
                 f"plays de-identified={summary['events_scrubbed']}, "
                 f"archived-snapshot plays de-identified={summary.get('archive_plays_scrubbed', 0)}, "
-                f"games deleted={summary['games_deleted']}")
+                f"games deleted={summary['games_deleted']}, "
+                f"halftime PDF leads deleted={summary.get('halftime_leads_deleted', 0)}")
         if body.note:
             note += f" | {body.note}"
         pr.resolution_note = ((pr.resolution_note or "") + f"\n[fulfill] {note}").strip()

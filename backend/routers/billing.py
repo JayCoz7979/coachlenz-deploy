@@ -16,6 +16,18 @@ from backend.config import settings
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
+def refuse_live_key_outside_production() -> None:
+    """503 before any Stripe call when a live key is configured outside production
+    (Stage 2 QA L2). The app also refuses to start in that state (main.py)."""
+    from backend.services.stripe_mode import live_key_outside_production
+    if live_key_outside_production():
+        raise HTTPException(
+            status_code=503,
+            detail="Checkout is disabled: this environment is not production and only "
+                   "Stripe test mode is allowed. Nothing was charged.",
+        )
+
+
 # Monthly (default) price IDs, keyed by tier. Kept FLAT (tier -> price id) so the
 # existing checkout + tier-coverage tests keep their contract.
 PRICE_MAP = {
@@ -55,6 +67,7 @@ class CheckoutRequest(BaseModel):
 
 @router.post("/checkout")
 async def create_checkout(body: CheckoutRequest, request: Request, user: User = Depends(get_current_user), org: Organization = Depends(get_current_org), db: AsyncSession = Depends(get_db)):
+    refuse_live_key_outside_production()
     if body.tier in CONTACT_SALES_TIERS:
         raise HTTPException(
             status_code=400,
@@ -109,6 +122,147 @@ async def create_checkout(body: CheckoutRequest, request: Request, user: User = 
     ))
     await db.commit()
     return {"checkout_url": session.url}
+
+# ── $7 one-time Live Tracker unlock ──────────────────────────────────────────
+class LiveTrackerCheckoutRequest(BaseModel):
+    success_url: str
+    cancel_url: str
+
+
+def _allowed_redirect(url: str) -> bool:
+    """Only send the buyer back to one of our own app origins (no open redirect)."""
+    from urllib.parse import urlparse
+    from backend.cors_config import build_allowed_origins
+
+    try:
+        parsed = urlparse(url or "")
+    except ValueError:
+        return False
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return False
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    return origin in build_allowed_origins(settings.APP_URL, settings.ENVIRONMENT)
+
+
+@router.post("/live-tracker/checkout")
+async def live_tracker_checkout(body: LiveTrackerCheckoutRequest, request: Request,
+                                user: User = Depends(get_current_user),
+                                org: Organization = Depends(get_current_org),
+                                db: AsyncSession = Depends(get_db)):
+    """One-time $7 Checkout (mode=payment, quantity 1) for the Live Tracker.
+
+    The price comes ONLY from STRIPE_PRICE_LIVE_TRACKER (a Stripe Price ID); nothing
+    is inlined as price_data. Unset -> 503, fail closed. Access is granted by the
+    webhook after Stripe reports the session paid, never by this endpoint or by the
+    success redirect.
+    """
+    from backend.services.live_tracker import LIVE_TRACKER_KIND, has_live_tracker_access
+
+    refuse_live_key_outside_production()
+    price_id = (settings.STRIPE_PRICE_LIVE_TRACKER or "").strip()
+    if not price_id or not (settings.STRIPE_SECRET_KEY or "").strip():
+        raise HTTPException(
+            status_code=503,
+            detail="Live Tracker checkout isn't available yet. Nothing was charged. Please try again later.",
+        )
+    if has_live_tracker_access(org):
+        raise HTTPException(status_code=409, detail="The Live Tracker is already unlocked for your account.")
+    if not (_allowed_redirect(body.success_url) and _allowed_redirect(body.cancel_url)):
+        raise HTTPException(status_code=400, detail="Invalid return URL")
+
+    # One open Checkout Session per org (Stage 2 QA M1). Lock the org row so two tabs
+    # (or a double click) serialize here, then reuse the session Stripe still reports
+    # open instead of starting a second one that could also be paid. The lock is held
+    # until the commit below, so nothing in this block may commit early.
+    locked = (await db.execute(
+        select(Organization).where(Organization.id == org.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )).scalar_one()
+    if has_live_tracker_access(locked):
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="The Live Tracker is already unlocked for your account.")
+
+    reused = _open_live_tracker_session(locked)
+    if reused is not None:
+        await db.rollback()          # release the lock; nothing changed
+        return {"checkout_url": reused.url, "reused": True}
+
+    customer_id = locked.stripe_customer_id
+    if not customer_id:
+        customer = stripe.Customer.create(email=user.email, name=locked.name, metadata={"org_id": str(locked.id)})
+        customer_id = customer.id
+
+    ip = request.client.host if request.client else None
+    ua = request.headers.get("user-agent")
+    metadata = {"org_id": str(locked.id), "user_id": str(user.id), "kind": LIVE_TRACKER_KIND,
+                "client_ip": ip or ""}
+    session = stripe.checkout.Session.create(
+        customer=customer_id,
+        mode="payment",
+        line_items=[{"price": price_id, "quantity": 1}],
+        success_url=body.success_url,
+        cancel_url=body.cancel_url,
+        client_reference_id=str(locked.id),
+        metadata=metadata,
+        payment_intent_data={"metadata": metadata},
+    )
+    await db.execute(update(Organization).where(Organization.id == locked.id).values(
+        stripe_customer_id=customer_id,
+        live_tracker_open_session_id=session.id,
+        live_tracker_open_session_expires_at=_stripe_ts(getattr(session, "expires_at", None)),
+    ))
+    db.add(PurchaseIPLog(
+        organization_id=locked.id, user_id=user.id, ip=ip, user_agent=(ua or "")[:400],
+        tier=LIVE_TRACKER_KIND, stripe_session_id=session.id,
+    ))
+    await db.commit()
+    return {"checkout_url": session.url}
+
+
+def _stripe_ts(value):
+    from datetime import datetime, timezone
+    try:
+        return datetime.fromtimestamp(int(value), tz=timezone.utc) if value else None
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _open_live_tracker_session(org: Organization):
+    """The org's remembered $7 Checkout Session if Stripe still reports it open.
+
+    A session Stripe reports complete/paid means the webhook has not landed yet:
+    refuse (409) rather than let the coach start, and pay, a second session.
+    Anything else (expired, unknown, Stripe error) falls through to a new session."""
+    import logging
+    from datetime import datetime, timezone
+
+    sid = getattr(org, "live_tracker_open_session_id", None)
+    if not sid:
+        return None
+    exp = getattr(org, "live_tracker_open_session_expires_at", None)
+    if exp is not None:
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if exp <= datetime.now(timezone.utc):
+            return None
+    try:
+        existing = stripe.checkout.Session.retrieve(sid)
+    except Exception as e:      # network/API error: do not block checkout on it
+        logging.getLogger(__name__).warning(
+            "[live_tracker] could not retrieve open checkout session %s: %s", sid, type(e).__name__)
+        return None
+    status = getattr(existing, "status", None)
+    if status == "open" and getattr(existing, "url", None):
+        return existing
+    if status == "complete" or getattr(existing, "payment_status", None) == "paid":
+        raise HTTPException(
+            status_code=409,
+            detail="Your $7 payment is already being processed. The Live Tracker unlocks in a "
+                   "moment. Refresh this page instead of paying again.",
+        )
+    return None
+
 
 @router.post("/portal")
 async def billing_portal(user: User = Depends(get_current_user), org: Organization = Depends(get_current_org)):
@@ -195,6 +349,17 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None),
     et = event["type"]
     data = event["data"]["object"]
 
+    # Stage 2 QA L2: a test-mode environment never acts on a live-mode event (and
+    # production never acts on a test-mode one). Acknowledged with 200 so Stripe does
+    # not keep retrying, and NOT recorded as processed, so the event stays actionable
+    # by the environment it belongs to.
+    from backend.services.stripe_mode import event_livemode_mismatch
+    if event_livemode_mismatch(event):
+        import logging
+        logging.getLogger(__name__).warning(
+            "[billing] ignored Stripe event %s (%s): livemode does not match ENVIRONMENT", event.get("id"), et)
+        return {"received": True, "ignored": "livemode_mismatch"}
+
     # Idempotency: Stripe delivers at-least-once and WILL redeliver events. Claim this
     # event id atomically by inserting its marker; if it's already recorded, this is a
     # redelivery — ack and skip so effects (subscription flips, referral credits) are
@@ -208,7 +373,23 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None),
         await db.rollback()
         return {"received": True, "duplicate": True}
 
-    if et == "checkout.session.completed":
+    if et in ("checkout.session.completed", "checkout.session.async_payment_succeeded") \
+            and (data.get("metadata") or {}).get("kind") == "live_tracker":
+        # $7 Live Tracker unlock. Grant ONLY when Stripe says the session is paid
+        # (a delayed method completes as 'unpaid' and grants on async_payment_succeeded).
+        # grant_live_tracker only writes while the grant is still NULL, so even a
+        # distinct second event can't move it; the marker above stops redeliveries.
+        from backend.services.live_tracker import (
+            grant_live_tracker, live_tracker_session_is_paid, record_extra_payment,
+        )
+        if live_tracker_session_is_paid(data):
+            org_id = data["metadata"]["org_id"]
+            if not await grant_live_tracker(db, org_id, data.get("id")):
+                # Already unlocked by another session: a second paid session is a
+                # double charge. Flag it for a human refund (Stage 2 QA M1).
+                await record_extra_payment(db, org_id, data)
+
+    elif et == "checkout.session.completed":
         from backend.services import credits as credit_svc
         md = data.get("metadata", {})
         org_id = md.get("org_id")

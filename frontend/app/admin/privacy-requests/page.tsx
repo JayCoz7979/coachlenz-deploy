@@ -54,6 +54,18 @@ export default function AdminPrivacyRequestsPage() {
   })
   const fulfill = (r: Req) => act(r.id, () =>
     api.post(`/admin/privacy-requests/${r.id}/fulfill`, { roster_player_ids: csv(players[r.id]), game_ids: csv(games[r.id]), note: note[r.id] || undefined }))
+  // Email-matched personal data (Halftime Sheet PDF sign-ups) for a verified request.
+  // Downloads the JSON so the admin can include it in the access response.
+  const exportData = (r: Req) => act(r.id, async () => {
+    const res = await api.get(`/admin/privacy-requests/${r.id}/export`)
+    const blob = new Blob([JSON.stringify(res.data.data, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `privacy-export-${r.id}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  })
   const reject = (r: Req) => act(r.id, () =>
     api.post(`/admin/privacy-requests/${r.id}/reject`, { reason: note[r.id] || 'Unable to verify authority over this student’s data.' }))
 
@@ -106,6 +118,7 @@ export default function AdminPrivacyRequestsPage() {
                       value={note[r.id] || ''} onChange={e => setNote(s => ({ ...s, [r.id]: e.target.value }))} />
                     <div className="flex gap-2">
                       <button disabled={busy === r.id || !(note[r.id] || '').trim()} onClick={() => verify(r)} className="btn-primary">Verify</button>
+                      <button disabled={busy === r.id} onClick={() => exportData(r)} className="px-3 py-2 rounded border border-gray-600 text-gray-200 text-sm">Export email data</button>
                       <button disabled={busy === r.id} onClick={() => reject(r)} className="px-3 py-2 rounded border border-red-800 text-red-400 text-sm">Reject</button>
                     </div>
                   </div>
@@ -122,7 +135,7 @@ export default function AdminPrivacyRequestsPage() {
                         {preview[r.id] && (
                           <div className="text-xs bg-gray-800/60 border border-gray-700 rounded p-2 text-gray-300">
                             <div className="font-semibold text-gray-200 mb-1">Preview — this will remove:</div>
-                            <div>Players: {preview[r.id].players_deleted} · Plays de-identified: {preview[r.id].events_scrubbed} · Archived-snapshot plays: {preview[r.id].archive_plays_scrubbed} · Games deleted: {preview[r.id].games_deleted}</div>
+                            <div>Players: {preview[r.id].players_deleted} · Plays de-identified: {preview[r.id].events_scrubbed} · Archived-snapshot plays: {preview[r.id].archive_plays_scrubbed} · Games deleted: {preview[r.id].games_deleted} · Halftime PDF sign-ups (by email): {preview[r.id].halftime_leads_deleted ?? 0}</div>
                             {(preview[r.id].per_player || []).map((p: any, i: number) => (
                               <div key={i} className="text-gray-400">• #{p.jersey} {p.name} — {p.plays_deidentified} plays, {p.archive_plays_deidentified} archived</div>
                             ))}

@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import api from '@/lib/api'
+import { consumeNext } from '@/lib/postAuth'
 // Static import so the transparent lockup is emitted to /_next/static/media
 // (public/ is not bundled with output:'standalone').
 import logo from '../../public/coachlenz-logo.png'
@@ -22,7 +23,8 @@ export default function LoginPage() {
       const res = await api.post('/auth/login', { email, password })
       localStorage.setItem('access_token', res.data.access_token)
       localStorage.setItem('refresh_token', res.data.refresh_token)
-      router.push('/dashboard')
+      // Return to where the coach came from (e.g. the $7 Live Tracker checkout).
+      router.push(consumeNext('/dashboard'))
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Login failed')
     } finally {
