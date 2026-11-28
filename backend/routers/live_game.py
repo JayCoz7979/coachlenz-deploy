@@ -51,6 +51,8 @@ from backend.services.auth import get_current_user, get_current_org
 from backend.services.agent_log import log_agent_action
 from backend.services.sports import assert_sport_allowed
 from backend.services.legal import assert_student_consent
+from backend.services.live_game_report import live_report_block_message
+from backend.workers.worker_reports import _apply_event_filter
 
 # The Live Game Logger is the permanent FREE tier and is INTENTIONALLY UNGATED: any
 # coach, on any plan (trial, expired, or never-paid 'free'), can chart a game and
@@ -616,14 +618,21 @@ async def generate_report(
     ev = await db.execute(
         select(Event).where(Event.game_id == game.id, Event.event_type == "play")
     )
-    plays = ev.scalars().all()
-    if not plays:
-        raise HTTPException(status_code=422,
-                            detail="No plays logged yet. Log at least one play before generating a report.")
+    plays = list(ev.scalars().all())
 
     # params carries the report scope + the event filter the worker applies to narrow
     # the report to that segment (whole game / a half / a single quarter).
     event_filter, label = _scope_filter(game.sport, scope, body.period)
+    # Same filter the reports worker applies, so "plays in this scope" means the
+    # same set here and in the report. Thin or empty scope is a 422 with the
+    # coach-facing sentence. Nothing is inserted, no job is queued, and the
+    # model is not called. 422 (not a 200 without report_id) keeps the current
+    # logger page working: it already shows response detail and stays on the log.
+    scoped = _apply_event_filter(plays, event_filter)
+    blocked = live_report_block_message(len(scoped))
+    if blocked:
+        raise HTTPException(status_code=422, detail=blocked)
+
     params: Dict[str, Any] = {"scope": scope, "label": label}
     if event_filter:
         params["event_filter"] = event_filter
@@ -653,9 +662,9 @@ async def generate_report(
         organization_id=str(org.id),
         job_id=str(job.id),
         phase="live_logger",
-        reason=f"{label} report queued from {len(plays)} logged plays.",
+        reason=f"{label} report queued from {len(scoped)} logged plays.",
         level="info",
-        detail={"report_id": str(report.id), "scope": scope, "plays": len(plays)},
+        detail={"report_id": str(report.id), "scope": scope, "plays": len(scoped)},
     )
     return {"report_id": str(report.id), "session_id": str(game.id),
-            "scope": scope, "status": "queued", "plays": len(plays)}
+            "scope": scope, "status": "queued", "plays": len(scoped)}

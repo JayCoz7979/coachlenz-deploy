@@ -9,6 +9,7 @@ import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
+import { reportFailureMessage } from '@/lib/reportError'
 import { newUid, loadPlays, savePlays, loadCfg, saveCfg } from '@/components/live/offline'
 import { SPORT_META } from '@/lib/sports'
 import {
@@ -270,7 +271,7 @@ export default function LoggerPage() {
       const r = await api.post('/live/report', { session_id: sessionId, scope, period: periodNum })
       router.push(`/reports/${r.data.report_id}`)
     } catch (e: any) {
-      setError(e?.response?.data?.detail || 'Could not generate the report.')
+      setError(reportFailureMessage(e))
       setBusy(false)
     }
   }
