@@ -149,6 +149,10 @@ class Settings(BaseSettings):
     STRIPE_PRICE_COACH_ANNUAL: str = ""
     STRIPE_PRICE_ATHLETIC_DEPT_ANNUAL: str = ""
     STRIPE_PRICE_DISTRICT_ANNUAL: str = ""
+    # $7 USD one-time Live Tracker unlock (Live Game Logger + Halftime Sheet). The
+    # Stripe Price ID (price_...) of a one-time price created in the Stripe dashboard.
+    # Empty = checkout fails closed with a clear 503; nothing is inlined as price_data.
+    STRIPE_PRICE_LIVE_TRACKER: str = ""
 
     # Resend
     RESEND_API_KEY: str = ""

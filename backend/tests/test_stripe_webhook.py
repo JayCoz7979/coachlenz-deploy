@@ -181,3 +181,132 @@ def test_stale_replayed_timestamp_is_rejected():
     with pytest.raises(HTTPException) as exc:
         _call(body, _sign(body, stale))
     assert exc.value.status_code == 400
+
+
+# ── $7 one-time Live Tracker unlock ──────────────────────────────────────────
+class _CaptureDB(_StubDB):
+    """Records every statement the handler executes so a test can assert exactly
+    which Organization columns were written."""
+    def __init__(self, duplicate=False):
+        super().__init__(duplicate=duplicate)
+        self.statements = []
+
+    async def execute(self, *a, **k):
+        self.executed += 1
+        if a:
+            self.statements.append(a[0])
+        return _FakeResult()
+
+
+def _live_tracker_session(payment_status="paid", mode="payment", org_id="org_lt", sid="cs_test_lt"):
+    return {"id": sid, "object": "checkout.session", "mode": mode, "payment_status": payment_status,
+            "customer": "cus_lt", "metadata": {"org_id": org_id, "kind": "live_tracker", "user_id": "u1"}}
+
+
+def _grant_updates(db):
+    out = []
+    for stmt in db.statements:
+        if stmt.__class__.__name__ != "Update":
+            continue
+        params = stmt.compile().params
+        if "live_tracker_purchased_at" in params:
+            out.append((stmt, params))
+    return out
+
+
+def test_live_tracker_paid_checkout_grants_access_once():
+    db = _CaptureDB()
+    body = _event("checkout.session.completed", _live_tracker_session(), event_id="evt_lt_1")
+    out = _call(body, _sign(body, int(time.time())), db)
+    assert out == {"received": True}
+    grants = _grant_updates(db)
+    assert len(grants) == 1                                   # exactly one grant write
+    stmt, params = grants[0]
+    assert params["live_tracker_checkout_session_id"] == "cs_test_lt"
+    sql = str(stmt.compile())
+    assert "live_tracker_purchased_at IS NULL" in sql         # idempotent at the row level
+    assert db.executed == 1                                   # no subscription flip / credit grant
+    assert db.committed and db.added[0].event_id == "evt_lt_1"
+
+
+def test_live_tracker_does_not_fall_into_the_subscription_branch():
+    # Even if a tier key were present, a live_tracker session must never flip the
+    # org's subscription tier or grant credits.
+    obj = _live_tracker_session()
+    obj["metadata"]["tier"] = "coach"
+    db = _CaptureDB()
+    body = _event("checkout.session.completed", obj)
+    _call(body, _sign(body, int(time.time())), db)
+    for stmt in db.statements:
+        params = stmt.compile().params
+        assert "subscription_tier" not in params and "is_trial" not in params
+    assert len(_grant_updates(db)) == 1
+
+
+def test_live_tracker_redelivery_is_a_noop():
+    db = _CaptureDB(duplicate=True)
+    body = _event("checkout.session.completed", _live_tracker_session(), event_id="evt_lt_1")
+    out = _call(body, _sign(body, int(time.time())), db)
+    assert out == {"received": True, "duplicate": True}
+    assert db.executed == 0 and _grant_updates(db) == []
+    assert db.rolled_back and not db.committed
+
+
+def test_live_tracker_bad_signature_is_400_and_grants_nothing():
+    db = _CaptureDB()
+    body = _event("checkout.session.completed", _live_tracker_session())
+    with pytest.raises(HTTPException) as exc:
+        _call(body, _sign(body, int(time.time()), secret="whsec_wrong"), db)
+    assert exc.value.status_code == 400
+    assert db.executed == 0 and not db.added and not db.committed
+
+
+def test_live_tracker_forged_body_with_valid_header_is_400():
+    signed = _event("checkout.session.completed", _live_tracker_session(payment_status="unpaid"))
+    header = _sign(signed, int(time.time()))
+    forged = _event("checkout.session.completed", _live_tracker_session(payment_status="paid"))
+    db = _CaptureDB()
+    with pytest.raises(HTTPException) as exc:
+        _call(forged, header, db)
+    assert exc.value.status_code == 400
+    assert db.executed == 0
+
+
+@pytest.mark.parametrize("payment_status", ["unpaid", "no_payment_required"])
+def test_live_tracker_completed_but_not_paid_grants_nothing(payment_status):
+    # Delayed payment methods complete the session with payment_status='unpaid'.
+    db = _CaptureDB()
+    body = _event("checkout.session.completed", _live_tracker_session(payment_status=payment_status))
+    out = _call(body, _sign(body, int(time.time())), db)
+    assert out == {"received": True}
+    assert _grant_updates(db) == [] and db.executed == 0
+    assert db.committed                                       # marker still recorded
+
+
+def test_live_tracker_async_payment_succeeded_grants():
+    db = _CaptureDB()
+    body = _event("checkout.session.async_payment_succeeded", _live_tracker_session())
+    _call(body, _sign(body, int(time.time())), db)
+    assert len(_grant_updates(db)) == 1
+
+
+@pytest.mark.parametrize("event_type,payment_status", [
+    ("checkout.session.async_payment_failed", "unpaid"),     # failed payment
+    ("checkout.session.expired", "unpaid"),                  # coach cancelled / abandoned
+    ("payment_intent.payment_failed", "unpaid"),
+])
+def test_live_tracker_cancel_or_failed_payment_grants_nothing(event_type, payment_status):
+    db = _CaptureDB()
+    body = _event(event_type, _live_tracker_session(payment_status=payment_status))
+    out = _call(body, _sign(body, int(time.time())), db)
+    assert out == {"received": True}
+    assert _grant_updates(db) == [] and db.executed == 0
+
+
+def test_live_tracker_session_missing_org_grants_nothing():
+    obj = _live_tracker_session()
+    obj["metadata"].pop("org_id")
+    db = _CaptureDB()
+    body = _event("checkout.session.completed", obj)
+    _call(body, _sign(body, int(time.time())), db)
+    assert db.executed == 0

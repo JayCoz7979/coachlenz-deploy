@@ -669,32 +669,69 @@ def _basketball_spec(scope_label: str, has_season: bool, foul_trouble: bool) -> 
     return [{"heading": h, "insight_type": it, "instructions": ins} for h, it, ins in S]
 
 
-# ── entry point ──────────────────────────────────────────────────────────────
-async def generate_live_game_sections(
+# Fewer than this many plays in the chosen scope is too thin to brief from.
+# The route returns that to the coach and this writer never calls the model.
+# One constant so the route and the writer cannot drift.
+MIN_PLAYS_FOR_LIVE_REPORT = 3
+
+EMPTY_SCOPE_MESSAGE = "No plays logged for this part of the game yet."
+THIN_PLAYS_MESSAGE = (
+    "Not enough plays logged yet for a full report. Log a few more plays and try again."
+)
+
+
+def live_report_block_message(play_count: int) -> Optional[str]:
+    """Coach-facing reason to skip a live report, or None when the scope is thick enough.
+
+    Zero plays in the chosen scope and a thin log (below MIN_PLAYS_FOR_LIVE_REPORT)
+    are both refusals: no failure, and no model call.
+    """
+    if play_count <= 0:
+        return EMPTY_SCOPE_MESSAGE
+    if play_count < MIN_PLAYS_FOR_LIVE_REPORT:
+        return THIN_PLAYS_MESSAGE
+    return None
+
+
+def _scope_label(params: Dict[str, Any]) -> str:
+    scope = _rp(params.get("scope")) or "full"
+    return params.get("label") or ("Halftime" if scope == "halftime" else "Full Game")
+
+
+def _thin_section(play_count: int, scope_label: str) -> Dict[str, Any]:
+    if play_count <= 0:
+        heading = f"{scope_label} Report: No Plays In This Part"
+    else:
+        heading = f"{scope_label} Report: Not Enough Plays Yet"
+    return {
+        "heading": heading,
+        "insight_type": "tendency",
+        "body": live_report_block_message(play_count) or "",
+    }
+
+
+def build_live_game_prompt(
     sport: str,
     events,
     params: Dict[str, Any],
     tendency_summary: Dict[str, Any],
-    is_trial: bool = False,
     season_events=None,
     prior_game_count: int = 0,
-) -> List[Dict[str, Any]]:
-    """Build the 9-section halftime/full-game report from the logged plays."""
-    plays, meta = _split_plays(events)
+) -> str:
+    """Turn logged plays into the single coordinator prompt. No model call.
+
+    Safe on empty and near-empty buckets (one or two plays, None yards, missing
+    opponent fields, empty lists): every rate divides only when the denominator
+    is non-zero. Production skips this when the scope is below
+    MIN_PLAYS_FOR_LIVE_REPORT so a thin game never spends an AI call.
+    """
+    _plays, meta = _split_plays(events)
     config = _extra(meta) if meta else {}
     scope = _rp(params.get("scope")) or "full"
-    scope_label = params.get("label") or ("Halftime" if scope == "halftime" else "Full Game")
+    scope_label = _scope_label(params)
     # Season trend compares to full-game baselines, so it is meaningless for a single
     # segment (e.g. a Q3 adjustment report). Only offer it on whole-game / half scopes.
     season_ok = scope not in ("this_quarter",)
-
-    if len([e for e in plays]) < 3:
-        return [{
-            "heading": f"{scope_label} Report: Not Enough Plays Yet",
-            "insight_type": "tendency",
-            "body": (f"Only {len(plays)} play(s) were logged in scope. Log a few more, then generate the "
-                     f"{scope_label.lower()} report again."),
-        }]
 
     if sport == "basketball":
         stats = compute_basketball_stats(events, config)
@@ -718,7 +755,7 @@ async def generate_live_game_sections(
         f'{i+1}. "{s["heading"]}" (insight_type: "{s["insight_type"]}")\n   Instructions: {s["instructions"]}'
         for i, s in enumerate(spec))
 
-    prompt = f"""Sport: {sport}
+    return f"""Sport: {sport}
 Report: {scope_label} live-game report: {team} vs {opponent}
 This is OUR team's report: offense = our offense, defense = our defense.
 
@@ -738,6 +775,34 @@ BODY FORMAT:
 
 Return ONLY the JSON array, nothing else."""
 
+
+# ── entry point ──────────────────────────────────────────────────────────────
+async def generate_live_game_sections(
+    sport: str,
+    events,
+    params: Dict[str, Any],
+    tendency_summary: Dict[str, Any],
+    is_trial: bool = False,
+    season_events=None,
+    prior_game_count: int = 0,
+) -> List[Dict[str, Any]]:
+    """Build the 9-section halftime/full-game report from the logged plays.
+
+    A thin or empty scope returns one friendly section and does not call the model.
+    """
+    plays, _meta = _split_plays(events)
+    scope_label = _scope_label(params)
+    if live_report_block_message(len(plays)):
+        return [_thin_section(len(plays), scope_label)]
+
+    prompt = build_live_game_prompt(
+        sport=sport,
+        events=events,
+        params=params,
+        tendency_summary=tendency_summary,
+        season_events=season_events,
+        prior_game_count=prior_game_count,
+    )
     message = await client.messages.create(
         model=MODEL,
         max_tokens=16000,
