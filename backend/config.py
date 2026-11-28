@@ -149,6 +149,10 @@ class Settings(BaseSettings):
     STRIPE_PRICE_COACH_ANNUAL: str = ""
     STRIPE_PRICE_ATHLETIC_DEPT_ANNUAL: str = ""
     STRIPE_PRICE_DISTRICT_ANNUAL: str = ""
+    # $7 USD one-time Live Tracker unlock (Live Game Logger + Halftime Sheet). The
+    # Stripe Price ID (price_...) of a one-time price created in the Stripe dashboard.
+    # Empty = checkout fails closed with a clear 503; nothing is inlined as price_data.
+    STRIPE_PRICE_LIVE_TRACKER: str = ""
 
     # Resend
     RESEND_API_KEY: str = ""
@@ -163,6 +167,17 @@ class Settings(BaseSettings):
     # Where replies to the founder welcome email land. Empty -> jay@<RESEND_DOMAIN>.
     # Set this env to a monitored inbox (e.g. a Gmail) so "just reply" actually reaches Jay.
     FOUNDER_REPLY_TO: str = ""
+    # Free Halftime Sheet PDF lead form (double opt-in, /live-tracker).
+    # OUTBOUND SAFETY: lead emails (confirmation + PDF) go ONLY to addresses on
+    # LEAD_EMAIL_ALLOWLIST (comma-separated emails and/or "@domain" entries) unless a
+    # human sets LEAD_EMAIL_LIVE_SEND=true. Default off, so a staging deploy (even one
+    # that forgot to set ENVIRONMENT) can never email a real coach. Production needs
+    # LEAD_EMAIL_LIVE_SEND=true set deliberately.
+    LEAD_EMAIL_LIVE_SEND: bool = False
+    LEAD_EMAIL_ALLOWLIST: str = ""
+    # Host of the frontend that serves /live-tracker/halftime-sheet/confirm. Staging
+    # sets this to its own frontend URL so confirm links never point at production.
+    LEAD_CONFIRM_BASE_URL: str = "https://app.coachlenz.com"
 
     # Twilio
     TWILIO_ACCOUNT_SID: str = ""

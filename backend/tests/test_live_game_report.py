@@ -9,9 +9,13 @@ import types
 import asyncio
 import pytest
 
+from unittest.mock import AsyncMock, patch
+
 from backend.services.live_game_report import (
     compute_football_stats, compute_basketball_stats, compute_season_baseline,
-    generate_live_game_sections, build_chart_summary,
+    generate_live_game_sections, build_chart_summary, build_live_game_prompt,
+    live_report_block_message, MIN_PLAYS_FOR_LIVE_REPORT,
+    EMPTY_SCOPE_MESSAGE, THIN_PLAYS_MESSAGE,
     _in_red_zone, _converted, _poss_points, _score_momentum,
 )
 
@@ -283,7 +287,86 @@ def test_fouled_shots_counted_and_flagged():
 
 def test_generate_short_circuits_without_enough_plays():
     # < 3 plays returns a guidance section and never calls the LLM
-    out = asyncio.run(
-        generate_live_game_sections("football", [ev(side="offense")], {"scope": "halftime"}, {})
-    )
+    mock = AsyncMock(side_effect=AssertionError("AI writer called"))
+    with patch("backend.services.live_game_report.client.messages.create", mock):
+        out = asyncio.run(
+            generate_live_game_sections("football", [ev(side="offense")], {"scope": "halftime"}, {})
+        )
+    assert mock.await_count == 0
     assert len(out) == 1 and "Not Enough Plays" in out[0]["heading"]
+    assert out[0]["body"] == THIN_PLAYS_MESSAGE
+
+
+def test_block_message_constant_covers_empty_and_thin():
+    assert MIN_PLAYS_FOR_LIVE_REPORT == 3
+    assert live_report_block_message(0) == EMPTY_SCOPE_MESSAGE
+    assert live_report_block_message(1) == THIN_PLAYS_MESSAGE
+    assert live_report_block_message(2) == THIN_PLAYS_MESSAGE
+    assert live_report_block_message(3) is None
+
+
+def test_empty_scope_section_uses_zero_play_sentence():
+    mock = AsyncMock(side_effect=AssertionError("AI writer called"))
+    with patch("backend.services.live_game_report.client.messages.create", mock):
+        out = asyncio.run(generate_live_game_sections("football", [], {"scope": "full"}, {}))
+    assert mock.await_count == 0
+    assert out[0]["body"] == EMPTY_SCOPE_MESSAGE
+
+
+def _sparse(n, sport="football"):
+    """n plays with the buckets a one-play log actually produces: None yards,
+    no opponent fields, empty extra lists."""
+    rows = []
+    for i in range(n):
+        if sport == "basketball":
+            rows.append(ev(
+                side="offense" if i % 2 == 0 else "defense",
+                play_type=None, yards_gained=None, player=None,
+                extra_data={"half": 1} if i == 0 else {"half": 1, "shot_zone": None, "opponent": None},
+            ))
+        else:
+            rows.append(ev(
+                side="offense" if i == 0 else "defense",
+                play_type="Run" if i == 0 else None,
+                down=1 if i == 0 else None,
+                distance=10 if i == 0 else None,
+                yards_gained=None, formation=None, result=None, player=None,
+                extra_data={"quarter": 1, "possession": "us"} if i == 0 else {"quarter": 1},
+            ))
+    return rows
+
+
+def test_sparse_one_and_two_plays_stats_charts_and_prompt():
+    # The model is not called here. This is the builder path a thicker report uses,
+    # exercised on the empty buckets a 1-play and 2-play log produces.
+    for sport in ("football", "flag_football", "basketball"):
+        for n in (1, 2):
+            evs = _sparse(n, "basketball" if sport == "basketball" else "football")
+            if sport == "basketball":
+                stats = compute_basketball_stats(evs, {})
+                assert stats["offense"]["points_per_possession"] == 0
+            else:
+                stats = compute_football_stats(evs, {})
+                assert stats["offense"]["yards_per_play"] == 0
+                assert stats["players_opponent"]["targets"] == []
+            chart = build_chart_summary(sport, evs, {})
+            assert isinstance(chart, dict)
+            prompt = build_live_game_prompt(
+                sport, evs, {"scope": "full", "label": "Full Game"}, {},
+            )
+            assert "COMPUTED STATS" in prompt
+            assert "the opponent" in prompt
+            assert "None" not in prompt.split("COMPUTED STATS", 1)[0]
+
+
+def test_scope_gate_counts_only_the_chosen_half():
+    from backend.routers.live_game import _scope_filter
+    from backend.workers.worker_reports import _apply_event_filter
+    plays = [ev(extra_data={"quarter": 1}) for _ in range(2)]
+    plays += [ev(extra_data={"quarter": 3}) for _ in range(5)]
+    flt, label = _scope_filter("football", "this_half", 1)
+    assert label == "1st Half"
+    scoped = _apply_event_filter(plays, flt)
+    assert len(scoped) == 2
+    assert live_report_block_message(len(scoped)) == THIN_PLAYS_MESSAGE
+    assert live_report_block_message(len(plays)) is None

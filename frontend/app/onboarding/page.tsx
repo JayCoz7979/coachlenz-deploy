@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import api from '@/lib/api'
 import { track, getAnonId, getSource } from '@/lib/funnel'
+import { consumeNext } from '@/lib/postAuth'
 
 type Sport = { value: string; label: string }
 type Phase = 'register' | 'email' | 'sport'
@@ -56,7 +57,7 @@ function OnboardingForm() {
     api.get('/onboarding/status').then(s => {
       setChoosable(s.data.choosable_sports || []); setMaxSports(s.data.max_sports || 1); setTier(s.data.tier || 'trial')
       const step = s.data.next_step
-      if (step === 'done') router.push('/dashboard')
+      if (step === 'done') router.push(consumeNext('/dashboard'))
       else if (step === 'verify_email') goEmail()
       else if (step === 'choose_sport') setPhase('sport')
     }).catch(() => {})
@@ -119,7 +120,7 @@ function OnboardingForm() {
     setLoading(true); setError('')
     try {
       await api.post('/onboarding/sports', { sports: picked, student_data_consent: dataConsent })
-      router.push('/dashboard')
+      router.push(consumeNext('/dashboard'))
     } catch (err: any) { setError(err.response?.data?.detail || 'Could not save your sport.') }
     finally { setLoading(false) }
   }

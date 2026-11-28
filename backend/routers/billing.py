@@ -110,6 +110,81 @@ async def create_checkout(body: CheckoutRequest, request: Request, user: User = 
     await db.commit()
     return {"checkout_url": session.url}
 
+# ── $7 one-time Live Tracker unlock ──────────────────────────────────────────
+class LiveTrackerCheckoutRequest(BaseModel):
+    success_url: str
+    cancel_url: str
+
+
+def _allowed_redirect(url: str) -> bool:
+    """Only send the buyer back to one of our own app origins (no open redirect)."""
+    from urllib.parse import urlparse
+    from backend.cors_config import build_allowed_origins
+
+    try:
+        parsed = urlparse(url or "")
+    except ValueError:
+        return False
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return False
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    return origin in build_allowed_origins(settings.APP_URL, settings.ENVIRONMENT)
+
+
+@router.post("/live-tracker/checkout")
+async def live_tracker_checkout(body: LiveTrackerCheckoutRequest, request: Request,
+                                user: User = Depends(get_current_user),
+                                org: Organization = Depends(get_current_org),
+                                db: AsyncSession = Depends(get_db)):
+    """One-time $7 Checkout (mode=payment, quantity 1) for the Live Tracker.
+
+    The price comes ONLY from STRIPE_PRICE_LIVE_TRACKER (a Stripe Price ID); nothing
+    is inlined as price_data. Unset -> 503, fail closed. Access is granted by the
+    webhook after Stripe reports the session paid, never by this endpoint or by the
+    success redirect.
+    """
+    from backend.services.live_tracker import LIVE_TRACKER_KIND, has_live_tracker_access
+
+    price_id = (settings.STRIPE_PRICE_LIVE_TRACKER or "").strip()
+    if not price_id or not (settings.STRIPE_SECRET_KEY or "").strip():
+        raise HTTPException(
+            status_code=503,
+            detail="Live Tracker checkout isn't available yet. Nothing was charged. Please try again later.",
+        )
+    if has_live_tracker_access(org):
+        raise HTTPException(status_code=409, detail="The Live Tracker is already unlocked for your account.")
+    if not (_allowed_redirect(body.success_url) and _allowed_redirect(body.cancel_url)):
+        raise HTTPException(status_code=400, detail="Invalid return URL")
+
+    customer_id = org.stripe_customer_id
+    if not customer_id:
+        customer = stripe.Customer.create(email=user.email, name=org.name, metadata={"org_id": str(org.id)})
+        customer_id = customer.id
+        await db.execute(update(Organization).where(Organization.id == org.id).values(stripe_customer_id=customer_id))
+        await db.commit()
+
+    ip = request.client.host if request.client else None
+    ua = request.headers.get("user-agent")
+    metadata = {"org_id": str(org.id), "user_id": str(user.id), "kind": LIVE_TRACKER_KIND,
+                "client_ip": ip or ""}
+    session = stripe.checkout.Session.create(
+        customer=customer_id,
+        mode="payment",
+        line_items=[{"price": price_id, "quantity": 1}],
+        success_url=body.success_url,
+        cancel_url=body.cancel_url,
+        client_reference_id=str(org.id),
+        metadata=metadata,
+        payment_intent_data={"metadata": metadata},
+    )
+    db.add(PurchaseIPLog(
+        organization_id=org.id, user_id=user.id, ip=ip, user_agent=(ua or "")[:400],
+        tier=LIVE_TRACKER_KIND, stripe_session_id=session.id,
+    ))
+    await db.commit()
+    return {"checkout_url": session.url}
+
+
 @router.post("/portal")
 async def billing_portal(user: User = Depends(get_current_user), org: Organization = Depends(get_current_org)):
     if not org.stripe_customer_id:
@@ -208,7 +283,17 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None),
         await db.rollback()
         return {"received": True, "duplicate": True}
 
-    if et == "checkout.session.completed":
+    if et in ("checkout.session.completed", "checkout.session.async_payment_succeeded") \
+            and (data.get("metadata") or {}).get("kind") == "live_tracker":
+        # $7 Live Tracker unlock. Grant ONLY when Stripe says the session is paid
+        # (a delayed method completes as 'unpaid' and grants on async_payment_succeeded).
+        # grant_live_tracker only writes while the grant is still NULL, so even a
+        # distinct second event can't move it; the marker above stops redeliveries.
+        from backend.services.live_tracker import grant_live_tracker, live_tracker_session_is_paid
+        if live_tracker_session_is_paid(data):
+            await grant_live_tracker(db, data["metadata"]["org_id"], data.get("id"))
+
+    elif et == "checkout.session.completed":
         from backend.services import credits as credit_svc
         md = data.get("metadata", {})
         org_id = md.get("org_id")
