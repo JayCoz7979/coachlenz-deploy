@@ -23,6 +23,7 @@ full-game report is the same, unscoped.
 
 Endpoints (prefix /live):
     POST   /session                 create a live game session (setup + rosters)
+    GET    /access                  has this org unlocked the $7 Live Tracker?
     GET    /sessions                list this org's live game sessions
     GET    /session/{id}            session config + all logged plays (resume/review)
     POST   /plays                   append a batch of logged plays
@@ -54,12 +55,17 @@ from backend.services.legal import assert_student_consent
 from backend.services.live_game_report import live_report_block_message
 from backend.workers.worker_reports import _apply_event_filter
 
-# The Live Game Logger is the permanent FREE tier and is INTENTIONALLY UNGATED: any
-# coach, on any plan (trial, expired, or never-paid 'free'), can chart a game and
-# generate its report at no cost. It is cheap to serve (manual charting plus one
-# report-writing LLM call, not the paid AI film-detection path), which makes it the
-# zero-cost acquisition wedge. Do NOT add trial/subscription/usage gates to these
-# routes. AI film analysis (routers/ai_detect.py) is the paid upgrade; gate there.
+from backend.services.live_tracker import (
+    assert_live_tracker_access, has_live_tracker_access, access_reason,
+)
+
+# The Live Game Logger + Halftime Sheet is the $7 one-time "Live Tracker" unlock
+# (backend/services/live_tracker.py). It is GATED SERVER-SIDE: starting a session,
+# resuming one, logging/editing plays, and generating a report all 403 for an org
+# that has not unlocked it. The frontend paywall is a convenience, never the only
+# check. Consent (student data) and sport lock still apply on top; the verified-
+# email requirement is unchanged. AI film analysis (routers/ai_detect.py) is a
+# separate paid product and is not touched here.
 router = APIRouter(prefix="/live", tags=["live-game"])
 
 # The three sports the live logger supports (mirrors the flag football / football /
@@ -104,6 +110,12 @@ _EXTRA_KEYS = (
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
+async def live_tracker_org(org: Organization = Depends(get_current_org)) -> Organization:
+    """Dependency: the caller's org, 403 unless it has unlocked the Live Tracker."""
+    assert_live_tracker_access(org)
+    return org
+
+
 async def _load_session(db: AsyncSession, session_id: str, org_id) -> Game:
     result = await db.execute(
         select(Game).where(
@@ -282,13 +294,40 @@ def _scope_filter(sport: str, scope: str, period: Optional[int]):
     return None, "Full Game"
 
 
+# Fields that only make sense for ONE unit. A play logged for another unit must not
+# carry them (the logger once leaked the previous play's opp_formation/opp_play_type
+# into a Special Teams play, which showed as "Run · Returned"). The UI now resets
+# them on a unit switch; this is the server-side backstop.
+_OUR_OFFENSE_KEYS = frozenset((
+    "passer_jersey", "ball_carrier_jersey", "target_jersey", "run_category", "run_gap",
+    "run_gap_label", "route", "target_area", "rush_lane", "rush_type", "pass_result",
+    "custom_route",
+    "ball_handler_jersey", "ball_entry", "primary_action", "shooter_jersey", "shot_zone",
+    "shot_result", "turnover_type", "turnover_jersey", "offensive_rebound", "second_chance",
+    "foul_drawn_jersey", "possession_result",
+))
+_ST_KEYS = frozenset(("st_unit", "kicker_jersey", "returner_jersey", "st_result", "st_yards"))
+
+
+def _foreign_keys_for(side: str, key: str) -> bool:
+    """True when `key` belongs to a different unit than `side`."""
+    is_opp = key.startswith("opp_")
+    if side == "offense":
+        return is_opp or key in _ST_KEYS
+    if side == "defense":
+        return key in _ST_KEYS or key in _OUR_OFFENSE_KEYS
+    if side == "special_teams":
+        return is_opp or key in _OUR_OFFENSE_KEYS
+    return False
+
+
 def _play_to_event(org_id, game_id, p: PlayEntry) -> Event:
     side = _side_from_possession(p.possession, p.side, p.play_type)
     extra: Dict[str, Any] = {}
     # Anything in _EXTRA_KEYS (incl. any extra="allow" sport tags) rides in extra_data.
     data = p.model_dump(exclude_none=True)
     for k in _EXTRA_KEYS:
-        if k in data and data[k] is not None:
+        if k in data and data[k] is not None and not _foreign_keys_for(side, k):
             extra[k] = data[k]
     # possession is always useful for the review view even if 'us'
     extra.setdefault("possession", (p.possession or "us"))
@@ -343,12 +382,27 @@ def _event_to_play(e: Event) -> Dict[str, Any]:
     }
 
 
+# ── access ───────────────────────────────────────────────────────────────────
+@router.get("/access")
+async def live_access(org: Organization = Depends(get_current_org)):
+    """Whether this org has unlocked the Live Tracker. Read-only; the UI uses it to
+    show the logger or the $7 unlock. The real enforcement is on every route below."""
+    from backend.config import settings
+    return {
+        "has_access": has_live_tracker_access(org),
+        "reason": access_reason(org),
+        "purchased_at": org.live_tracker_purchased_at.isoformat() if getattr(org, "live_tracker_purchased_at", None) else None,
+        "checkout_available": bool((settings.STRIPE_PRICE_LIVE_TRACKER or "").strip()
+                                   and (settings.STRIPE_SECRET_KEY or "").strip()),
+    }
+
+
 # ── session intake ───────────────────────────────────────────────────────────
 @router.post("/session")
 async def create_session(
     body: SessionCreate,
     user: User = Depends(get_current_user),
-    org: Organization = Depends(get_current_org),
+    org: Organization = Depends(live_tracker_org),
     db: AsyncSession = Depends(get_db),
 ):
     sport = (body.sport or "").lower()
@@ -458,6 +512,7 @@ async def list_sessions(
 async def get_session(
     session_id: str,
     user: User = Depends(get_current_user),
+    _org: Organization = Depends(live_tracker_org),
     db: AsyncSession = Depends(get_db),
 ):
     game = await _load_session(db, session_id, user.organization_id)
@@ -482,6 +537,7 @@ async def get_session(
 async def add_plays(
     body: PlaysBatch,
     user: User = Depends(get_current_user),
+    _org: Organization = Depends(live_tracker_org),
     db: AsyncSession = Depends(get_db),
 ):
     game = await _load_session(db, body.session_id, user.organization_id)
@@ -547,6 +603,7 @@ async def edit_play(
     event_id: str,
     body: PlayEdit,
     user: User = Depends(get_current_user),
+    _org: Organization = Depends(live_tracker_org),
     db: AsyncSession = Depends(get_db),
 ):
     ev = await _load_play(db, event_id, user.organization_id)
@@ -577,6 +634,7 @@ async def edit_play(
 async def delete_play(
     event_id: str,
     user: User = Depends(get_current_user),
+    _org: Organization = Depends(live_tracker_org),
     db: AsyncSession = Depends(get_db),
 ):
     ev = await _load_play(db, event_id, user.organization_id)
@@ -590,6 +648,7 @@ async def flag_play(
     event_id: str,
     body: FlagRequest,
     user: User = Depends(get_current_user),
+    _org: Organization = Depends(live_tracker_org),
     db: AsyncSession = Depends(get_db),
 ):
     """Flag/unflag a play as a Coaching Point. is_highlight is what the report's
@@ -607,7 +666,7 @@ async def flag_play(
 async def generate_report(
     body: ReportRequest,
     user: User = Depends(get_current_user),
-    org: Organization = Depends(get_current_org),
+    org: Organization = Depends(live_tracker_org),
     db: AsyncSession = Depends(get_db),
 ):
     game = await _load_session(db, body.session_id, user.organization_id)

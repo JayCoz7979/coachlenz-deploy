@@ -149,6 +149,15 @@ class Settings(BaseSettings):
     STRIPE_PRICE_COACH_ANNUAL: str = ""
     STRIPE_PRICE_ATHLETIC_DEPT_ANNUAL: str = ""
     STRIPE_PRICE_DISTRICT_ANNUAL: str = ""
+    # $7 USD one-time Live Tracker unlock (Live Game Logger + Halftime Sheet). The
+    # Stripe Price ID (price_...) of a one-time price created in the Stripe dashboard.
+    # Empty = checkout fails closed with a clear 503; nothing is inlined as price_data.
+    STRIPE_PRICE_LIVE_TRACKER: str = ""
+    # Optional grandfathering for the Live Tracker gate. An ISO date (YYYY-MM-DD):
+    # orgs CREATED BEFORE that date can use the logger without the $7 unlock. Empty
+    # (the default) = OFF, nobody is grandfathered. This is a data decision for the
+    # owner, never on by default.
+    LIVE_TRACKER_GRANDFATHER_BEFORE: str = ""
 
     # Resend
     RESEND_API_KEY: str = ""

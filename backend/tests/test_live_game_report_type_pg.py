@@ -92,10 +92,13 @@ async def _constraint(conn) -> str:
     ) or ""
 
 
-async def _seed(conn, slug: str, plays: int, quarter: int = 1, yards=4):
+async def _seed(conn, slug: str, plays: int, quarter: int = 1, yards=4, paid: bool = True):
+    # The logger is the $7 Live Tracker unlock (migration 066). Report-path tests
+    # seed a paid org; the gate tests below seed paid=False explicitly.
     org = await conn.fetchval(
-        "INSERT INTO organizations (name, slug) VALUES ($1, $2) RETURNING id",
-        "Logger Org", slug,
+        "INSERT INTO organizations (name, slug, live_tracker_purchased_at) "
+        "VALUES ($1, $2, CASE WHEN $3 THEN now() END) RETURNING id",
+        "Logger Org", slug, paid,
     )
     user = await conn.fetchval(
         """INSERT INTO users (organization_id, name, email, hashed_password, role)
@@ -123,19 +126,22 @@ def _token(user, org) -> str:
 
 
 async def _post_report(session_id, token, scope, period=None):
-    import httpx
-    from backend.main import app
-
     body = {"session_id": str(session_id), "scope": scope}
     if period is not None:
         body["period"] = period
+    return await _api("POST", "/live/report", token, json=body)
+
+
+async def _api(method, path, token=None, **kw):
+    import httpx
+    from backend.main import app
+
+    headers = dict(kw.pop("headers", {}) or {})
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        return await client.post(
-            "/live/report",
-            json=body,
-            headers={"Authorization": f"Bearer {token}"},
-        )
+        return await client.request(method, path, headers=headers, **kw)
 
 
 def _sections(value):
@@ -461,3 +467,173 @@ async def test_worker_one_and_two_plays_skip_the_ai_writer(pg, plays):
     assert "Not Enough Plays" in sections[0]["heading"]
     assert stored["generated_at"] is not None
     assert stored["error_reason"] is None
+
+
+# ── Halftime Sheet scope on a database that has the check constraint ────────
+async def _seed_plays(conn, org, game, quarters):
+    for q in quarters:
+        await conn.execute(
+            """INSERT INTO events
+               (organization_id, game_id, event_type, side, play_type, yards_gained, extra_data)
+               VALUES ($1, $2, 'play', 'offense', 'Run', 4, $3::jsonb)""",
+            org, game, json.dumps({"quarter": q, "possession": "us"}),
+        )
+
+
+@pytest.mark.integration
+@needs_pg
+async def test_halftime_scope_queues_live_game_report_from_first_half_plays(pg):
+    await _apply(pg, include_065=True)
+    org, user, game = await _seed(pg, "half3", plays=0)
+    await _seed_plays(pg, org, game, [1, 1, 2, 3, 3])
+    resp = await _post_report(game, _token(user, org), "halftime", period=3)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["scope"] == "halftime" and body["plays"] == 3    # Q3 plays excluded
+    row = await pg.fetchrow(
+        "SELECT report_type, title, params FROM tendency_reports WHERE organization_id = $1", org)
+    assert row["report_type"] == "live_game"
+    params = row["params"] if isinstance(row["params"], dict) else json.loads(row["params"])
+    assert params["scope"] == "halftime" and params["event_filter"] == {"max_quarter": 2}
+    assert row["title"].startswith("Halftime Report")
+
+
+@pytest.mark.integration
+@needs_pg
+async def test_halftime_scope_with_only_second_half_plays_is_422_and_writes_nothing(pg):
+    from backend.services.live_game_report import EMPTY_SCOPE_MESSAGE
+
+    await _apply(pg, include_065=True)
+    org, user, game = await _seed(pg, "half0", plays=4, quarter=3)
+    resp = await _post_report(game, _token(user, org), "halftime", period=3)
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"] == EMPTY_SCOPE_MESSAGE
+    assert await pg.fetchval("SELECT count(*) FROM tendency_reports WHERE organization_id = $1", org) == 0
+    assert await pg.fetchval("SELECT count(*) FROM jobs WHERE organization_id = $1", org) == 0
+
+
+# ── $7 Live Tracker: real gate + real webhook grant on Postgres ──────────────
+def _signed_event(event_type, obj, event_id):
+    import hashlib
+    import hmac
+    import time
+    from backend.config import settings
+
+    body = json.dumps({"id": event_id, "object": "event", "type": event_type, "data": {"object": obj}})
+    ts = int(time.time())
+    sig = hmac.new(settings.STRIPE_WEBHOOK_SECRET.encode(), f"{ts}.{body}".encode(), hashlib.sha256).hexdigest()
+    return body, f"t={ts},v1={sig}"
+
+
+def _lt_session(org, payment_status="paid", sid="cs_test_pg"):
+    return {"id": sid, "object": "checkout.session", "mode": "payment",
+            "payment_status": payment_status, "customer": "cus_pg",
+            "metadata": {"org_id": str(org), "kind": "live_tracker"}}
+
+
+async def _webhook(event_type, obj, event_id):
+    body, header = _signed_event(event_type, obj, event_id)
+    return await _api("POST", "/billing/webhook", content=body,
+                      headers={"stripe-signature": header, "content-type": "application/json"})
+
+
+async def _consent(conn, org, user):
+    from backend.services.legal import DOCUMENT_VERSIONS
+    await conn.execute(
+        "INSERT INTO legal_acceptances (organization_id, user_id, document, version) VALUES ($1, $2, 'student_data', $3)",
+        org, user, DOCUMENT_VERSIONS["student_data"],
+    )
+
+
+SESSION_BODY = {"sport": "football", "team_name": "Us", "opponent": "Rivals"}
+
+
+@pytest.mark.integration
+@needs_pg
+async def test_unpaid_org_cannot_start_or_resume_a_live_session(pg):
+    await _apply(pg, include_065=True)
+    org, user, game = await _seed(pg, "unpaid", plays=4, paid=False)
+    await _consent(pg, org, user)
+    token = _token(user, org)
+    origin = "https://app.coachlenz.com"
+
+    r = await _api("POST", "/live/session", token, json=SESSION_BODY, headers={"Origin": origin})
+    assert r.status_code == 403, r.text
+    assert "$7 one-time" in r.json()["detail"]
+    assert r.headers.get("x-coachlenz-locked") == "live_tracker"
+    assert r.headers.get("access-control-allow-origin") == origin          # JSON + CORS
+    for method, path, kw in (
+        ("GET", f"/live/session/{game}", {}),
+        ("POST", "/live/plays", {"json": {"session_id": str(game), "plays": [{"possession": "us"}]}}),
+        ("POST", "/live/report", {"json": {"session_id": str(game), "scope": "halftime"}}),
+    ):
+        r = await _api(method, path, token, **kw)
+        assert r.status_code == 403, (path, r.text)
+    assert await pg.fetchval("SELECT count(*) FROM games WHERE organization_id = $1", org) == 1
+    assert await pg.fetchval("SELECT count(*) FROM tendency_reports WHERE organization_id = $1", org) == 0
+
+    access = await _api("GET", "/live/access", token)
+    assert access.status_code == 200 and access.json()["has_access"] is False
+
+
+@pytest.mark.integration
+@needs_pg
+async def test_paid_webhook_grants_once_then_the_coach_can_log(pg):
+    await _apply(pg, include_065=True)
+    org, user, _game = await _seed(pg, "buyer", plays=0, paid=False)
+    await _consent(pg, org, user)
+    token = _token(user, org)
+
+    # A completed-but-unpaid session (delayed method) and an expired one grant nothing.
+    r = await _webhook("checkout.session.completed", _lt_session(org, "unpaid"), "evt_pg_unpaid")
+    assert r.status_code == 200, r.text
+    r = await _webhook("checkout.session.expired", _lt_session(org, "unpaid"), "evt_pg_expired")
+    assert r.status_code == 200, r.text
+    assert await pg.fetchval("SELECT live_tracker_purchased_at FROM organizations WHERE id = $1", org) is None
+    assert (await _api("POST", "/live/session", token, json=SESSION_BODY)).status_code == 403
+
+    # Bad signature: 400, nothing recorded.
+    body, header = _signed_event("checkout.session.completed", _lt_session(org), "evt_pg_forged")
+    r = await _api("POST", "/billing/webhook", content=body,
+                   headers={"stripe-signature": header.replace("v1=", "v1=00"), "content-type": "application/json"})
+    assert r.status_code == 400
+    assert await pg.fetchval("SELECT live_tracker_purchased_at FROM organizations WHERE id = $1", org) is None
+
+    # Paid: granted.
+    r = await _webhook("checkout.session.completed", _lt_session(org), "evt_pg_paid")
+    assert r.status_code == 200 and r.json() == {"received": True}
+    first = await pg.fetchrow(
+        "SELECT live_tracker_purchased_at, live_tracker_checkout_session_id, subscription_tier, is_trial "
+        "FROM organizations WHERE id = $1", org)
+    assert first["live_tracker_purchased_at"] is not None
+    assert first["live_tracker_checkout_session_id"] == "cs_test_pg"
+
+    # Redelivery of the same event, and a second paid event, change nothing.
+    r = await _webhook("checkout.session.completed", _lt_session(org), "evt_pg_paid")
+    assert r.json() == {"received": True, "duplicate": True}
+    r = await _webhook("checkout.session.async_payment_succeeded", _lt_session(org, sid="cs_test_pg_2"), "evt_pg_paid_2")
+    assert r.status_code == 200
+    again = await pg.fetchrow(
+        "SELECT live_tracker_purchased_at, live_tracker_checkout_session_id, subscription_tier, is_trial "
+        "FROM organizations WHERE id = $1", org)
+    assert again["live_tracker_purchased_at"] == first["live_tracker_purchased_at"]
+    assert again["live_tracker_checkout_session_id"] == "cs_test_pg"
+    # The $7 unlock is not a subscription and touches no plan fields.
+    assert again["subscription_tier"] == first["subscription_tier"]
+    assert again["is_trial"] == first["is_trial"]
+
+    # Paid coach: start, log, resume, undo, report.
+    r = await _api("POST", "/live/session", token, json=SESSION_BODY)
+    assert r.status_code == 200, r.text
+    sid = r.json()["session_id"]
+    plays = [{"possession": "us", "quarter": 1, "play_type": "Run", "yards_gained": 4, "client_uid": f"u{i}"}
+             for i in range(4)]
+    r = await _api("POST", "/live/plays", token, json={"session_id": sid, "plays": plays})
+    assert r.status_code == 200 and r.json()["plays_written"] == 4
+    r = await _api("GET", f"/live/session/{sid}", token)
+    assert r.status_code == 200 and len(r.json()["plays"]) == 4
+    last = r.json()["plays"][-1]["event_id"]
+    assert (await _api("DELETE", f"/live/play/{last}", token)).status_code == 200
+    r = await _post_report(sid, token, "halftime", period=2)
+    assert r.status_code == 200, r.text
+    assert r.json()["plays"] == 3
