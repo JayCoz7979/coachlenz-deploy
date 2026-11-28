@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import api from '@/lib/api'
+import { nextFromLocation } from '@/lib/nextPath'
 // Static import so the transparent lockup is emitted to /_next/static/media
 // (public/ is not bundled with output:'standalone').
 import logo from '../../public/coachlenz-logo.png'
@@ -22,7 +23,8 @@ export default function LoginPage() {
       const res = await api.post('/auth/login', { email, password })
       localStorage.setItem('access_token', res.data.access_token)
       localStorage.setItem('refresh_token', res.data.refresh_token)
-      router.push('/dashboard')
+      // Return to where the coach was headed (e.g. the $7 Live Tracker checkout).
+      router.push(nextFromLocation() || '/dashboard')
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Login failed')
     } finally {
@@ -53,7 +55,16 @@ export default function LoginPage() {
           </div>
           <button type="submit" disabled={loading} className="btn-primary w-full">{loading ? 'Signing in...' : 'Sign In'}</button>
           <p className="text-center text-sm text-gray-400">
-            No account? <Link href="/onboarding" className="text-brand-400 hover:underline">Start free trial</Link>
+            No account?{' '}
+            <a
+              href="/onboarding"
+              onClick={e => {
+                // Carry ?next= through signup so a Live Tracker buyer lands back at checkout.
+                const next = nextFromLocation()
+                if (next) { e.preventDefault(); router.push(`/onboarding?next=${encodeURIComponent(next)}`) }
+              }}
+              className="text-brand-400 hover:underline"
+            >Create an account</a>
           </p>
         </form>
         <p className="text-center text-xs text-gray-600 mt-6">

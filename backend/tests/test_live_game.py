@@ -278,3 +278,10 @@ def test_score_rides_on_each_play_for_the_momentum_section():
     p = PlayEntry(possession="us", play_type="Run", result="Touchdown", score_us=6, score_them=0)
     x = _play_to_event(ORG, GAME, p).extra_data
     assert x["score_us"] == 6 and x["score_them"] == 0
+
+
+def test_defense_drive_outcome_is_persisted():
+    # opp_outcome ("Touchdown Allowed", "Forced Punt") used to be dropped on save, so
+    # it vanished on reload and could not feed the score.
+    p = PlayEntry(possession="them", opp_play_type="Pass", opp_outcome="Touchdown Allowed")
+    assert _play_to_event(ORG, GAME, p).extra_data["opp_outcome"] == "Touchdown Allowed"

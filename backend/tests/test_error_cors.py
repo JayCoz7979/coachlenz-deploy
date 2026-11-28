@@ -58,3 +58,10 @@ def test_real_app_installs_error_middleware_inside_cors():
     classes = [m.cls for m in app.user_middleware]   # index 0 = outermost
     assert JSONServerErrorMiddleware in classes
     assert classes.index(CORSMiddleware) < classes.index(JSONServerErrorMiddleware)
+
+
+def test_real_app_exposes_the_live_tracker_paywall_header():
+    from backend.main import app
+
+    cors = next(m for m in app.user_middleware if m.cls is CORSMiddleware)
+    assert "X-CoachLenz-Locked" in cors.kwargs.get("expose_headers", [])

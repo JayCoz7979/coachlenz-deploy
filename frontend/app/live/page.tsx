@@ -10,6 +10,7 @@ import Link from 'next/link'
 import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
 import { SPORT_META } from '@/lib/sports'
+import { getLiveAccess } from '@/lib/liveTracker'
 import {
   TERM_SYSTEMS, GAME_TYPES, WEATHER, SURFACES, LEAGUE_FORMATS, type Sport, type TermSystem,
 } from '@/components/live/fields'
@@ -101,12 +102,15 @@ export default function LiveSetupPage() {
   // Set when the backend requires the one-time student-data (COPPA/FERPA)
   // attestation before a session can be created. `retry` re-runs start().
   const [consent, setConsent] = useState<{ attestation: string } | null>(null)
+  // $7 Live Tracker unlock. null = still checking. The server enforces this on every
+  // /live route; this only decides which screen to show.
+  const [hasAccess, setHasAccess] = useState<boolean | null>(null)
 
   useEffect(() => { fetchMe() }, [])
   useEffect(() => {
     if (isLoading) return
     if (!user) { router.push('/login'); return }
-    // The free Live Game Logger requires a CONFIRMED email: that verified address is
+    // The Live Game Logger requires a CONFIRMED email: that verified address is
     // the lead we capture. An unverified coach is sent back to finish onboarding
     // (which starts on the email-verify step). Only redirect on an explicit false, so a
     // cached /me response that predates the field never locks anyone out.
@@ -114,6 +118,7 @@ export default function LiveSetupPage() {
   }, [isLoading, user, router])
   useEffect(() => {
     if (!user) return
+    getLiveAccess().then(a => setHasAccess(!!a.has_access)).catch(() => setHasAccess(true))
     api.get('/live/sessions').then(r => setSessions(r.data.sessions || [])).catch(() => {})
     // Restrict the logger to the sport the account chose at sign-up: default the
     // picker to it and limit the chips to it.
@@ -148,6 +153,8 @@ export default function LiveSetupPage() {
       // A student-consent 403 opens the one-time attestation panel (not a dead end).
       if (e?.response?.status === 403 && d && typeof d === 'object' && d.code === 'student_consent_required') {
         setConsent({ attestation: d.attestation })
+      } else if (e?.response?.status === 403 && (e?.response?.headers?.['x-coachlenz-locked'] === 'live_tracker' || (typeof d === 'string' && d.includes('/live-tracker')))) {
+        setHasAccess(false)
       } else {
         setError(typeof d === 'string' ? d : (d?.message || 'Could not start the game session.'))
       }
@@ -169,6 +176,32 @@ export default function LiveSetupPage() {
 
   if (isLoading || !user) return null
 
+  if (hasAccess === false) {
+    return (
+      <div style={{ minHeight: '100vh', background: 'var(--bg)', color: 'var(--text)' }}>
+        <div style={wrap}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+            <Zap size={22} style={{ color: 'var(--gold)' }} />
+            <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800 }}>Live Tracker</h1>
+          </div>
+          <div style={{ ...card, border: '1px solid var(--gold)' }}>
+            <div style={{ fontWeight: 800, fontSize: 17, marginBottom: 6 }}>Unlock the Live Tracker for $7</div>
+            <p style={{ color: 'var(--text2)', fontSize: 14, lineHeight: 1.5, margin: '0 0 14px' }}>
+              Chart the game live and get the Halftime Sheet at the break. $7 USD, one time.
+            </p>
+            <Link href="/live-tracker" style={{
+              width: '100%', minHeight: 52, borderRadius: 10, background: 'var(--gold)', color: '#1c1c1c',
+              fontSize: 16, fontWeight: 800, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none',
+            }}>See the $7 Live Tracker</Link>
+          </div>
+          <div style={{ marginTop: 18, textAlign: 'center' }}>
+            <Link href="/dashboard" style={{ fontSize: 14, color: 'var(--text3)', display: 'inline-flex', alignItems: 'center', minHeight: 44, padding: '0 12px' }}>← back to dashboard</Link>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg)', color: 'var(--text)' }}>
       <div style={wrap}>
@@ -177,7 +210,7 @@ export default function LiveSetupPage() {
           <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800 }}>Live Game Logger</h1>
         </div>
         <p style={{ color: 'var(--text3)', fontSize: 13, marginBottom: 18 }}>
-          Chart every play from the sideline. Generate a halftime breakdown in one tap.
+          Chart every play from the sideline. Get the Halftime Sheet at the break.
         </p>
 
         {error && <div style={{ background: 'var(--redl)', color: 'var(--red)', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 13 }}>{error}</div>}
@@ -275,7 +308,7 @@ export default function LiveSetupPage() {
         </button>
 
         <div style={{ marginTop: 18, textAlign: 'center' }}>
-          <Link href="/dashboard" style={{ fontSize: 13, color: 'var(--text3)' }}>← back to dashboard</Link>
+          <Link href="/dashboard" style={{ fontSize: 14, color: 'var(--text3)', display: 'inline-flex', alignItems: 'center', minHeight: 44, padding: '0 12px' }}>← back to dashboard</Link>
         </div>
       </div>
     </div>

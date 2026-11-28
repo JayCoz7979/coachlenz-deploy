@@ -92,6 +92,9 @@ _EXTRA_KEYS = (
     "opp_formation", "opp_play_type", "opp_ball_carrier", "opp_run_concept",
     "opp_target", "opp_passer_jersey", "opp_run_gap", "opp_route",
     "stop_maker_jersey", "pass_rush",
+    # our defense's drive outcome ("Touchdown Allowed", "Forced Punt", ...); was
+    # silently dropped before, so it vanished on reload
+    "opp_outcome",
     # special teams
     "st_unit", "kicker_jersey", "returner_jersey", "st_result", "st_yards",
     # basketball offense

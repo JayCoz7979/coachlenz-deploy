@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import api from '@/lib/api'
 import { track, getAnonId, getSource } from '@/lib/funnel'
+import { safeNext } from '@/lib/nextPath'
 
 type Sport = { value: string; label: string }
 type Phase = 'register' | 'email' | 'sport'
@@ -12,6 +13,9 @@ type Phase = 'register' | 'email' | 'sport'
 function OnboardingForm() {
   const router = useRouter()
   const params = useSearchParams()
+  // Where to go once onboarding is done (e.g. back to the $7 Live Tracker checkout).
+  const next = safeNext(params.get('next'))
+  const doneTo = next || '/dashboard'
   const [phase, setPhase] = useState<Phase>('register')
   const [form, setForm] = useState({ name: '', email: '', password: '', org_name: '', referral_code: params.get('ref') || '' })
   const [error, setError] = useState('')
@@ -56,7 +60,7 @@ function OnboardingForm() {
     api.get('/onboarding/status').then(s => {
       setChoosable(s.data.choosable_sports || []); setMaxSports(s.data.max_sports || 1); setTier(s.data.tier || 'trial')
       const step = s.data.next_step
-      if (step === 'done') router.push('/dashboard')
+      if (step === 'done') router.push(doneTo)
       else if (step === 'verify_email') goEmail()
       else if (step === 'choose_sport') setPhase('sport')
     }).catch(() => {})
@@ -119,12 +123,13 @@ function OnboardingForm() {
     setLoading(true); setError('')
     try {
       await api.post('/onboarding/sports', { sports: picked, student_data_consent: dataConsent })
-      router.push('/dashboard')
+      router.push(doneTo)
     } catch (err: any) { setError(err.response?.data?.detail || 'Could not save your sport.') }
     finally { setLoading(false) }
   }
 
-  const heading = phase === 'register' ? 'Start your 14-day free trial'
+  const heading = phase === 'register'
+    ? (next?.startsWith('/live-tracker') ? 'Create your account to unlock the Live Tracker' : 'Start your 14-day free trial')
     : phase === 'email' ? 'Verify your email'
     : 'Choose your sport'
 
@@ -167,7 +172,7 @@ function OnboardingForm() {
               <span>Send me CoachLenz coaching tips and product updates. You can unsubscribe anytime.</span>
             </label>
             <button type="submit" disabled={loading || !acceptedTerms} className="btn-primary w-full">{loading ? 'Creating account...' : 'Start Free Trial'}</button>
-            <p className="text-center text-sm text-gray-400">Already have an account? <Link href="/login" className="text-brand-400 hover:underline">Sign in</Link></p>
+            <p className="text-center text-sm text-gray-400">Already have an account? <Link href={next ? `/login?next=${encodeURIComponent(next)}` : '/login'} className="text-brand-400 hover:underline">Sign in</Link></p>
           </form>
         )}
 

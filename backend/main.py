@@ -55,6 +55,8 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Lets the browser app read the Live Tracker paywall marker on a 403.
+    expose_headers=["X-CoachLenz-Locked"],
 )
 
 
