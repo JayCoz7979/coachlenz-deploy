@@ -9,6 +9,7 @@ import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
+import { reportFailureMessage } from '@/lib/reportError'
 import { newUid, loadPlays, savePlays, loadCfg, saveCfg } from '@/components/live/offline'
 import { SPORT_META } from '@/lib/sports'
 import {
@@ -19,7 +20,12 @@ import {
   parseTermSystems, type TermSystem,
 } from '@/components/live/fields'
 import { TapGroup, GapSelector, RushLaneSelector, RouteTree, TargetAreaGrid, ShotZoneCourt } from '@/components/live/Selectors'
-import { Zap, Loader2, Undo2, FileBarChart, ClipboardList, Flag, Trash2, X, ChevronDown } from 'lucide-react'
+import {
+  normalizeServerPlay, playSummary, stripForMode, clearAfterLog, resolvePoints, autoPoints,
+  needsScoreEntry, applyPoints, lastScore, TAP_MIN, type Mode,
+} from '@/components/live/logic'
+import Paywall, { isPaywallError, paywallMessage } from '@/components/live/Paywall'
+import { Zap, Loader2, Undo2, FileBarChart, ClipboardList, Flag, Trash2, X, ChevronDown, Timer } from 'lucide-react'
 
 type Cur = Record<string, any>
 type Play = { event_id?: string; client_uid?: string; synced?: boolean; _pending?: boolean; [k: string]: any }
@@ -95,6 +101,11 @@ export default function LoggerPage() {
   const [editing, setEditing] = useState<string | null>(null)
   const [reportScope, setReportScope] = useState('full')
   const [online, setOnline] = useState(true)
+  // $7 Live Tracker access from the server (null = unknown). When false the game is
+  // read-only: past plays stay viewable, logging/reports are refused server-side.
+  const [access, setAccess] = useState<boolean | null>(null)
+  const [paywallMsg, setPaywallMsg] = useState('')
+  const readOnly = access === false
 
   const playsRef = useRef<Play[]>([])
   const syncing = useRef(false)
@@ -120,8 +131,10 @@ export default function LoggerPage() {
         ? { ...p, synced: true, _failed: false, event_id: p.event_id || uidToEvent[p.client_uid!] }
         : p))
       setOnline(true)
-    } catch {
-      setOnline(false)   // stays queued + persisted; retried on reconnect / interval
+    } catch (e: any) {
+      // Unpaid: the server refuses every write with the $7 paywall. Not an outage.
+      if (isPaywallError(e)) { setAccess(false); setPaywallMsg(paywallMessage(e)) }
+      else setOnline(false)   // stays queued + persisted; retried on reconnect / interval
     } finally { syncing.current = false }
   }, [sessionId])
 
@@ -135,16 +148,28 @@ export default function LoggerPage() {
     const localPlays = loadPlays(sessionId)
     const localCfg = loadCfg(sessionId)
     if (localCfg) setConfig(localCfg)
-    if (localPlays.length) setPlays(localPlays)
+    if (localPlays.length) {
+      setPlays(localPlays)
+      const sc = lastScore(localPlays)
+      setScoreUs(String(sc.us)); setScoreThem(String(sc.them))
+    }
     api.get(`/live/session/${sessionId}`).then(r => {
       setConfig(r.data.config); saveCfg(sessionId, r.data.config)
       setOpponent(r.data.opponent || 'Opponent')
-      const server: Play[] = (r.data.plays || []).map((p: any) => ({ ...p, synced: true, client_uid: p.client_uid || p.event_id }))
+      // Flatten each play's `extra` (opp_play_type, st_unit, ...) so the Play Log shows
+      // the same thing after a reload as it did when the play was logged.
+      const server: Play[] = (r.data.plays || []).map((p: any) => normalizeServerPlay(p))
       const serverUids = new Set(server.map(s => s.client_uid))
       const unsynced = (localPlays.length ? localPlays : []).filter(p => !p.synced && p.client_uid && !serverUids.has(p.client_uid))
-      setPlays([...server, ...unsynced])
+      const all = [...server, ...unsynced]
+      setPlays(all)
+      // Restore the score boxes from the last logged play (they reset to 0 on reload).
+      const sc = lastScore(all)
+      setScoreUs(String(sc.us)); setScoreThem(String(sc.them))
+      const a = r.data.access
+      if (a && typeof a.live_tracker === 'boolean') { setAccess(a.live_tracker); setPaywallMsg(paywallMessage(a)) }
       setOnline(true)
-      setTimeout(() => sync(), 0)
+      if (!a || a.live_tracker !== false) setTimeout(() => sync(), 0)
     }).catch(e => {
       // Offline / server error: only hard-fail if we have nothing cached to work from.
       if (localCfg) { setOnline(false) }
@@ -178,7 +203,11 @@ export default function LoggerPage() {
   const set = (k: string, v: any) => setCur(c => ({ ...c, [k]: v }))
   const roster = (opp: boolean) => (opp ? config?.opponent_roster : config?.our_roster) || []
 
-  const buildPlay = (): Play => {
+  // Switching Our Ball / Their Ball / Special Teams starts a clean play: only down,
+  // distance, and ball-on carry over, so no field leaks into the other play type.
+  const switchMode = (m: Mode) => { if (m !== mode) { setMode(m); setCur(c => clearAfterLog(c)) } }
+
+  const buildPlay = (after: { us: number; them: number }): Play => {
     const possession = mode === 'them' ? 'them' : 'us'
     const p: Play = {
       possession,
@@ -186,10 +215,13 @@ export default function LoggerPage() {
       play_number: plays.length + 1,
       time_clock: clock || undefined,
       time_seconds: mmssToSec(clock) ?? undefined,
-      score_us: Number(scoreUs) || 0,
-      score_them: Number(scoreThem) || 0,
+      // The score AFTER this play: what the report's Score & Momentum section reads.
+      score_us: after.us,
+      score_them: after.them,
       is_quick_log: quick || undefined,
-      ...cur,
+      // Only the fields that belong to this play type (fixes Special Teams inheriting
+      // the previous play's opp_formation / opp_play_type).
+      ...stripForMode(cur, mode, isBB, quick),
     }
     if (isBB) { p.half = periodNum; if (lateGame) p.late_game = true }
     else { p.quarter = periodNum }
@@ -211,7 +243,7 @@ export default function LoggerPage() {
 
   const advance = () => {
     // football: auto-advance down/distance/field position from yards (offense only)
-    if (!isFB || mode !== 'us') return
+    if (!isFB || mode !== 'us') { setCur(c => clearAfterLog(c)); return }
     const gained = Number(cur.yards_gained) || 0
     const dist = Number(cur.distance) || 10
     const dn = Number(cur.down) || 1
@@ -227,8 +259,19 @@ export default function LoggerPage() {
   }
 
   const log = useCallback(() => {
-    if (!config) return
-    const play = buildPlay()
+    if (!config || readOnly) return
+    // Keep the score boxes in sync with the play. A clear outcome (Touchdown, made FG,
+    // "3 pts") scores automatically; an ambiguous score asks for the points first.
+    if (needsScoreEntry(sport, mode, cur, quick)) {
+      setError('This play is a score. Pick the points in "Points on this play" (or None), then log it.')
+      return
+    }
+    const pts = resolvePoints(sport, mode, cur, quick)
+    const after = applyPoints(Number(scoreUs) || 0, Number(scoreThem) || 0, pts)
+    const play = buildPlay(after)
+    if (pts) { play.points_scored = pts.points; play.points_team = pts.team }
+    else { delete play.points_scored; delete play.points_team }
+    setScoreUs(String(after.us)); setScoreThem(String(after.them))
     setError(''); setOk('')
     // Add to the local queue immediately (persisted by the effect above); the play is
     // safe even with no connection. Then attempt a flush — offline, it just stays queued.
@@ -237,11 +280,20 @@ export default function LoggerPage() {
     setOk('logged'); setTimeout(() => setOk(''), 1000)
     setTimeout(() => sync(), 0)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config, cur, mode, period, clock, scoreUs, scoreThem, quick, sync, plays.length])
+  }, [config, cur, mode, period, clock, scoreUs, scoreThem, quick, sync, plays.length, readOnly, sport])
+
+  // Take a removed play's points back off the score boxes.
+  const unscore = (p: Play) => {
+    if (typeof p.points_scored !== 'number' || p.points_scored <= 0) return
+    const s = applyPoints(Number(scoreUs) || 0, Number(scoreThem) || 0,
+      { team: p.points_team === 'them' ? 'them' : 'us', points: p.points_scored }, -1)
+    setScoreUs(String(s.us)); setScoreThem(String(s.them))
+  }
 
   const undo = async () => {
     const last = plays[plays.length - 1]
-    if (!last) return
+    if (!last || readOnly) return
+    unscore(last)
     setPlays(ps => ps.slice(0, -1))
     if (last.event_id) { try { await api.delete(`/live/play/${last.event_id}`) } catch {} }
   }
@@ -254,6 +306,7 @@ export default function LoggerPage() {
     if (p.event_id) { try { await api.post(`/live/play/${p.event_id}/flag`, { is_coaching_point: next }) } catch {} }
   }
   async function deletePlay(p: Play) {
+    unscore(p)
     setPlays(ps => ps.filter(x => x.client_uid !== p.client_uid))
     setEditing(null)
     if (p.event_id) { try { await api.delete(`/live/play/${p.event_id}`) } catch {} }
@@ -270,7 +323,8 @@ export default function LoggerPage() {
       const r = await api.post('/live/report', { session_id: sessionId, scope, period: periodNum })
       router.push(`/reports/${r.data.report_id}`)
     } catch (e: any) {
-      setError(e?.response?.data?.detail || 'Could not generate the report.')
+      if (isPaywallError(e)) { setAccess(false); setPaywallMsg(paywallMessage(e)) }
+      else setError(reportFailureMessage(e))
       setBusy(false)
     }
   }
@@ -289,7 +343,7 @@ export default function LoggerPage() {
 
   const periods = isBB ? ['1', '2', 'OT'] : ['1', '2', '3', '4', 'OT']
   const modeBtn = (m: typeof mode, label: string) => (
-    <button onClick={() => setMode(m)} style={{
+    <button onClick={() => switchMode(m)} style={{
       flex: 1, minHeight: 46, borderRadius: 8, fontSize: 14, fontWeight: 800, cursor: 'pointer',
       border: '1px solid ' + (mode === m ? 'var(--gold)' : 'var(--border2)'),
       background: mode === m ? 'rgba(201,168,76,0.18)' : 'var(--bg3)',
@@ -305,9 +359,9 @@ export default function LoggerPage() {
           <Zap size={18} style={{ color: 'var(--gold)' }} />
           <b style={{ fontSize: 15 }}>{config.team_name || 'Us'} vs {opponent}</b>
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
-            <input style={{ ...input, width: 54, minHeight: 36, textAlign: 'center', padding: 6 }} inputMode="numeric" value={scoreUs} onChange={e => setScoreUs(e.target.value)} />
+            <input aria-label="Our score" style={{ ...input, width: 58, minHeight: TAP_MIN, textAlign: 'center', padding: 6, fontWeight: 800 }} inputMode="numeric" value={scoreUs} onChange={e => setScoreUs(e.target.value)} />
             <span style={{ color: 'var(--text3)' }}>–</span>
-            <input style={{ ...input, width: 54, minHeight: 36, textAlign: 'center', padding: 6 }} inputMode="numeric" value={scoreThem} onChange={e => setScoreThem(e.target.value)} />
+            <input aria-label="Their score" style={{ ...input, width: 58, minHeight: TAP_MIN, textAlign: 'center', padding: 6, fontWeight: 800 }} inputMode="numeric" value={scoreThem} onChange={e => setScoreThem(e.target.value)} />
           </div>
         </div>
         <div style={{ maxWidth: 720, margin: '6px auto 0', display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, color: 'var(--text3)' }}>
@@ -320,7 +374,7 @@ export default function LoggerPage() {
             {!online ? `Offline · ${unsynced} queued` : unsynced ? `Saving ${unsynced}…` : 'All saved'}
           </span>
           <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6 }}>
-            <input style={{ ...input, width: 74, minHeight: 32, textAlign: 'center', padding: 5 }} placeholder="MM:SS" inputMode="numeric" value={clock} onChange={e => setClock(formatClockInput(e.target.value))} title="Just type the digits — 1042 becomes 10:42" />
+            <input aria-label="Game clock" style={{ ...input, width: 84, minHeight: TAP_MIN, textAlign: 'center', padding: 5 }} placeholder="MM:SS" inputMode="numeric" value={clock} onChange={e => setClock(formatClockInput(e.target.value))} title="Just type the digits — 1042 becomes 10:42" />
           </span>
         </div>
       </div>
@@ -342,8 +396,11 @@ export default function LoggerPage() {
         </div>
 
         {/* quick log toggle */}
+        {readOnly && <Paywall message={paywallMsg} compact />}
+
+        {!readOnly && (<>
         <button onClick={() => setQuick(q => !q)} style={{
-          width: '100%', minHeight: 42, borderRadius: 8, marginBottom: 12, cursor: 'pointer', fontWeight: 700, fontSize: 13,
+          width: '100%', minHeight: 48, borderRadius: 8, marginBottom: 12, cursor: 'pointer', fontWeight: 700, fontSize: 13,
           border: '1px solid ' + (quick ? 'var(--gold)' : 'var(--border2)'),
           background: quick ? 'rgba(201,168,76,0.14)' : 'var(--bg2)', color: quick ? 'var(--gold)' : 'var(--text2)',
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
@@ -359,6 +416,8 @@ export default function LoggerPage() {
             <FootballPanel mode={mode} sport={sport} isFlag={isFlag} systems={systems} customRoutes={config.custom_routes} cur={cur} set={set} roster={roster} />
           )}
 
+          <ScoreRow sport={sport} mode={mode} cur={cur} set={set} quick={quick} />
+
           <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
             <button onClick={log} style={{
               flex: 1, minHeight: 52, borderRadius: 10, border: 'none', cursor: 'pointer',
@@ -372,10 +431,21 @@ export default function LoggerPage() {
           </div>
         </div>
 
-        {/* REPORTS — scope selector + one Generate button (as of this moment) */}
+        {/* REPORTS: the Halftime Sheet is the first-class action; other scopes below. */}
         <div style={{ ...card, marginBottom: 16 }}>
+          <button onClick={() => report('halftime')} disabled={busy || !plays.length} style={{
+            width: '100%', minHeight: 58, borderRadius: 12, border: 'none', cursor: 'pointer',
+            background: 'var(--gold)', color: '#1c1c1c', fontSize: 17, fontWeight: 800,
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+            opacity: (busy || !plays.length) ? 0.5 : 1,
+          }}>
+            {busy ? <Loader2 size={18} className="animate-spin" /> : <Timer size={18} />} Halftime Sheet
+          </button>
+          <p style={{ fontSize: 11.5, color: 'var(--text3)', margin: '8px 0 14px', textAlign: 'center' }}>
+            {isBB ? 'First-half plays only.' : 'First-half plays only (Q1 and Q2).'}
+          </p>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 10 }}>
-            <span style={lbl}>Report scope</span>
+            <span style={lbl}>Other reports</span>
             <span style={{ fontSize: 11, color: 'var(--text3)' }}>as of {isBB ? `Half ${period}` : (period === 'OT' ? 'OT' : `Q${period}`)}</span>
           </div>
           <div style={{ marginBottom: 12 }}>
@@ -402,13 +472,14 @@ export default function LoggerPage() {
               : 'Everything logged so far.'}
           </p>
         </div>
+        </>)}
 
         {/* REVIEW */}
         {plays.length > 0 && (
           <div style={card}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
               <b style={{ fontSize: 14 }}>Play Log</b>
-              <select style={{ ...input, width: 'auto', minHeight: 34, padding: '4px 8px', marginLeft: 'auto', fontSize: 13 }} value={filterSide} onChange={e => setFilterSide(e.target.value)}>
+              <select aria-label="Filter plays" style={{ ...input, width: 'auto', minHeight: TAP_MIN, padding: '4px 8px', marginLeft: 'auto', fontSize: 13 }} value={filterSide} onChange={e => setFilterSide(e.target.value)}>
                 <option value="all">All</option>
                 <option value="offense">Our Offense</option>
                 <option value="defense">Our Defense</option>
@@ -427,17 +498,17 @@ export default function LoggerPage() {
                 const rowKey = p.client_uid || p.event_id || `t${num}`
                 return (
                   <div key={rowKey}>
-                    <div onClick={() => setEditing(editing === rowKey ? null : rowKey)}
-                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 8, cursor: 'pointer', background: rowColor, border: '1px solid var(--border2)' }}>
+                    <div onClick={() => { if (!readOnly) setEditing(editing === rowKey ? null : rowKey) }}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', minHeight: TAP_MIN, borderRadius: 8, cursor: readOnly ? 'default' : 'pointer', background: rowColor, border: '1px solid var(--border2)' }}>
                       <span style={{ color: 'var(--text3)', fontSize: 12, width: 22 }}>{num}</span>
                       <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text3)', width: 30 }}>{side === 'special_teams' ? 'ST' : side === 'defense' ? 'DEF' : 'OFF'}</span>
                       <span style={{ fontSize: 13, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{playSummary(p, isBB)}</span>
                       {p.is_coaching_point && <Flag size={13} style={{ color: 'var(--gold)' }} />}
                       {/* sync dot: gold = queued (not yet on server), else saved */}
                       {p.synced === false && <span title="queued" style={{ fontSize: 13, color: 'var(--gold)' }}>•</span>}
-                      <ChevronDown size={14} style={{ color: 'var(--text3)' }} />
+                      {!readOnly && <ChevronDown size={14} style={{ color: 'var(--text3)' }} />}
                     </div>
-                    {editing === rowKey && (
+                    {!readOnly && editing === rowKey && (
                       <EditRow p={p} isBB={isBB} onFlag={() => flagPlay(p)} onDelete={() => deletePlay(p)} onSave={(patch: any) => saveEdit(p, patch)} onClose={() => setEditing(null)} />
                     )}
                   </div>
@@ -448,7 +519,7 @@ export default function LoggerPage() {
         )}
 
         <div style={{ textAlign: 'center', marginTop: 10 }}>
-          <Link href="/live" style={{ fontSize: 13, color: 'var(--text3)' }}>← games</Link>
+          <Link href="/live" style={{ fontSize: 13, color: 'var(--text3)', display: 'inline-flex', alignItems: 'center', minHeight: TAP_MIN, padding: '0 12px' }}>← games</Link>
         </div>
       </div>
     </div>
@@ -458,10 +529,14 @@ export default function LoggerPage() {
 // ── situational row (down/distance/field position) ───────────────────────────
 function Situational({ cur, set }: { cur: Cur; set: (k: string, v: any) => void }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 12 }}>
+    <div style={{ marginBottom: 12 }}>
+      {/* Down gets its own row: four buttons squeezed into a third of a 390px screen
+          were ~22px wide, under the 44px sideline tap minimum. */}
       <Field label="Down"><TapGroup options={['1', '2', '3', '4']} value={String(cur.down || '')} onChange={v => set('down', v)} cols={4} /></Field>
-      <Field label="Distance"><input style={input} inputMode="numeric" value={cur.distance || ''} onChange={e => set('distance', e.target.value)} /></Field>
-      <Field label="Ball On"><input style={input} value={cur.field_position || ''} onChange={e => set('field_position', e.target.value)} placeholder="OWN 35" /></Field>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <Field label="Distance"><input style={input} inputMode="numeric" value={cur.distance || ''} onChange={e => set('distance', e.target.value)} /></Field>
+        <Field label="Ball On"><input style={input} value={cur.field_position || ''} onChange={e => set('field_position', e.target.value)} placeholder="OWN 35" /></Field>
+      </div>
     </div>
   )
 }
@@ -616,6 +691,29 @@ function BasketballPanel({ mode, cur, set, lateGame, roster }: any) {
   )
 }
 
+// ── score row: keeps the score boxes (and the report's Score & Momentum) in sync ──
+function ScoreRow({ sport, mode, cur, set, quick }: { sport: string; mode: Mode; cur: Cur; set: (k: string, v: any) => void; quick: boolean }) {
+  const isBB = sport === 'basketball'
+  const resolved = resolvePoints(sport, mode, cur, quick)
+  const auto = autoPoints(sport, mode, cur, quick)
+  const ask = needsScoreEntry(sport, mode, cur, quick)
+  const team = cur.points_team || resolved?.team || (mode === 'them' ? 'them' : 'us')
+  const picked = typeof cur.points_scored === 'number' ? String(cur.points_scored) : (resolved ? String(resolved.points) : '')
+  const values = isBB ? ['0', '1', '2', '3'] : ['0', '1', '2', '3', '6']
+  return (
+    <div style={{ marginTop: 4, marginBottom: 12, padding: ask ? 10 : 0, borderRadius: 10, border: ask ? '1px solid var(--gold)' : 'none' }}>
+      <span style={lbl}>Points on this play{auto && typeof cur.points_scored !== 'number' ? ` (auto: +${auto.points} ${auto.team === 'us' ? 'us' : 'them'})` : ''}</span>
+      {ask && <div style={{ fontSize: 12.5, color: 'var(--gold)', fontWeight: 700, marginBottom: 8 }}>How many points? Pick one to log this score.</div>}
+      <div style={{ marginBottom: 8 }}>
+        <TapGroup options={values.map(v => ({ value: v, label: v === '0' ? 'None' : `+${v}` }))} value={picked}
+          onChange={v => { set('points_scored', Number(v)); if (!cur.points_team) set('points_team', team) }} cols={values.length} />
+      </div>
+      <TapGroup options={[{ value: 'us', label: 'Us' }, { value: 'them', label: 'Them' }]} value={picked && picked !== '0' ? team : ''}
+        onChange={v => { set('points_team', v); if (typeof cur.points_scored !== 'number' && auto) set('points_scored', auto.points) }} cols={2} />
+    </div>
+  )
+}
+
 // ── QUICK LOG panel ──────────────────────────────────────────────────────────
 function QuickPanel({ isBB, cur, set }: any) {
   return (
@@ -651,24 +749,4 @@ function EditRow({ p, isBB, onFlag, onDelete, onSave, onClose }: any) {
       </div>
     </div>
   )
-}
-
-// ── one-line play summary for the review list ────────────────────────────────
-function playSummary(p: Play, isBB: boolean): string {
-  const parts: string[] = []
-  if (!isBB) {
-    if (p.down) parts.push(`${p.down}&${p.distance ?? ''}`)
-    parts.push(p.play_type || p.opp_play_type || p.st_unit || 'play')
-    if (p.route || p.opp_route) parts.push(String(p.route || p.opp_route))
-    if (p.run_category) parts.push(String(p.run_category))
-    if (p.yards_gained !== undefined && p.yards_gained !== '') parts.push(`${p.yards_gained} yd`)
-  } else {
-    parts.push(p.ball_entry || p.opp_primary_action || p.primary_action || 'poss')
-    if (p.shot_zone || p.shot_zone_allowed) parts.push(String(p.shot_zone || p.shot_zone_allowed))
-    if (p.possession_result || p.shot_result) parts.push(String(p.possession_result || p.shot_result))
-  }
-  const jersey = p.player || p.ball_carrier_jersey || p.shooter_jersey || p.target_jersey
-  if (jersey) parts.push(`#${jersey}`)
-  if (p.result && !parts.includes(p.result)) parts.push(String(p.result))
-  return parts.filter(Boolean).join(' · ')
 }

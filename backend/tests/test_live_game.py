@@ -103,6 +103,57 @@ def test_event_to_play_round_trip_exposes_extra():
     assert view["extra"]["route"] == "Slant"
 
 
+def test_reloaded_opponent_play_exposes_opp_fields_top_level():
+    # Bug: after reload an opponent play rendered "play · null yd" because the API only
+    # returned columns; opp_play_type lived in extra. It must come back top-level.
+    p = PlayEntry(possession="them", opp_play_type="Pass", opp_formation="Shotgun",
+                  opp_route="Slant", coverage="Cover 3")
+    e = _play_to_event(ORG, GAME, p)
+    e.id = GAME
+    view = _event_to_play(e)
+    assert view["opp_play_type"] == "Pass"
+    assert view["opp_formation"] == "Shotgun"
+    assert view["opp_route"] == "Slant"
+    assert view["play_type"] is None          # the column, untouched
+    assert view["yards_gained"] is None       # the UI must not render "null yd"
+
+
+def test_columns_win_over_extra_on_read():
+    p = PlayEntry(possession="us", play_type="Run", yards_gained=4)
+    e = _play_to_event(ORG, GAME, p)
+    e.id = GAME
+    e.extra_data = {**e.extra_data, "play_type": "STALE", "yards_gained": 99}
+    view = _event_to_play(e)
+    assert view["play_type"] == "Run" and view["yards_gained"] == 4
+
+
+def test_special_teams_play_keeps_only_what_was_sent():
+    # The UI now strips opponent fields from a special-teams play; the server stores
+    # exactly what it receives, so no stale "Run · Returned" can be reconstructed.
+    p = PlayEntry(possession="us", side="special_teams", st_unit="Punt Return",
+                  st_result="Returned", result="Returned", returner_jersey="5")
+    e = _play_to_event(ORG, GAME, p)
+    assert e.side == "special_teams"
+    assert "opp_play_type" not in e.extra_data and "opp_formation" not in e.extra_data
+    assert e.extra_data["st_unit"] == "Punt Return"
+
+
+def test_score_after_play_and_points_persist():
+    # The report's Score & Momentum section reads score_us/score_them from plays.
+    p = PlayEntry(possession="us", quarter=2, play_type="Run", result="Touchdown",
+                  score_us=7, score_them=0, points_scored=6, points_team="us")
+    e = _play_to_event(ORG, GAME, p)
+    assert e.extra_data["score_us"] == 7
+    assert e.extra_data["points_scored"] == 6
+    assert e.extra_data["points_team"] == "us"
+
+
+def test_scope_halftime_football_and_basketball():
+    assert _scope_filter("football", "halftime", 2) == ({"max_quarter": 2}, "Halftime")
+    assert _scope_filter("flag_football", "halftime", 2) == ({"max_quarter": 2}, "Halftime")
+    assert _scope_filter("basketball", "halftime", 1) == ({"max_half": 1}, "Halftime")
+
+
 # ── halftime event filter (worker) ───────────────────────────────────────────
 def _ev(**extra):
     return types.SimpleNamespace(extra_data=extra)

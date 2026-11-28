@@ -5,6 +5,40 @@ Basketball), with a **halftime** and a **full-game** report generated from the l
 plays. New, self-contained module — no existing page, style, route, or table was
 modified (only additive files + two additive migrations).
 
+## Access: the $7 Live Tracker (one-time)
+
+The Live Game Logger + Halftime Sheet is a **$7 USD one-time** purchase ("Live
+Tracker"). Product decision (Nov 28): **everyone pays $7, including current users**.
+There is no grandfathering and no plan, trial, or admin bypass.
+
+- **Landing:** `/live-tracker` (app host). Signed-out coaches go through login or signup
+  and come back to `/live-tracker?checkout=1`, which opens checkout.
+- **Checkout:** `POST /billing/live-tracker/checkout`: Stripe Checkout, `mode=payment`,
+  quantity 1, price id from env **`STRIPE_PRICE_LIVE_TRACKER`** (never an inline
+  amount), metadata `kind=live_tracker` + `org_id`. Fails closed with 503 when the price
+  or `STRIPE_SECRET_KEY` is unset. 409 if the org already has it.
+- **Grant:** only the signed `POST /billing/webhook`, on `checkout.session.completed`
+  (or `checkout.session.async_payment_succeeded`) with `payment_status == "paid"`.
+  Stored on `organizations.live_tracker_purchased_at` / `live_tracker_checkout_session_id`
+  (migration 066). Idempotent twice over: the `processed_stripe_events` marker dedupes
+  redeliveries, and the UPDATE only matches an org that has not been granted yet.
+  Cancelled, expired, unpaid, or failed sessions grant nothing.
+- **Gate (server-side, `backend/services/live_tracker.py`):** every `/live` write route
+  (`POST /session`, `POST /plays`, `PATCH|DELETE /play/{id}`, `POST /play/{id}/flag`,
+  `POST /report`) returns **402** with `{code: "live_tracker_payment_required",
+  message, checkout_path: "/live-tracker"}` for an unpaid org. Read routes
+  (`GET /sessions`, `GET /session/{id}`, `GET /access`) stay readable so past games stay
+  viewable, and include `access.live_tracker`. Generated reports stay viewable at
+  `/reports/{id}`. Student-data consent, the sport lock, and the frontend
+  verified-email redirect still apply.
+- **Return pages:** success `/live-tracker/success` polls `GET /billing/live-tracker/status`
+  until the webhook lands, then opens `/live`. Cancel returns to
+  `/live-tracker?checkout=cancelled` with a "you were not charged" note.
+
+Staging env (names only): `STRIPE_PRICE_LIVE_TRACKER` (a TEST-mode one-time $7 price),
+test `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` (the test webhook endpoint's secret,
+subscribed to `checkout.session.completed` and `checkout.session.async_payment_succeeded`).
+
 ## Architecture (reuses the existing pipeline)
 
 | Concern            | Reuses                                                              |

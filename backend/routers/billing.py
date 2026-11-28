@@ -12,6 +12,8 @@ from backend.models.job import Job
 from backend.models.billing_event import ProcessedStripeEvent
 from backend.models.purchase_ip import PurchaseIPLog
 from backend.services.auth import get_current_user, get_current_org
+from backend.services import live_tracker as lt
+from backend.cors_config import build_allowed_origins
 from backend.config import settings
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
@@ -109,6 +111,81 @@ async def create_checkout(body: CheckoutRequest, request: Request, user: User = 
     ))
     await db.commit()
     return {"checkout_url": session.url}
+
+class LiveTrackerCheckoutRequest(BaseModel):
+    # The browser origin the coach is on (window.location.origin). Used ONLY if it is
+    # one of the app's own allowed origins; otherwise settings.APP_URL. The success and
+    # cancel PATHS are fixed server-side, so a caller can't point Stripe's redirect at
+    # an arbitrary site.
+    origin: Optional[str] = None
+
+
+def _live_tracker_return_base(origin: Optional[str]) -> str:
+    allowed = build_allowed_origins(settings.APP_URL, settings.ENVIRONMENT)
+    o = (origin or "").strip().rstrip("/")
+    if o and o in allowed:
+        return o
+    return (settings.APP_URL or "").rstrip("/")
+
+
+@router.post("/live-tracker/checkout")
+async def create_live_tracker_checkout(
+    body: LiveTrackerCheckoutRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db),
+):
+    """$7 one-time Live Tracker (Live Game Logger + Halftime Sheet) Checkout.
+
+    mode=payment, quantity 1, the price id from env STRIPE_PRICE_LIVE_TRACKER (never an
+    inline amount). Access is NOT granted here: only the signed webhook grants it, and
+    only for a paid session. Fails closed (503) when the price or Stripe key is unset."""
+    price_id = (settings.STRIPE_PRICE_LIVE_TRACKER or "").strip()
+    if not price_id or not (settings.STRIPE_SECRET_KEY or "").strip():
+        raise HTTPException(
+            status_code=503,
+            detail="Live Tracker checkout isn't configured yet. Please try again later.",
+        )
+    if lt.has_live_tracker_access(org):
+        raise HTTPException(status_code=409, detail="You already have the Live Tracker. Open the logger at /live.")
+
+    customer_id = org.stripe_customer_id
+    if not customer_id:
+        customer = stripe.Customer.create(email=user.email, name=org.name, metadata={"org_id": str(org.id)})
+        customer_id = customer.id
+        await db.execute(update(Organization).where(Organization.id == org.id).values(stripe_customer_id=customer_id))
+        await db.commit()
+
+    base = _live_tracker_return_base(body.origin)
+    ip = request.client.host if request.client else None
+    ua = request.headers.get("user-agent")
+    metadata = {"org_id": str(org.id), "user_id": str(user.id), "kind": lt.LIVE_TRACKER_KIND,
+                "client_ip": ip or ""}
+    session = stripe.checkout.Session.create(
+        customer=customer_id,
+        mode="payment",
+        line_items=[{"price": price_id, "quantity": 1}],
+        success_url=f"{base}{lt.LIVE_TRACKER_PATH}/success?session_id={{CHECKOUT_SESSION_ID}}",
+        cancel_url=f"{base}{lt.LIVE_TRACKER_PATH}?checkout=cancelled",
+        client_reference_id=str(org.id),
+        metadata=metadata,
+        payment_intent_data={"metadata": metadata},
+    )
+    db.add(PurchaseIPLog(
+        organization_id=org.id, user_id=user.id, ip=ip, user_agent=(ua or "")[:400],
+        tier=lt.LIVE_TRACKER_KIND, stripe_session_id=session.id,
+    ))
+    await db.commit()
+    return {"checkout_url": session.url}
+
+
+@router.get("/live-tracker/status")
+async def live_tracker_status(org: Organization = Depends(get_current_org)):
+    """Whether this org has the $7 Live Tracker. Polled by the success page while the
+    webhook lands (access is granted by the webhook, never by the redirect)."""
+    return lt.access_payload(org)
+
 
 @router.post("/portal")
 async def billing_portal(user: User = Depends(get_current_user), org: Organization = Depends(get_current_org)):
@@ -212,7 +289,13 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None),
         from backend.services import credits as credit_svc
         md = data.get("metadata", {})
         org_id = md.get("org_id")
-        if md.get("kind") == "credit_bundle":
+        if md.get("kind") == lt.LIVE_TRACKER_KIND:
+            # $7 one-time Live Tracker. Grant ONLY for a paid session: a delayed payment
+            # method completes the session 'unpaid' and is granted on
+            # async_payment_succeeded instead; a failed payment grants nothing.
+            if org_id and lt.checkout_session_is_paid(data):
+                await lt.grant_live_tracker(db, org_id, data.get("id"))
+        elif md.get("kind") == "credit_bundle":
             # One-time credit bundle purchase. Credits never expire while active.
             n = int(md.get("credits") or 0)
             if org_id and n:
@@ -237,6 +320,15 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None),
                     **({"stripe_customer_id": data.get("customer")} if data.get("customer") else {}),
                 ))
                 await credit_svc.grant_monthly_allotment(db, org_id, tier)
+
+    elif et == "checkout.session.async_payment_succeeded":
+        # Delayed payment method cleared: grant the Live Tracker now (same idempotent grant).
+        md = data.get("metadata", {}) or {}
+        if md.get("kind") == lt.LIVE_TRACKER_KIND and md.get("org_id") and lt.checkout_session_is_paid(data):
+            await lt.grant_live_tracker(db, md.get("org_id"), data.get("id"))
+
+    # checkout.session.async_payment_failed / checkout.session.expired: intentionally
+    # no effect. A failed or abandoned Live Tracker payment grants nothing.
 
     elif et == "customer.subscription.updated":
         sub_id = data["id"]

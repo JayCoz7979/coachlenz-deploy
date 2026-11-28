@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import api from '@/lib/api'
+import { takeNext, rememberNext } from '@/lib/postAuth'
 import { track, getAnonId, getSource } from '@/lib/funnel'
 
 type Sport = { value: string; label: string }
@@ -39,6 +40,8 @@ function OnboardingForm() {
 
   // Funnel: the visitor reached the signup page. Fires once on mount.
   useEffect(() => { track('signup_view') }, [])
+  // Keep a ?next= return path (e.g. /live-tracker?checkout=1) across the signup steps.
+  useEffect(() => { const n = params.get('next'); if (n) rememberNext(n) }, [params])
 
   // On the sport step, load the student-data attestation text (and whether the org
   // already attested, in which case the checkbox is not needed).
@@ -56,7 +59,7 @@ function OnboardingForm() {
     api.get('/onboarding/status').then(s => {
       setChoosable(s.data.choosable_sports || []); setMaxSports(s.data.max_sports || 1); setTier(s.data.tier || 'trial')
       const step = s.data.next_step
-      if (step === 'done') router.push('/dashboard')
+      if (step === 'done') router.push(takeNext() || '/dashboard')
       else if (step === 'verify_email') goEmail()
       else if (step === 'choose_sport') setPhase('sport')
     }).catch(() => {})
@@ -119,7 +122,8 @@ function OnboardingForm() {
     setLoading(true); setError('')
     try {
       await api.post('/onboarding/sports', { sports: picked, student_data_consent: dataConsent })
-      router.push('/dashboard')
+      // Back to the $7 Live Tracker checkout (or wherever the coach came from).
+      router.push(takeNext() || '/dashboard')
     } catch (err: any) { setError(err.response?.data?.detail || 'Could not save your sport.') }
     finally { setLoading(false) }
   }

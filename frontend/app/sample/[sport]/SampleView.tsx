@@ -53,16 +53,16 @@ export default function SampleView({ sport }: { sport: string }) {
         </div>
       </div>
 
-      {/* Logged-out CTA. The Live Game Logger is the free way in; AI film analysis is the upgrade. */}
+      {/* Logged-out CTA. The Live Game Logger is the $7 one-time Live Tracker; AI film analysis is a separate product. */}
       <section className="px-6 sm:px-8 py-12 text-center">
         <h2 className="text-xl font-bold mb-2">Want one for your team?</h2>
-        <p className="text-gray-400 text-sm mb-5">The Live Game Logger is free. Chart your next game from the sideline, we turn it into a breakdown like this, no cost and no credit card. When you want us to watch the film for you instead, that is the paid upgrade.</p>
+        <p className="text-gray-400 text-sm mb-5">Chart your next game from the sideline with the Live Tracker and get a Halftime Sheet at the break. $7 USD, one time.</p>
         <Link
-          href="/onboarding"
+          href="/live-tracker"
           onClick={() => track('cta_click', { cta: `sample-${sport}` })}
           className="btn-primary text-lg px-8 py-3 inline-block"
         >
-          Start free
+          Get the Live Tracker
         </Link>
         <p className="text-sm text-gray-500 mt-4">
           Curious what film breakdown costs you in a season?{' '}

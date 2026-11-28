@@ -141,6 +141,10 @@ class Settings(BaseSettings):
     STRIPE_PRICE_COACH: str = ""
     STRIPE_PRICE_ATHLETIC_DEPT: str = ""
     STRIPE_PRICE_DISTRICT: str = ""
+    # One-time $7 Live Tracker price (Live Game Logger + Halftime Sheet). Create the
+    # price in Stripe TEST mode and set its id here. Empty = checkout fails closed with
+    # a clear 503; the amount is never inlined in code.
+    STRIPE_PRICE_LIVE_TRACKER: str = ""
     # Annual (yearly-interval) Stripe price IDs. Leave empty and annual billing stays
     # dormant: the annual toggle never appears and /billing/checkout refuses annual with
     # a clear message. Set these to the yearly recurring price IDs and annual goes live
