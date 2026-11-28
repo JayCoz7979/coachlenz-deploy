@@ -5,6 +5,32 @@ Basketball), with a **halftime** and a **full-game** report generated from the l
 plays. New, self-contained module — no existing page, style, route, or table was
 modified (only additive files + two additive migrations).
 
+## $7 Live Tracker unlock (access)
+
+The logger plus the Halftime Sheet is sold as the **Live Tracker**: **$7 USD, one time**
+(Football, Flag Football, Basketball). Offer page: `/live-tracker` in this app.
+
+- **Server-side gate** (`backend/services/live_tracker.py`, dependency `live_tracker_org`
+  in `live_game.py`): `POST /session`, `GET /session/{id}`, `POST /plays`,
+  `PATCH|DELETE /play/{id}`, `POST /play/{id}/flag`, and `POST /report` return **403**
+  (header `X-CoachLenz-Locked: live_tracker`) unless the org has
+  `organizations.live_tracker_purchased_at` set (migration 066) or an **active** paid
+  subscription. `GET /live/access` reports the state; `GET /live/sessions` stays open.
+  Consent, sport lock, and the verified-email redirect are unchanged.
+- **Grandfathering** is a data decision and is **off** by default:
+  `LIVE_TRACKER_GRANDFATHER_BEFORE=YYYY-MM-DD` lets orgs created before that date in.
+- **Checkout**: `POST /billing/live-tracker/checkout` creates a one-time Stripe Checkout
+  (`mode=payment`, quantity 1) with the Price ID in `STRIPE_PRICE_LIVE_TRACKER`
+  (no inline `price_data`). Unset price or secret key returns 503 and nothing is charged.
+  Return URLs must be one of the app's own origins.
+- **Grant**: `POST /billing/webhook` (existing signature check + `ProcessedStripeEvent`
+  idempotency) grants on `checkout.session.completed` with `payment_status='paid'`, or
+  on `checkout.session.async_payment_succeeded`, when `metadata.kind='live_tracker'`.
+  It writes only while the grant is NULL, so redeliveries never move it. Cancel,
+  expiry, unpaid, and failed payments grant nothing.
+- **Env (names only)**: `STRIPE_PRICE_LIVE_TRACKER`, `STRIPE_SECRET_KEY`,
+  `STRIPE_WEBHOOK_SECRET` (test-mode values on staging).
+
 ## Architecture (reuses the existing pipeline)
 
 | Concern            | Reuses                                                              |
@@ -31,8 +57,9 @@ engine and ONE report pipeline serve the logger — no new play tables.
   - `POST /plays` — append plays; on-the-fly jerseys auto-join the session roster.
   - `PATCH /play/{id}`, `DELETE /play/{id}`, `POST /play/{id}/flag` — edit / delete /
     flag a Coaching Point (`is_highlight`, which the report's coach-notes digest reads).
-  - `POST /report` — queue a report at a `scope`: `full` (whole game) / `this_half` /
-    `this_quarter` / `halftime`. `_scope_filter(sport, scope, period)` maps the scope to
+  - `POST /report` — queue a report at a `scope`: `halftime` (the **Halftime Sheet**,
+    Q1-Q2 / first half; the primary button in the logger) / `full` (whole game) / `this_half` /
+    `this_quarter`. `_scope_filter(sport, scope, period)` maps the scope to
     an `event_filter` (min/max quarter or half) + a label; `this_quarter` is the
     "adjustment report" that isolates what the opponent changed after the break.
 - `backend/migrations/037_report_params.sql` — nullable `params JSONB` on `tendency_reports`.

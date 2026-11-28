@@ -9,6 +9,7 @@ import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/lib/auth'
 import api from '@/lib/api'
+import { reportFailureMessage } from '@/lib/reportError'
 import { newUid, loadPlays, savePlays, loadCfg, saveCfg } from '@/components/live/offline'
 import { SPORT_META } from '@/lib/sports'
 import {
@@ -19,7 +20,11 @@ import {
   parseTermSystems, type TermSystem,
 } from '@/components/live/fields'
 import { TapGroup, GapSelector, RushLaneSelector, RouteTree, TargetAreaGrid, ShotZoneCourt } from '@/components/live/Selectors'
-import { Zap, Loader2, Undo2, FileBarChart, ClipboardList, Flag, Trash2, X, ChevronDown } from 'lucide-react'
+import {
+  normalizeServerPlay, playSummary, cleanForMode, resetForMode, scoreForPlay, pointChips, scoreFromPlays,
+  REPORT_ACTIONS, MIN_TAP, type Mode,
+} from '@/components/live/logic'
+import { Zap, Loader2, Undo2, FileBarChart, ClipboardList, Flag, Trash2, X, ChevronDown, Timer } from 'lucide-react'
 
 type Cur = Record<string, any>
 type Play = { event_id?: string; client_uid?: string; synced?: boolean; _pending?: boolean; [k: string]: any }
@@ -30,7 +35,7 @@ type Config = {
 }
 
 const lbl: CSSProperties = { fontSize: 11, color: 'var(--text3)', fontWeight: 700, letterSpacing: '0.05em', marginBottom: 6, display: 'block', textTransform: 'uppercase' }
-const input: CSSProperties = { width: '100%', background: 'var(--bg3)', border: '1px solid var(--border2)', borderRadius: 8, color: 'var(--text)', padding: '10px 12px', fontSize: 15, minHeight: 44 }
+const input: CSSProperties = { width: '100%', background: 'var(--bg3)', border: '1px solid var(--border2)', borderRadius: 8, color: 'var(--text)', padding: '10px 12px', fontSize: 15, minHeight: MIN_TAP, boxSizing: 'border-box' }
 const card: CSSProperties = { background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 12, padding: 14, marginBottom: 12 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -81,7 +86,7 @@ export default function LoggerPage() {
   const [config, setConfig] = useState<Config | null>(null)
   const [opponent, setOpponent] = useState('')
   const [plays, setPlays] = useState<Play[]>([])
-  const [mode, setMode] = useState<'us' | 'them' | 'st'>('us')
+  const [mode, setModeRaw] = useState<Mode>('us')
   const [period, setPeriod] = useState('1')          // quarter or half
   const [scoreUs, setScoreUs] = useState('0')
   const [scoreThem, setScoreThem] = useState('0')
@@ -93,8 +98,11 @@ export default function LoggerPage() {
   const [ok, setOk] = useState('')
   const [filterSide, setFilterSide] = useState('all')
   const [editing, setEditing] = useState<string | null>(null)
-  const [reportScope, setReportScope] = useState('full')
+  const [reportScope, setReportScope] = useState('this_half')
   const [online, setOnline] = useState(true)
+  // A scoring play whose points the entry can't tell us (quick-log "Score", an
+  // and-one, ...). The coach taps the points; they go on the board and on the play.
+  const [scorePrompt, setScorePrompt] = useState<{ team: 'us' | 'them'; uid: string } | null>(null)
 
   const playsRef = useRef<Play[]>([])
   const syncing = useRef(false)
@@ -111,7 +119,7 @@ export default function LoggerPage() {
     if (!pending.length) return
     syncing.current = true
     try {
-      const payloads = pending.map(({ synced, event_id, _pending, _failed, ...rest }) => rest)
+      const payloads = pending.map(({ synced, event_id, _pending, _failed, _auto_pts, extra, ...rest }) => rest)
       const r = await api.post('/live/plays', { session_id: sessionId, plays: payloads })
       const syncedUids: string[] = r.data?.synced_uids || []
       const uidToEvent: Record<string, string> = {}
@@ -139,13 +147,22 @@ export default function LoggerPage() {
     api.get(`/live/session/${sessionId}`).then(r => {
       setConfig(r.data.config); saveCfg(sessionId, r.data.config)
       setOpponent(r.data.opponent || 'Opponent')
-      const server: Play[] = (r.data.plays || []).map((p: any) => ({ ...p, synced: true, client_uid: p.client_uid || p.event_id }))
+      // Flatten extra_data (opp_play_type, st_unit, score_us, ...) so a reloaded play
+      // reads like a freshly logged one (no more "play · null yd").
+      const server: Play[] = (r.data.plays || []).map((p: any) => ({ ...normalizeServerPlay(p), synced: true, client_uid: p.client_uid || p.event_id }))
       const serverUids = new Set(server.map(s => s.client_uid))
       const unsynced = (localPlays.length ? localPlays : []).filter(p => !p.synced && p.client_uid && !serverUids.has(p.client_uid))
-      setPlays([...server, ...unsynced])
+      const all = [...server, ...unsynced]
+      setPlays(all)
+      // Restore the score boxes from what the plays carried, instead of resetting to 0.
+      const sc = scoreFromPlays(all)
+      setScoreUs(String(sc.us)); setScoreThem(String(sc.them))
       setOnline(true)
       setTimeout(() => sync(), 0)
     }).catch(e => {
+      // Not unlocked: the server refuses to resume. Send the coach to the $7 unlock.
+      if (e?.response?.status === 403 && isLiveTrackerLocked(e)) { router.replace('/live-tracker'); return }
+      if (localPlays.length) { const sc = scoreFromPlays(localPlays); setScoreUs(String(sc.us)); setScoreThem(String(sc.them)) }
       // Offline / server error: only hard-fail if we have nothing cached to work from.
       if (localCfg) { setOnline(false) }
       else { setError(e?.response?.data?.detail || 'Could not load this game session.') }
@@ -176,6 +193,10 @@ export default function LoggerPage() {
   const periodNum = period === 'OT' ? (isBB ? 3 : 5) : (Number(period) || 1)
 
   const set = (k: string, v: any) => setCur(c => ({ ...c, [k]: v }))
+  // Switching unit (Our Ball / Their Ball / Special Teams) or entry style starts a
+  // clean entry: only down/distance/ball-on carry over, so no field leaks across.
+  const setMode = (m: Mode) => { if (m !== mode) setCur(c => resetForMode(c, m, isBB)); setModeRaw(m) }
+  const toggleQuick = () => { setCur(c => resetForMode(c, mode, isBB)); setQuick(q => !q) }
   const roster = (opp: boolean) => (opp ? config?.opponent_roster : config?.our_roster) || []
 
   const buildPlay = (): Play => {
@@ -189,7 +210,8 @@ export default function LoggerPage() {
       score_us: Number(scoreUs) || 0,
       score_them: Number(scoreThem) || 0,
       is_quick_log: quick || undefined,
-      ...cur,
+      // Only the fields the active panel shows; never a previous unit's leftovers.
+      ...cleanForMode(cur, mode, isBB, quick),
     }
     if (isBB) { p.half = periodNum; if (lateGame) p.late_game = true }
     else { p.quarter = periodNum }
@@ -206,12 +228,21 @@ export default function LoggerPage() {
     if (p.down) p.down = Number(p.down)
     if (p.distance) p.distance = Number(p.distance)
     if (p.yards_gained !== undefined && p.yards_gained !== '') p.yards_gained = Number(p.yards_gained)
+    // Points this play put on the board go into the score it carries (what the
+    // report's Score & Momentum section reads) and onto the score boxes.
+    const call = scoreForPlay(p, mode, isBB, quick)
+    if (call && !call.needsEntry && call.points) {
+      if (call.team === 'us') p.score_us = (Number(p.score_us) || 0) + call.points
+      else p.score_them = (Number(p.score_them) || 0) + call.points
+      p._auto_pts = { team: call.team, points: call.points }
+    }
     return p
   }
 
   const advance = () => {
+    // Every unit starts the next entry clean (no leftovers from this play).
+    if (!isFB || mode !== 'us' || quick) { setCur(c => resetForMode(c, mode, isBB)); return }
     // football: auto-advance down/distance/field position from yards (offense only)
-    if (!isFB || mode !== 'us') return
     const gained = Number(cur.yards_gained) || 0
     const dist = Number(cur.distance) || 10
     const dn = Number(cur.down) || 1
@@ -230,19 +261,45 @@ export default function LoggerPage() {
     if (!config) return
     const play = buildPlay()
     setError(''); setOk('')
+    const uid = newUid()
     // Add to the local queue immediately (persisted by the effect above); the play is
     // safe even with no connection. Then attempt a flush — offline, it just stays queued.
-    setPlays(ps => [...ps, { ...play, client_uid: newUid(), synced: false }])
+    setPlays(ps => [...ps, { ...play, client_uid: uid, synced: false }])
+    if (play._auto_pts) {
+      setScoreUs(String(play.score_us)); setScoreThem(String(play.score_them))
+      setScorePrompt(null)
+    } else {
+      const call = scoreForPlay(play, mode, isBB, quick)
+      setScorePrompt(call && call.needsEntry ? { team: call.team, uid } : null)
+    }
     advance()
     setOk('logged'); setTimeout(() => setOk(''), 1000)
     setTimeout(() => sync(), 0)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config, cur, mode, period, clock, scoreUs, scoreThem, quick, sync, plays.length])
 
+  // Add points from the score prompt / steppers: update the boxes AND the play the
+  // points belong to, so the report reads the same score the coach sees.
+  async function addPoints(team: 'us' | 'them', pts: number, uid?: string) {
+    const us = Math.max(0, (Number(scoreUs) || 0) + (team === 'us' ? pts : 0))
+    const them = Math.max(0, (Number(scoreThem) || 0) + (team === 'them' ? pts : 0))
+    setScoreUs(String(us)); setScoreThem(String(them))
+    if (!uid) return
+    const target = playsRef.current.find(x => x.client_uid === uid)
+    setPlays(ps => ps.map(x => (x.client_uid === uid ? { ...x, score_us: us, score_them: them } : x)))
+    if (target?.event_id) { try { await api.patch(`/live/play/${target.event_id}`, { extra: { score_us: us, score_them: them } }) } catch {} }
+  }
+
   const undo = async () => {
     const last = plays[plays.length - 1]
     if (!last) return
     setPlays(ps => ps.slice(0, -1))
+    // Take back points this play put on the board automatically.
+    if (last._auto_pts) {
+      if (last._auto_pts.team === 'us') setScoreUs(s => String(Math.max(0, (Number(s) || 0) - last._auto_pts.points)))
+      else setScoreThem(s => String(Math.max(0, (Number(s) || 0) - last._auto_pts.points)))
+    }
+    if (scorePrompt?.uid === last.client_uid) setScorePrompt(null)
     if (last.event_id) { try { await api.delete(`/live/play/${last.event_id}`) } catch {} }
   }
 
@@ -266,11 +323,14 @@ export default function LoggerPage() {
 
   async function report(scope: string) {
     setBusy(true); setError('')
+    // Push any queued plays first so the sheet covers everything logged.
+    try { await sync() } catch {}
     try {
       const r = await api.post('/live/report', { session_id: sessionId, scope, period: periodNum })
       router.push(`/reports/${r.data.report_id}`)
     } catch (e: any) {
-      setError(e?.response?.data?.detail || 'Could not generate the report.')
+      if (e?.response?.status === 403 && isLiveTrackerLocked(e)) { router.replace('/live-tracker'); return }
+      setError(reportFailureMessage(e))
       setBusy(false)
     }
   }
@@ -290,7 +350,7 @@ export default function LoggerPage() {
   const periods = isBB ? ['1', '2', 'OT'] : ['1', '2', '3', '4', 'OT']
   const modeBtn = (m: typeof mode, label: string) => (
     <button onClick={() => setMode(m)} style={{
-      flex: 1, minHeight: 46, borderRadius: 8, fontSize: 14, fontWeight: 800, cursor: 'pointer',
+      flex: 1, minHeight: 48, borderRadius: 8, fontSize: 14, fontWeight: 800, cursor: 'pointer',
       border: '1px solid ' + (mode === m ? 'var(--gold)' : 'var(--border2)'),
       background: mode === m ? 'rgba(201,168,76,0.18)' : 'var(--bg3)',
       color: mode === m ? 'var(--gold)' : 'var(--text2)',
@@ -305,9 +365,9 @@ export default function LoggerPage() {
           <Zap size={18} style={{ color: 'var(--gold)' }} />
           <b style={{ fontSize: 15 }}>{config.team_name || 'Us'} vs {opponent}</b>
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
-            <input style={{ ...input, width: 54, minHeight: 36, textAlign: 'center', padding: 6 }} inputMode="numeric" value={scoreUs} onChange={e => setScoreUs(e.target.value)} />
+            <input aria-label="Our score" data-tap="score" style={{ ...input, width: 56, minHeight: MIN_TAP, textAlign: 'center', padding: 6, fontWeight: 800 }} inputMode="numeric" value={scoreUs} onChange={e => setScoreUs(e.target.value.replace(/\D/g, ''))} />
             <span style={{ color: 'var(--text3)' }}>–</span>
-            <input style={{ ...input, width: 54, minHeight: 36, textAlign: 'center', padding: 6 }} inputMode="numeric" value={scoreThem} onChange={e => setScoreThem(e.target.value)} />
+            <input aria-label="Their score" data-tap="score" style={{ ...input, width: 56, minHeight: MIN_TAP, textAlign: 'center', padding: 6, fontWeight: 800 }} inputMode="numeric" value={scoreThem} onChange={e => setScoreThem(e.target.value.replace(/\D/g, ''))} />
           </div>
         </div>
         <div style={{ maxWidth: 720, margin: '6px auto 0', display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, color: 'var(--text3)' }}>
@@ -320,7 +380,7 @@ export default function LoggerPage() {
             {!online ? `Offline · ${unsynced} queued` : unsynced ? `Saving ${unsynced}…` : 'All saved'}
           </span>
           <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6 }}>
-            <input style={{ ...input, width: 74, minHeight: 32, textAlign: 'center', padding: 5 }} placeholder="MM:SS" inputMode="numeric" value={clock} onChange={e => setClock(formatClockInput(e.target.value))} title="Just type the digits — 1042 becomes 10:42" />
+            <input aria-label="Game clock" data-tap="clock" style={{ ...input, width: 84, minHeight: MIN_TAP, textAlign: 'center', padding: 6 }} placeholder="MM:SS" inputMode="numeric" value={clock} onChange={e => setClock(formatClockInput(e.target.value))} title="Just type the digits — 1042 becomes 10:42" />
           </span>
         </div>
       </div>
@@ -341,9 +401,30 @@ export default function LoggerPage() {
           {lateGame && <div style={{ marginTop: 10, fontSize: 12, color: 'var(--gold)', fontWeight: 700 }}>⏱ Late game (&lt;2:00), flagged automatically</div>}
         </div>
 
+        {/* score prompt: a scoring play whose points the entry can't tell us */}
+        {scorePrompt && (
+          <div style={{ ...card, border: '1px solid var(--gold)' }} role="status">
+            <div style={{ fontWeight: 800, marginBottom: 10, color: 'var(--gold)' }}>
+              Scoring play logged. Add the points for {scorePrompt.team === 'us' ? (config.team_name || 'Us') : opponent}:
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {pointChips(isBB).map(n => (
+                <button key={n} onClick={() => { addPoints(scorePrompt.team, n, scorePrompt.uid); setScorePrompt(null) }} style={{
+                  minHeight: MIN_TAP + 4, minWidth: 60, borderRadius: 8, border: 'none', cursor: 'pointer',
+                  background: 'var(--gold)', color: '#1c1c1c', fontSize: 16, fontWeight: 800,
+                }}>+{n}</button>
+              ))}
+              <button onClick={() => setScorePrompt(null)} style={{
+                minHeight: MIN_TAP + 4, padding: '0 16px', borderRadius: 8, cursor: 'pointer', fontWeight: 700,
+                background: 'transparent', border: '1px solid var(--border2)', color: 'var(--text3)',
+              }}>No points</button>
+            </div>
+          </div>
+        )}
+
         {/* quick log toggle */}
-        <button onClick={() => setQuick(q => !q)} style={{
-          width: '100%', minHeight: 42, borderRadius: 8, marginBottom: 12, cursor: 'pointer', fontWeight: 700, fontSize: 13,
+        <button onClick={toggleQuick} style={{
+          width: '100%', minHeight: 48, borderRadius: 8, marginBottom: 12, cursor: 'pointer', fontWeight: 700, fontSize: 13,
           border: '1px solid ' + (quick ? 'var(--gold)' : 'var(--border2)'),
           background: quick ? 'rgba(201,168,76,0.14)' : 'var(--bg2)', color: quick ? 'var(--gold)' : 'var(--text2)',
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
@@ -372,34 +453,50 @@ export default function LoggerPage() {
           </div>
         </div>
 
-        {/* REPORTS — scope selector + one Generate button (as of this moment) */}
+        {/* REPORTS — the Halftime Sheet is the first-class action; full game + segment
+            reports sit under it. */}
         <div style={{ ...card, marginBottom: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 10 }}>
-            <span style={lbl}>Report scope</span>
-            <span style={{ fontSize: 11, color: 'var(--text3)' }}>as of {isBB ? `Half ${period}` : (period === 'OT' ? 'OT' : `Q${period}`)}</span>
-          </div>
-          <div style={{ marginBottom: 12 }}>
-            <TapGroup
-              options={isBB
-                ? [{ value: 'full', label: 'Whole game' }, { value: 'this_half', label: 'This half' }]
-                : [{ value: 'full', label: 'Whole game' }, { value: 'this_half', label: 'This half' }, { value: 'this_quarter', label: 'This quarter' }]}
-              value={reportScope}
-              onChange={setReportScope}
-              cols={isBB ? 2 : 3}
-            />
-          </div>
-          <button onClick={() => report(reportScope)} disabled={busy || !plays.length} style={{
-            width: '100%', minHeight: 50, borderRadius: 10, border: 'none', cursor: 'pointer',
-            background: 'var(--green3)', color: '#fff', fontSize: 15, fontWeight: 800,
-            display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-            opacity: (busy || !plays.length) ? 0.5 : 1,
-          }}>
-            {busy ? <Loader2 size={16} className="animate-spin" /> : <FileBarChart size={16} />} Generate Report
-          </button>
+          <span style={lbl}>Reports</span>
+          {REPORT_ACTIONS.map(a => (
+            <div key={a.scope} style={{ marginBottom: 10 }}>
+              <button data-report={a.scope} onClick={() => report(a.scope)} disabled={busy || !plays.length} style={{
+                width: '100%', minHeight: a.primary ? 56 : 48, borderRadius: 10, cursor: 'pointer',
+                border: a.primary ? 'none' : '1px solid var(--green3)',
+                background: a.primary ? 'var(--gold)' : 'transparent',
+                color: a.primary ? '#1c1c1c' : 'var(--green3)', fontSize: a.primary ? 17 : 15, fontWeight: 800,
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                opacity: (busy || !plays.length) ? 0.5 : 1,
+              }}>
+                {busy ? <Loader2 size={16} className="animate-spin" /> : a.primary ? <Timer size={18} /> : <FileBarChart size={16} />} {a.label}
+              </button>
+              <p style={{ fontSize: 11.5, color: 'var(--text3)', margin: '6px 0 0', textAlign: 'center' }}>{a.hint(isBB)}</p>
+            </div>
+          ))}
+          <details style={{ marginTop: 6 }}>
+            <summary style={{ minHeight: MIN_TAP, display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: 13, color: 'var(--text2)', fontWeight: 700 }}>
+              Segment report (as of {isBB ? `Half ${period}` : (period === 'OT' ? 'OT' : `Q${period}`)})
+            </summary>
+            <div style={{ margin: '8px 0 10px' }}>
+              <TapGroup
+                options={isBB
+                  ? [{ value: 'this_half', label: 'This half' }]
+                  : [{ value: 'this_half', label: 'This half' }, { value: 'this_quarter', label: 'This quarter' }]}
+                value={reportScope}
+                onChange={setReportScope}
+                cols={isBB ? 1 : 2}
+              />
+            </div>
+            <button onClick={() => report(reportScope)} disabled={busy || !plays.length} style={{
+              width: '100%', minHeight: 48, borderRadius: 10, border: '1px solid var(--border2)', cursor: 'pointer',
+              background: 'var(--bg3)', color: 'var(--text)', fontSize: 14, fontWeight: 800,
+              opacity: (busy || !plays.length) ? 0.5 : 1,
+            }}>Generate segment report</button>
+            <p style={{ fontSize: 11.5, color: 'var(--text3)', margin: '8px 0 0', textAlign: 'center' }}>
+              {reportScope === 'this_quarter' ? 'Isolates what is happening now, the adjustment view.' : 'This half only.'}
+            </p>
+          </details>
           <p style={{ fontSize: 11.5, color: 'var(--text3)', margin: '10px 0 0', textAlign: 'center' }}>
-            {reportScope === 'this_quarter' ? 'Isolates what is happening now — the adjustment view.'
-              : reportScope === 'this_half' ? 'This half only.'
-              : 'Everything logged so far.'}
+            A report needs at least 3 plays in that part of the game.
           </p>
         </div>
 
@@ -408,7 +505,7 @@ export default function LoggerPage() {
           <div style={card}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
               <b style={{ fontSize: 14 }}>Play Log</b>
-              <select style={{ ...input, width: 'auto', minHeight: 34, padding: '4px 8px', marginLeft: 'auto', fontSize: 13 }} value={filterSide} onChange={e => setFilterSide(e.target.value)}>
+              <select aria-label="Filter plays" style={{ ...input, width: 'auto', minHeight: MIN_TAP, padding: '4px 8px', marginLeft: 'auto', fontSize: 13 }} value={filterSide} onChange={e => setFilterSide(e.target.value)}>
                 <option value="all">All</option>
                 <option value="offense">Our Offense</option>
                 <option value="defense">Our Defense</option>
@@ -428,7 +525,7 @@ export default function LoggerPage() {
                 return (
                   <div key={rowKey}>
                     <div onClick={() => setEditing(editing === rowKey ? null : rowKey)}
-                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 8, cursor: 'pointer', background: rowColor, border: '1px solid var(--border2)' }}>
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', minHeight: MIN_TAP, boxSizing: 'border-box', borderRadius: 8, cursor: 'pointer', background: rowColor, border: '1px solid var(--border2)' }}>
                       <span style={{ color: 'var(--text3)', fontSize: 12, width: 22 }}>{num}</span>
                       <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text3)', width: 30 }}>{side === 'special_teams' ? 'ST' : side === 'defense' ? 'DEF' : 'OFF'}</span>
                       <span style={{ fontSize: 13, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{playSummary(p, isBB)}</span>
@@ -448,7 +545,7 @@ export default function LoggerPage() {
         )}
 
         <div style={{ textAlign: 'center', marginTop: 10 }}>
-          <Link href="/live" style={{ fontSize: 13, color: 'var(--text3)' }}>← games</Link>
+          <Link href="/live" style={{ fontSize: 14, color: 'var(--text3)', display: 'inline-flex', alignItems: 'center', minHeight: MIN_TAP, padding: '0 12px' }}>← games</Link>
         </div>
       </div>
     </div>
@@ -458,10 +555,14 @@ export default function LoggerPage() {
 // ── situational row (down/distance/field position) ───────────────────────────
 function Situational({ cur, set }: { cur: Cur; set: (k: string, v: any) => void }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 12 }}>
+    // Down gets its own full-width row so each of the four chips is a real thumb
+    // target on a 390px phone (in a 3-column row they were ~22px wide).
+    <div style={{ marginBottom: 12 }}>
       <Field label="Down"><TapGroup options={['1', '2', '3', '4']} value={String(cur.down || '')} onChange={v => set('down', v)} cols={4} /></Field>
-      <Field label="Distance"><input style={input} inputMode="numeric" value={cur.distance || ''} onChange={e => set('distance', e.target.value)} /></Field>
-      <Field label="Ball On"><input style={input} value={cur.field_position || ''} onChange={e => set('field_position', e.target.value)} placeholder="OWN 35" /></Field>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <Field label="Distance"><input style={input} inputMode="numeric" value={cur.distance || ''} onChange={e => set('distance', e.target.value)} /></Field>
+        <Field label="Ball On"><input style={input} value={cur.field_position || ''} onChange={e => set('field_position', e.target.value)} placeholder="OWN 35" /></Field>
+      </div>
     </div>
   )
 }
@@ -518,10 +619,8 @@ function FootballPanel({ mode, sport, isFlag, systems, customRoutes, cur, set, r
               <Field label="Pass result"><TapGroup options={FB_PASS_RESULTS} value={cur.pass_result} onChange={v => set('pass_result', v)} cols={3} /></Field>
             </>
           )}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 10 }}>
-            <Field label="Yards"><input style={input} inputMode="numeric" value={cur.yards_gained ?? ''} onChange={e => set('yards_gained', e.target.value)} /></Field>
-            <Field label="Outcome"><TapGroup options={FB_OUTCOMES} value={cur.result} onChange={v => set('result', v)} cols={3} /></Field>
-          </div>
+          <Field label="Yards"><input style={input} inputMode="numeric" value={cur.yards_gained ?? ''} onChange={e => set('yards_gained', e.target.value)} /></Field>
+          <Field label="Outcome"><TapGroup options={FB_OUTCOMES} value={cur.result} onChange={v => set('result', v)} cols={2} /></Field>
         </>
       ) : (
         <>
@@ -559,10 +658,8 @@ function FootballPanel({ mode, sport, isFlag, systems, customRoutes, cur, set, r
             <Jersey label="Stop by #" value={cur.stop_maker_jersey} onChange={v => set('stop_maker_jersey', v)} />
           </div>
           <Field label="Result"><TapGroup options={DEF_RESULTS} value={cur.result} onChange={v => set('result', v)} cols={3} /></Field>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 10 }}>
-            <Field label="Yards allowed"><input style={input} inputMode="numeric" value={cur.yards_gained ?? ''} onChange={e => set('yards_gained', e.target.value)} /></Field>
-            <Field label="Outcome"><TapGroup options={DEF_OUTCOMES} value={cur.opp_outcome} onChange={v => set('opp_outcome', v)} cols={2} /></Field>
-          </div>
+          <Field label="Yards allowed"><input style={input} inputMode="numeric" value={cur.yards_gained ?? ''} onChange={e => set('yards_gained', e.target.value)} /></Field>
+          <Field label="Outcome"><TapGroup options={DEF_OUTCOMES} value={cur.opp_outcome} onChange={v => set('opp_outcome', v)} cols={2} /></Field>
         </>
       )}
     </>
@@ -653,22 +750,13 @@ function EditRow({ p, isBB, onFlag, onDelete, onSave, onClose }: any) {
   )
 }
 
-// ── one-line play summary for the review list ────────────────────────────────
-function playSummary(p: Play, isBB: boolean): string {
-  const parts: string[] = []
-  if (!isBB) {
-    if (p.down) parts.push(`${p.down}&${p.distance ?? ''}`)
-    parts.push(p.play_type || p.opp_play_type || p.st_unit || 'play')
-    if (p.route || p.opp_route) parts.push(String(p.route || p.opp_route))
-    if (p.run_category) parts.push(String(p.run_category))
-    if (p.yards_gained !== undefined && p.yards_gained !== '') parts.push(`${p.yards_gained} yd`)
-  } else {
-    parts.push(p.ball_entry || p.opp_primary_action || p.primary_action || 'poss')
-    if (p.shot_zone || p.shot_zone_allowed) parts.push(String(p.shot_zone || p.shot_zone_allowed))
-    if (p.possession_result || p.shot_result) parts.push(String(p.possession_result || p.shot_result))
-  }
-  const jersey = p.player || p.ball_carrier_jersey || p.shooter_jersey || p.target_jersey
-  if (jersey) parts.push(`#${jersey}`)
-  if (p.result && !parts.includes(p.result)) parts.push(String(p.result))
-  return parts.filter(Boolean).join(' · ')
+// The one-line Play Log summary lives in components/live/logic.ts (unit-tested).
+
+// True when a 403 is the Live Tracker paywall (header when CORS exposes it, else the
+// server's message, which always points at /live-tracker).
+function isLiveTrackerLocked(e: any): boolean {
+  const h = e?.response?.headers?.['x-coachlenz-locked']
+  if (h === 'live_tracker') return true
+  const d = e?.response?.data?.detail
+  return typeof d === 'string' && d.includes('/live-tracker')
 }
