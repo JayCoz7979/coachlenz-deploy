@@ -116,6 +116,13 @@ async def create_report(body: ReportCreate, user: User = Depends(get_current_use
             status_code=422,
             detail="report_type must be one of: " + ", ".join(REPORT_TYPES),
         )
+    # $7 Live Tracker paywall (Stage 2 QA H1): a live_game report is the Halftime
+    # Sheet / full-game live report. POST /live/report already refuses unpaid orgs;
+    # this route must not be a side door around it. Checked before ownership, so an
+    # unpaid caller learns nothing about whether the ids exist.
+    if body.report_type == "live_game":
+        from backend.services.live_tracker import assert_live_tracker_access
+        assert_live_tracker_access(org)
     # Entitlements: combining more than one game into a report is a paid feature.
     # Checked before ownership so a locked trial still gets the upgrade 403 it
     # already got, which does not confirm whether any id exists.
@@ -238,6 +245,11 @@ async def retry_report(report_id: str, user: User = Depends(get_current_user),
         raise HTTPException(status_code=404, detail="Report not found")
     if report.generated_at:
         return {"ok": True, "status": "ready"}  # already done, nothing to retry
+    if report.report_type == "live_game":
+        # Same $7 paywall as POST /live/report and POST /reports (Stage 2 QA H1):
+        # re-queueing a live report is generating one.
+        from backend.services.live_tracker import assert_live_tracker_access
+        assert_live_tracker_access(org)
     report.error_reason = None
     # Re-analysis resets the report-scoped chat (Engine §13): the film is being
     # re-read, so prior answers no longer describe what the report will say.

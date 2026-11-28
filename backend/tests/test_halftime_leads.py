@@ -8,6 +8,7 @@ reused token, invalid email rejected, PDF not deliverable before confirm, tokens
 at rest, resend for expired/used links, rate limits on submit + resend, honeypot,
 optional phone (never texted), and the staging outbound allowlist.
 """
+import uuid
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
@@ -41,6 +42,9 @@ class MemStore:
     async def get_by_token_hash(self, h):
         return next((r for r in self.rows if r.token_hash == h), None)
 
+    async def get_by_id(self, lead_id):
+        return next((r for r in self.rows if str(r.id) == str(lead_id)), None)
+
     async def add(self, lead):
         self.rows.append(lead)
 
@@ -61,29 +65,32 @@ class Outbox:
     def __init__(self):
         self.confirms = []   # (to, name, url)
         self.pdfs = []       # (to, name)
+        self.unsub_tokens = []
         self.fail_confirm = False
         self.fail_pdf = False
 
-    async def confirm(self, to, name, url):
+    async def confirm(self, to, name, url, unsub_token):
         if self.fail_confirm:
             raise RuntimeError("provider down")
         self.confirms.append((to, name, url))
+        self.unsub_tokens.append(unsub_token)
         return True
 
-    async def pdf(self, to, name):
+    async def pdf(self, to, name, unsub_token):
         if self.fail_pdf:
             raise RuntimeError("provider down")
         self.pdfs.append((to, name))
+        self.unsub_tokens.append(unsub_token)
         return True
 
 
 def _new_lead_plain(*, name, email, phone, ip, now):
     return SimpleNamespace(
-        id=object(), name=name, email=email, phone=phone, source=svc.SOURCE, status="pending",
+        id=uuid.uuid4(), name=name, email=email, phone=phone, source=svc.SOURCE, status="pending",
         consent_text=svc.CONSENT_TEXT, consented_at=now, submit_ip=ip, token_hash=None,
         token_expires_at=None, token_used_at=None, confirmation_sent_at=None,
         confirmation_send_count=0, confirmed_at=None, confirmed_ip=None, pdf_sent_at=None,
-        created_at=now, updated_at=now,
+        unsubscribed_at=None, created_at=now, updated_at=now,
     )
 
 
@@ -371,27 +378,37 @@ def test_staging_outbound_is_allowlist_only_by_default(monkeypatch):
     assert email_service.lead_email_allowed("real.coach@gmail.com")
 
 
-async def test_suppressed_recipient_is_never_handed_to_the_provider(monkeypatch):
+@pytest.fixture
+def compliance(monkeypatch):
+    monkeypatch.setattr(settings, "COMPANY_POSTAL_ADDRESS", "123 Test St, Testville, TX 00000")
+    monkeypatch.setattr(settings, "PUBLIC_API_URL", "https://api.example.test/")
+    monkeypatch.setattr(settings, "LEAD_CONFIRM_BASE_URL", "https://app.example.test")
+
+
+UNSUB = "lead-id.sig"
+
+
+async def test_suppressed_recipient_is_never_handed_to_the_provider(monkeypatch, compliance):
     sent = []
     monkeypatch.setattr(email_service.resend.Emails, "send", lambda payload: sent.append(payload))
     monkeypatch.setattr(settings, "LEAD_EMAIL_LIVE_SEND", False)
     monkeypatch.setattr(settings, "LEAD_EMAIL_ALLOWLIST", "qa1@example.com")
     monkeypatch.setattr(settings, "RESEND_API_KEY", "re_test_placeholder")
-    assert await email_service.send_halftime_confirm_email("real.coach@gmail.com", "Coach", "https://x/c?token=t") is False
-    assert await email_service.send_halftime_pdf_email("real.coach@gmail.com", "Coach", b"%PDF", "a.pdf") is False
+    assert await email_service.send_halftime_confirm_email("real.coach@gmail.com", "Coach", "https://x/c?token=t", UNSUB) is False
+    assert await email_service.send_halftime_pdf_email("real.coach@gmail.com", "Coach", b"%PDF", "a.pdf", UNSUB) is False
     assert sent == []
-    assert await email_service.send_halftime_pdf_email("qa1@example.com", "Test Coach", halftime_sheet_pdf(), PDF_FILENAME) is True
+    assert await email_service.send_halftime_pdf_email("qa1@example.com", "Test Coach", halftime_sheet_pdf(), PDF_FILENAME, UNSUB) is True
     [payload] = sent
     assert payload["to"] == "qa1@example.com"
     [att] = payload["attachments"]
     assert att["filename"] == PDF_FILENAME and bytes(att["content"]).startswith(b"%PDF-")
 
 
-async def test_missing_email_provider_raises_instead_of_pretending(monkeypatch):
+async def test_missing_email_provider_raises_instead_of_pretending(monkeypatch, compliance):
     monkeypatch.setattr(settings, "LEAD_EMAIL_LIVE_SEND", True)
     monkeypatch.setattr(settings, "RESEND_API_KEY", "")
     with pytest.raises(RuntimeError):
-        await email_service.send_halftime_confirm_email("qa1@example.com", "Coach", "https://x")
+        await email_service.send_halftime_confirm_email("qa1@example.com", "Coach", "https://x", UNSUB)
 
 
 def test_no_sms_and_no_invented_claims_in_lead_copy():
@@ -412,3 +429,146 @@ def test_pdf_is_a_real_two_page_pdf_with_the_halftime_sheet():
     assert b"CoachLenz Halftime Sheet" in pdf and b"HALFTIME SHEET" in pdf
     assert b"Football / Flag Football" in pdf and b"Basketball" in pdf
     assert b"$" not in pdf.split(b"stream")[1]   # no prices on the sheet
+
+
+# ── 7. Stage 2 QA M2: one-click unsubscribe, List-Unsubscribe, postal address ───
+def _confirmed_lead(env):
+    _submit(env)
+    t = _token_from(env.out.confirms[-1][2])
+    assert env.client.post("/leads/halftime-sheet/confirm", json={"token": t}).status_code == 200
+    return env.store.rows[0]
+
+
+def test_every_lead_email_carries_a_signed_unsubscribe_token_for_that_lead(env):
+    lead = _confirmed_lead(env)
+    assert len(env.out.unsub_tokens) == 2                        # confirmation + PDF
+    for tok in env.out.unsub_tokens:
+        assert svc.verify_unsubscribe_token(tok) == str(lead.id)
+
+
+def test_one_click_unsubscribe_from_the_list_unsubscribe_header(env):
+    lead = _confirmed_lead(env)
+    tok = env.out.unsub_tokens[-1]
+    # RFC 8058: the mail client POSTs this exact form body to the header URL.
+    r = env.client.post(f"/leads/halftime-sheet/unsubscribe?token={tok}",
+                        content="List-Unsubscribe=One-Click",
+                        headers={"content-type": "application/x-www-form-urlencoded"})
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "unsubscribed"
+    assert lead.status == "unsubscribed" and lead.unsubscribed_at is not None
+    # Idempotent: a second click gets the same answer.
+    r = env.client.post("/leads/halftime-sheet/unsubscribe", json={"token": tok})
+    assert r.status_code == 200 and lead.status == "unsubscribed"
+
+
+def test_unsubscribed_lead_gets_no_more_email_from_resend(env):
+    lead = _confirmed_lead(env)
+    sent_before = (len(env.out.confirms), len(env.out.pdfs))
+    env.client.post("/leads/halftime-sheet/unsubscribe", json={"token": env.out.unsub_tokens[-1]})
+    lead.confirmation_sent_at = None                             # cooldown is not what stops it
+    r = env.client.post("/leads/halftime-sheet/resend", json={"email": lead.email})
+    assert r.status_code == 200                                  # same generic answer
+    assert (len(env.out.confirms), len(env.out.pdfs)) == sent_before
+
+
+def test_unsubscribe_kills_an_outstanding_confirmation_link(env):
+    _submit(env)
+    lead = env.store.rows[0]
+    t = _token_from(env.out.confirms[-1][2])
+    env.client.post("/leads/halftime-sheet/unsubscribe", json={"token": env.out.unsub_tokens[-1]})
+    assert lead.token_hash is None
+    r = env.client.post("/leads/halftime-sheet/confirm", json={"token": t})
+    assert r.status_code == 400 and env.out.pdfs == []
+
+
+def test_resubmitting_the_form_is_a_new_explicit_opt_in(env):
+    lead = _confirmed_lead(env)
+    env.client.post("/leads/halftime-sheet/unsubscribe", json={"token": env.out.unsub_tokens[-1]})
+    lead.confirmation_sent_at = None
+    assert _submit(env).status_code == 200
+    assert lead.status == "pending" and len(env.out.confirms) == 2
+
+
+@pytest.mark.parametrize("tok", ["", "nonsense", "abc.def", None])
+def test_forged_or_garbled_unsubscribe_token_is_refused(env, tok):
+    lead = _confirmed_lead(env)
+    real = env.out.unsub_tokens[-1]
+    forged = real[:-1] + ("0" if real[-1] != "0" else "1")
+    for bad in ([tok] if tok is not None else [forged]):
+        r = env.client.post("/leads/halftime-sheet/unsubscribe", json={"token": bad})
+        assert r.status_code == 400 and r.json()["detail"]["code"] == "token_invalid"
+    assert lead.status == "confirmed"
+
+
+def test_unsubscribe_token_for_one_lead_cannot_be_moved_to_another():
+    tok = svc.unsubscribe_token("11111111-1111-1111-1111-111111111111")
+    _lid, sig = tok.rsplit(".", 1)
+    assert svc.verify_unsubscribe_token(f"22222222-2222-2222-2222-222222222222.{sig}") is None
+
+
+def test_unsubscribe_is_rate_limited_per_ip(env):
+    codes = [env.client.post("/leads/halftime-sheet/unsubscribe", json={"token": "x.y"}).status_code
+             for _ in range(61)]
+    assert codes[-1] == 429
+
+
+async def test_lead_email_has_list_unsubscribe_headers_footer_link_and_postal_address(monkeypatch, compliance):
+    sent = []
+    monkeypatch.setattr(email_service.resend.Emails, "send", lambda payload: sent.append(payload))
+    monkeypatch.setattr(settings, "LEAD_EMAIL_LIVE_SEND", False)
+    monkeypatch.setattr(settings, "LEAD_EMAIL_ALLOWLIST", "qa1@example.com")
+    monkeypatch.setattr(settings, "RESEND_API_KEY", "re_test_placeholder")
+    tok = svc.unsubscribe_token("11111111-1111-1111-1111-111111111111")
+    assert await email_service.send_halftime_pdf_email("qa1@example.com", "Test Coach", b"%PDF-1.4", "a.pdf", tok)
+    assert await email_service.send_halftime_confirm_email("qa1@example.com", "Test Coach", "https://x/c?token=t", tok)
+    for payload in sent:
+        h = payload["headers"]
+        assert h["List-Unsubscribe"] == f"<https://api.example.test/leads/halftime-sheet/unsubscribe?token={tok}>"
+        assert h["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
+        assert f"https://app.example.test/live-tracker/halftime-sheet/unsubscribe?token={tok}" in payload["html"]
+        assert "Unsubscribe" in payload["html"]
+        assert "123 Test St, Testville, TX 00000" in payload["html"]
+
+
+@pytest.mark.parametrize("missing", ["COMPANY_POSTAL_ADDRESS", "PUBLIC_API_URL"])
+async def test_lead_email_fails_closed_without_postal_address_or_api_url(monkeypatch, compliance, missing):
+    sent = []
+    monkeypatch.setattr(email_service.resend.Emails, "send", lambda payload: sent.append(payload))
+    monkeypatch.setattr(settings, "LEAD_EMAIL_LIVE_SEND", True)
+    monkeypatch.setattr(settings, "RESEND_API_KEY", "re_test_placeholder")
+    monkeypatch.setattr(settings, missing, "  ")
+    tok = svc.unsubscribe_token("11111111-1111-1111-1111-111111111111")
+    with pytest.raises(email_service.LeadEmailNotConfigured) as e1:
+        await email_service.send_halftime_pdf_email("qa1@example.com", "Coach", b"%PDF", "a.pdf", tok)
+    with pytest.raises(email_service.LeadEmailNotConfigured):
+        await email_service.send_halftime_confirm_email("qa1@example.com", "Coach", "https://x", tok)
+    assert missing in str(e1.value)
+    assert sent == []
+
+
+def test_confirm_without_postal_address_sends_no_pdf_and_says_so(env, monkeypatch, compliance):
+    """End to end through the real send function: no address -> nothing reaches the
+    provider, the coach gets an honest 502, and the confirmation itself is kept."""
+    sent = []
+    monkeypatch.setattr(email_service.resend.Emails, "send", lambda payload: sent.append(payload))
+    monkeypatch.setattr(settings, "LEAD_EMAIL_LIVE_SEND", True)
+    monkeypatch.setattr(settings, "RESEND_API_KEY", "re_test_placeholder")
+    monkeypatch.setattr(svc, "_send_pdf_email", _real_send_pdf)
+    monkeypatch.setattr(settings, "COMPANY_POSTAL_ADDRESS", "")
+    _submit(env)
+    t = _token_from(env.out.confirms[-1][2])
+    r = env.client.post("/leads/halftime-sheet/confirm", json={"token": t})
+    assert r.status_code == 502 and r.json()["detail"]["code"] == "pdf_send_failed"
+    assert env.store.rows[0].status == "confirmed" and env.store.rows[0].pdf_sent_at is None
+    assert sent == []
+
+
+async def _real_send_pdf(to, name, unsub_token):
+    from backend.services.halftime_pdf import PDF_FILENAME, halftime_sheet_pdf
+    return await email_service.send_halftime_pdf_email(to, name, halftime_sheet_pdf(), PDF_FILENAME, unsub_token)
+
+
+def test_consent_promise_of_unsubscribe_is_backed_by_a_route():
+    assert "unsubscribe" in svc.CONSENT_TEXT.lower()
+    paths = {r.path for r in router_mod.router.routes}
+    assert "/leads/halftime-sheet/unsubscribe" in paths

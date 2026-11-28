@@ -82,6 +82,13 @@ _HEAVY_WORKERS = {AiDetectWorker, IngestWorker}
 
 
 @app.on_event("startup")
+async def refuse_live_stripe_outside_production():
+    # Stage 2 QA L2: never boot a non-production environment with a live Stripe key.
+    from backend.services.stripe_mode import assert_stripe_mode_safe_at_startup
+    assert_stripe_mode_safe_at_startup()
+
+
+@app.on_event("startup")
 async def start_workers():
     mode = (settings.WORKERS_IN_API or "all").strip().lower()
     if mode == "none":

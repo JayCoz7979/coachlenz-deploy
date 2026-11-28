@@ -18,6 +18,20 @@ no grandfathering, and a subscription does not unlock it.
   Cancel, expiry, and unpaid sessions grant nothing.
 - Checkout: `POST /billing/live-tracker/checkout` (`mode=payment`, quantity 1, price
   from `STRIPE_PRICE_LIVE_TRACKER`; unset returns 503, fail closed).
+- One open Checkout Session per org (migration 068): the endpoint locks the org row
+  (`SELECT … FOR UPDATE`), reuses the remembered session while Stripe reports it
+  `open`, and returns 409 if Stripe reports it already paid but the webhook has not
+  landed. A PAID session for an org that already has the unlock from a different
+  session is written to `live_tracker_extra_payments` (`needs_refund = true`) with a
+  warning log line. Refund it by hand in the Stripe dashboard; nothing is refunded
+  automatically.
+- Test mode only outside production: with `ENVIRONMENT != production` the app refuses
+  to start with an `sk_live_`/`rk_live_` key, every checkout returns 503 with one, and
+  the webhook ignores (200, not recorded) any event whose `livemode` does not match
+  the environment.
+- `POST /reports` with `report_type = live_game` (and `POST /reports/{id}/retry` for a
+  live_game report) is behind the same gate, so it is not a side door around
+  `POST /live/report`.
 - Server-side gate on every `/live` write route (`POST /session`, `POST /plays`,
   `PATCH/DELETE /play/{id}`, `POST /play/{id}/flag`, `POST /report`): 403 with
   `detail = {code: "live_tracker_payment_required", message, checkout_url: "/live-tracker", price_usd: 7}`.
@@ -168,6 +182,8 @@ Security:
 - Single use is enforced by an atomic `UPDATE … WHERE token_used_at IS NULL AND token_expires_at > now`.
 - Rate limits per IP: submit 5/min and 30/hr, resend 3/min and 20/hr, confirm 20/min. Each address also has a 60-second resend cooldown, which starts only after a send succeeds.
 - Submit and resend give the same answer for every address, so they can't be used to look up who is on the list.
+
+Unsubscribe (CAN-SPAM / RFC 8058): every lead email carries a footer unsubscribe link (`/live-tracker/halftime-sheet/unsubscribe?token=…`), the sender's postal address from `COMPANY_POSTAL_ADDRESS`, and the headers `List-Unsubscribe: <{PUBLIC_API_URL}/leads/halftime-sheet/unsubscribe?token=…>` and `List-Unsubscribe-Post: List-Unsubscribe=One-Click`. The token is `"<lead id>.<HMAC-SHA256(SECRET_KEY)>"`, so nothing extra is stored. `POST /leads/halftime-sheet/unsubscribe` (token in the query or a JSON body, 60/min per IP) sets `status='unsubscribed'` and `unsubscribed_at` (migration 069) and cancels any outstanding confirmation link. It is idempotent. An unsubscribed lead gets no resend; submitting the form again is a new double opt-in. **Fail closed:** if `COMPANY_POSTAL_ADDRESS` or `PUBLIC_API_URL` is unset, no lead email is sent at all (submit and confirm return an honest 502).
 
 Outbound safety (staging): lead emails are sent through the existing Resend provider **only** to `LEAD_EMAIL_ALLOWLIST` addresses (comma-separated emails or `@domain` entries) unless `LEAD_EMAIL_LIVE_SEND=true`. That flag defaults to off, so staging cannot email a real coach. Set `LEAD_CONFIRM_BASE_URL` to the staging frontend so confirm links do not point at production.
 

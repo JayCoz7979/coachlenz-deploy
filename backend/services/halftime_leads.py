@@ -184,6 +184,30 @@ def hash_token(token: str) -> str:
     return hmac.new(settings.SECRET_KEY.encode(), token.encode(), hashlib.sha256).hexdigest()
 
 
+UNSUBSCRIBE_PURPOSE = "halftime-lead-unsubscribe:"
+
+
+def unsubscribe_token(lead_id) -> str:
+    """Signed, stateless one-click unsubscribe token for a lead: '<lead id>.<hmac>'.
+    Nothing is stored for it; a forged or altered token fails verification."""
+    lid = str(lead_id)
+    sig = hmac.new(settings.SECRET_KEY.encode(), (UNSUBSCRIBE_PURPOSE + lid).encode(),
+                   hashlib.sha256).hexdigest()
+    return f"{lid}.{sig}"
+
+
+def verify_unsubscribe_token(token: str) -> Optional[str]:
+    """The lead id inside a valid unsubscribe token, or None."""
+    token = (token or "").strip()
+    if not token or len(token) > MAX_TOKEN_LEN or "." not in token:
+        return None
+    lid, sig = token.rsplit(".", 1)
+    expected = unsubscribe_token(lid).rsplit(".", 1)[1]
+    if not hmac.compare_digest(sig, expected):
+        return None
+    return lid
+
+
 def confirm_url(token: str) -> str:
     base = (settings.LEAD_CONFIRM_BASE_URL or "https://app.coachlenz.com").rstrip("/")
     return f"{base}/live-tracker/halftime-sheet/confirm?token={token}"
@@ -199,6 +223,7 @@ def _aware(dt: Optional[datetime]) -> Optional[datetime]:
 class LeadStore(Protocol):
     async def get_by_email(self, email: str): ...
     async def get_by_token_hash(self, token_hash: str): ...
+    async def get_by_id(self, lead_id: str): ...
     async def add(self, lead) -> None: ...
     async def claim_token(self, lead, token_hash: str, now: datetime) -> bool: ...
     async def commit(self) -> None: ...
@@ -219,6 +244,16 @@ class SqlLeadStore:
         from sqlalchemy import select
         from backend.models.halftime_lead import HalftimePdfLead
         r = await self.db.execute(select(HalftimePdfLead).where(HalftimePdfLead.token_hash == token_hash))
+        return r.scalar_one_or_none()
+
+    async def get_by_id(self, lead_id: str):
+        from sqlalchemy import select
+        from backend.models.halftime_lead import HalftimePdfLead
+        try:
+            lid = uuid.UUID(str(lead_id))
+        except (ValueError, TypeError):
+            return None
+        r = await self.db.execute(select(HalftimePdfLead).where(HalftimePdfLead.id == lid))
         return r.scalar_one_or_none()
 
     async def add(self, lead) -> None:
@@ -259,15 +294,15 @@ def _new_lead(*, name: str, email: str, phone: Optional[str], ip: Optional[str],
 
 
 # ── outbound (patched in tests) ──────────────────────────────────────────────
-async def _send_confirmation_email(to: str, name: str, url: str) -> bool:
+async def _send_confirmation_email(to: str, name: str, url: str, unsub_token: str) -> bool:
     from backend.services import email_service
-    return await email_service.send_halftime_confirm_email(to, name, url)
+    return await email_service.send_halftime_confirm_email(to, name, url, unsub_token)
 
 
-async def _send_pdf_email(to: str, name: str) -> bool:
+async def _send_pdf_email(to: str, name: str, unsub_token: str) -> bool:
     from backend.services import email_service
     from backend.services.halftime_pdf import PDF_FILENAME, halftime_sheet_pdf
-    return await email_service.send_halftime_pdf_email(to, name, halftime_sheet_pdf(), PDF_FILENAME)
+    return await email_service.send_halftime_pdf_email(to, name, halftime_sheet_pdf(), PDF_FILENAME, unsub_token)
 
 
 # ── flow ─────────────────────────────────────────────────────────────────────
@@ -286,7 +321,7 @@ async def _issue_confirmation(store: LeadStore, lead, now: datetime) -> SendOutc
         return SendOutcome(sent=False)
     token = new_token()
     try:
-        await _send_confirmation_email(lead.email, lead.name, confirm_url(token))
+        await _send_confirmation_email(lead.email, lead.name, confirm_url(token), unsubscribe_token(lead.id))
     except Exception as e:
         logger.warning("[halftime_leads] confirmation send failed: %s", type(e).__name__)
         raise LeadError(502, "email_send_failed", "We could not send the confirmation email right now. Please try again in a moment.")
@@ -315,6 +350,15 @@ async def submit_lead(store: LeadStore, *, name: str, email: str, phone: Optiona
         lead = _new_lead(name=name, email=email, phone=phone, ip=ip, now=now)
         await store.add(lead)
         await store.commit()          # the pending lead exists even if the send fails
+    elif lead.status == "unsubscribed":
+        # Submitting the form again is a new, explicit request: back to pending with
+        # the new consent, and still nothing but a confirmation link until they click.
+        lead.status = "pending"
+        lead.consent_text = CONSENT_TEXT
+        lead.consented_at = now
+        lead.submit_ip = ip
+        lead.updated_at = now
+        await store.commit()
     await _issue_confirmation(store, lead, now)
     # Same answer whether the address is new, pending, confirmed, or in cooldown.
     return {"ok": True, "status": "pending", "message": GENERIC_SUBMIT_MESSAGE}
@@ -350,7 +394,7 @@ async def confirm_lead(store: LeadStore, *, token: str, ip: Optional[str],
 
     # Confirmed first, PDF second: the PDF is never sent for an unconfirmed lead.
     try:
-        await _send_pdf_email(lead.email, lead.name)
+        await _send_pdf_email(lead.email, lead.name, unsubscribe_token(lead.id))
     except Exception as e:
         logger.warning("[halftime_leads] pdf send failed: %s", type(e).__name__)
         raise LeadError(502, "pdf_send_failed", "Your email is confirmed, but we could not send the PDF just now. Request a new link below to try again.",
@@ -373,6 +417,30 @@ async def resend_confirmation(store: LeadStore, *, email: Optional[str] = None, 
         lead = await store.get_by_token_hash(hash_token(tok))
     if lead is None and email:
         lead = await store.get_by_email(email_format(email))
-    if lead is not None:
+    if lead is not None and lead.status != "unsubscribed":
         await _issue_confirmation(store, lead, now)
     return {"ok": True, "message": "If that address asked for the Halftime Sheet, a new confirmation link is on its way. It lasts 24 hours."}
+
+
+UNSUBSCRIBED_MESSAGE = "You are unsubscribed. CoachLenz will not send you more Halftime Sheet emails."
+
+
+async def unsubscribe_lead(store: LeadStore, *, token: str, now: Optional[datetime] = None) -> dict:
+    """One-click unsubscribe (link in every lead email + List-Unsubscribe header).
+
+    A valid signed token sets status='unsubscribed' + unsubscribed_at and kills any
+    outstanding confirmation link. Idempotent: a second click, or a lead that no longer
+    exists, gets the same success answer. Only a forged/garbled token is refused."""
+    now = now or datetime.now(timezone.utc)
+    lead_id = verify_unsubscribe_token(token)
+    if lead_id is None:
+        raise LeadError(400, "token_invalid", "This unsubscribe link is not valid. Open it straight from the email.")
+    lead = await store.get_by_id(lead_id)
+    if lead is not None and lead.status != "unsubscribed":
+        lead.status = "unsubscribed"
+        lead.unsubscribed_at = now
+        lead.token_hash = None
+        lead.token_expires_at = None
+        lead.updated_at = now
+        await store.commit()
+    return {"ok": True, "status": "unsubscribed", "message": UNSUBSCRIBED_MESSAGE}

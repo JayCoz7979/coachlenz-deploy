@@ -31,7 +31,8 @@ def _org(**kw):
     base = dict(id="00000000-0000-0000-0000-0000000000aa", name="Test HS",
                 stripe_customer_id="cus_1", stripe_subscription_status=None,
                 live_tracker_purchased_at=None, created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
-                chosen_sports=["football"], is_trial=False)
+                chosen_sports=["football"], is_trial=False,
+                live_tracker_open_session_id=None, live_tracker_open_session_expires_at=None)
     base.update(kw)
     return SimpleNamespace(**base)
 
@@ -103,8 +104,9 @@ def test_grant_is_conditional_on_not_already_granted():
     class _DB:
         async def execute(self, stmt, *a, **k):
             captured.append(stmt)
+            return SimpleNamespace(rowcount=1)
 
-    asyncio.run(lt.grant_live_tracker(_DB(), "o1", "cs_test_1"))
+    assert asyncio.run(lt.grant_live_tracker(_DB(), "o1", "cs_test_1")) is True
     assert len(captured) == 1
     sql = str(captured[0].compile(compile_kwargs={"literal_binds": False}))
     assert "UPDATE organizations" in sql
@@ -257,17 +259,33 @@ def test_every_mutating_route_depends_on_the_gate():
 
 # ── one-time Checkout ────────────────────────────────────────────────────────
 class _CheckoutDB:
-    def __init__(self):
+    """Stub session. The first SELECT (the org row lock) returns `org`; UPDATEs are
+    captured so a test can see what was remembered on the org."""
+    def __init__(self, org=None):
+        self.org = org
         self.added = []
+        self.updates = []
+        self.selects = []
+        self.commits = 0
+        self.rollbacks = 0
 
-    async def execute(self, *_a, **_k):
-        return None
+    async def execute(self, stmt=None, *_a, **_k):
+        kind = stmt.__class__.__name__ if stmt is not None else ""
+        if kind == "Select":
+            self.selects.append(stmt)
+        elif kind == "Update":
+            self.updates.append(stmt.compile().params)
+        org = self.org
+        return SimpleNamespace(scalar_one=lambda: org)
 
     def add(self, obj):
         self.added.append(obj)
 
     async def commit(self):
-        return None
+        self.commits += 1
+
+    async def rollback(self):
+        self.rollbacks += 1
 
 
 def _req():
@@ -323,7 +341,7 @@ def test_checkout_creates_one_time_payment_from_env_price(monkeypatch):
         return SimpleNamespace(url="https://checkout.stripe.test/c/pay/cs_test_1", id="cs_test_1")
 
     monkeypatch.setattr(billing.stripe.checkout.Session, "create", create)
-    db = _CheckoutDB()
+    db = _CheckoutDB(_org())
     out = asyncio.run(billing.live_tracker_checkout(_body(), _req(), user=_user(), org=_org(), db=db))
     assert out == {"checkout_url": "https://checkout.stripe.test/c/pay/cs_test_1"}
     assert seen["mode"] == "payment"
@@ -344,9 +362,13 @@ def test_checkout_creates_customer_when_missing(monkeypatch):
     seen = {}
     monkeypatch.setattr(billing.stripe.checkout.Session, "create",
                         lambda **kw: seen.update(kw) or SimpleNamespace(url="u", id="cs_1"))
+    db = _CheckoutDB(_org(stripe_customer_id=None))
     asyncio.run(billing.live_tracker_checkout(_body(), _req(), user=_user(),
-                                              org=_org(stripe_customer_id=None), db=_CheckoutDB()))
+                                              org=_org(stripe_customer_id=None), db=db))
     assert seen["customer"] == "cus_new"
+    # Customer id and the open session are written in the SAME commit as the lock.
+    assert db.commits == 1
+    assert db.updates[-1]["stripe_customer_id"] == "cus_new"
 
 
 def test_checkout_refuses_an_already_unlocked_org(monkeypatch):

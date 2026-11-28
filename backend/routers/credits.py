@@ -65,6 +65,8 @@ async def buy_bundle(body: BundleCheckout, request: Request,
                      user: User = Depends(get_current_user),
                      org: Organization = Depends(get_current_org),
                      db: AsyncSession = Depends(get_db)):
+    from backend.routers.billing import refuse_live_key_outside_production
+    refuse_live_key_outside_production()
     if body.bundle not in credit_svc.BUNDLES:
         raise HTTPException(status_code=400, detail="Unknown credit bundle")
     n, price_cents = credit_svc.BUNDLES[body.bundle]

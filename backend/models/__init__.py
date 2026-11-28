@@ -20,7 +20,7 @@ from .roster import RosterPlayer
 from .usage import AnalysisUsage, CoachUsageLimit
 from .grade_annotation import GradeAnnotation
 from .learning import CoachLabelCorrection, AccountLearningAdjustment, LabelQualityScore
-from .billing_event import ProcessedStripeEvent
+from .billing_event import ProcessedStripeEvent, LiveTrackerExtraPayment
 from .purchase_ip import PurchaseIPLog
 from .funnel import FunnelEvent, MarketingLead
 from .credits import OrgCredits, CreditLedger

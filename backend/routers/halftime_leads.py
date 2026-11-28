@@ -5,6 +5,10 @@
   POST /leads/halftime-sheet/confirm  {token} from that link. Confirms, then emails the PDF.
   POST /leads/halftime-sheet/resend   {email} or {token}: a fresh link for an expired,
                                       used, or lost one.
+  POST /leads/halftime-sheet/unsubscribe?token=...  (or JSON {token}) one-click
+                                      unsubscribe. The List-Unsubscribe header points
+                                      here; mail clients POST "List-Unsubscribe=One-Click"
+                                      (RFC 8058). Idempotent.
 
 There is deliberately NO endpoint that returns the PDF: it only ever leaves the server
 as an email attachment, after confirmation. Confirm is a POST (the frontend page sends
@@ -89,5 +93,25 @@ async def confirm(body: ConfirmIn, request: Request, store: svc.LeadStore = Depe
 async def resend(body: ResendIn, request: Request, store: svc.LeadStore = Depends(get_lead_store)):
     try:
         return await svc.resend_confirmation(store, email=body.email, token=body.token)
+    except svc.LeadError as e:
+        return _err(e)
+
+
+@router.post("/unsubscribe")
+@limiter.limit("60/minute")
+async def unsubscribe(request: Request, token: Optional[str] = None,
+                      store: svc.LeadStore = Depends(get_lead_store)):
+    """Token from the query string (List-Unsubscribe one-click POST, whose body is the
+    form field List-Unsubscribe=One-Click) or a JSON body {token} (the footer page)."""
+    tok = token
+    if not tok and "json" in (request.headers.get("content-type") or ""):
+        try:
+            data = await request.json()
+            if isinstance(data, dict):
+                tok = data.get("token")
+        except ValueError:
+            tok = None
+    try:
+        return await svc.unsubscribe_lead(store, token=str(tok or "")[:400])
     except svc.LeadError as e:
         return _err(e)

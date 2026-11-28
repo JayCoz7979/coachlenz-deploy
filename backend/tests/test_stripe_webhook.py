@@ -42,6 +42,11 @@ class _FakeRequest:
 
 
 class _FakeResult:
+    rowcount = 1          # an UPDATE "matched one row" (the $7 grant happened)
+
+    def first(self):
+        return None
+
     def scalar_one_or_none(self):
         return None
 

@@ -18,7 +18,7 @@ class HalftimePdfLead(Base):
     email = Column(String, nullable=False)
     phone = Column(String)
     source = Column(String, nullable=False, default="halftime_pdf")
-    status = Column(String, nullable=False, default="pending")  # pending | confirmed
+    status = Column(String, nullable=False, default="pending")  # pending | confirmed | unsubscribed
     consent_text = Column(String, nullable=False)
     consented_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     submit_ip = Column(String)
@@ -30,5 +30,6 @@ class HalftimePdfLead(Base):
     confirmed_at = Column(DateTime(timezone=True))
     confirmed_ip = Column(String)
     pdf_sent_at = Column(DateTime(timezone=True))
+    unsubscribed_at = Column(DateTime(timezone=True))   # migration 069
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)

@@ -18,6 +18,8 @@ GET /live/session/{id}) and their reports. Every write route refuses with 403
 Nothing else. Consent, verified email, and sport lock stay separate gates and are
 never relaxed by this module.
 """
+import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -26,6 +28,8 @@ from sqlalchemy import update
 
 from backend.config import settings
 from backend.models.organization import Organization
+
+logger = logging.getLogger(__name__)
 
 # Stripe Checkout Session metadata["kind"] for this offer. The webhook routes on it.
 LIVE_TRACKER_KIND = "live_tracker"
@@ -74,18 +78,67 @@ def assert_live_tracker_access(org: Any) -> None:
         raise HTTPException(status_code=403, detail=locked_detail(), headers=LOCKED_HEADER)
 
 
-async def grant_live_tracker(db, org_id: str, checkout_session_id: Optional[str]) -> None:
+async def grant_live_tracker(db, org_id: str, checkout_session_id: Optional[str]) -> bool:
     """Record the purchase on the org. Idempotent: only writes while still NULL, so a
     redelivered event (or a second paid session) never moves the original grant.
-    The caller commits (the webhook commits the idempotency marker in the same txn)."""
-    await db.execute(
+    Returns True only when this call made the grant. Also clears the remembered open
+    Checkout Session (migration 068). The caller commits (the webhook commits the
+    idempotency marker in the same txn)."""
+    result = await db.execute(
         update(Organization)
         .where(Organization.id == org_id, Organization.live_tracker_purchased_at.is_(None))
         .values(
             live_tracker_purchased_at=datetime.now(timezone.utc),
             live_tracker_checkout_session_id=checkout_session_id,
+            live_tracker_open_session_id=None,
+            live_tracker_open_session_expires_at=None,
         )
+        .execution_options(synchronize_session=False)
     )
+    return (result.rowcount or 0) == 1
+
+
+async def record_extra_payment(db, org_id: str, session_obj: dict) -> bool:
+    """A PAID $7 session arrived for an org that already has the unlock (Stage 2 QA M1).
+
+    If it is a DIFFERENT session from the one that made the grant, the coach paid
+    twice: record it in live_tracker_extra_payments (needs_refund=true) and log a
+    warning line for a human to refund in the Stripe dashboard. No automatic refund.
+    Returns True when a new extra payment was recorded."""
+    from sqlalchemy import select
+    from backend.models.billing_event import LiveTrackerExtraPayment
+
+    sid = session_obj.get("id")
+    if not sid:
+        return False
+    granted_sid = (await db.execute(
+        select(Organization.live_tracker_checkout_session_id).where(Organization.id == org_id)
+    )).first()
+    if granted_sid is None or granted_sid[0] == sid:
+        return False        # unknown org, or a second event for the granting session
+    exists = (await db.execute(
+        select(LiveTrackerExtraPayment.checkout_session_id)
+        .where(LiveTrackerExtraPayment.checkout_session_id == sid)
+    )).first()
+    if exists:
+        return False
+    pi = session_obj.get("payment_intent")
+    if isinstance(pi, dict):
+        pi = pi.get("id")
+    db.add(LiveTrackerExtraPayment(
+        checkout_session_id=sid,
+        organization_id=uuid.UUID(str(org_id)),
+        payment_intent_id=pi,
+        amount_total=session_obj.get("amount_total"),
+        currency=session_obj.get("currency"),
+        needs_refund=True,
+    ))
+    logger.warning(
+        "[live_tracker] extra paid checkout session %s for org %s, which already has the "
+        "unlock from %s. Flagged needs_refund in live_tracker_extra_payments; refund by hand.",
+        sid, org_id, granted_sid[0],
+    )
+    return True
 
 
 def live_tracker_session_is_paid(session_obj: dict) -> bool:

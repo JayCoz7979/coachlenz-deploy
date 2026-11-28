@@ -178,6 +178,13 @@ class Settings(BaseSettings):
     # Host of the frontend that serves /live-tracker/halftime-sheet/confirm. Staging
     # sets this to its own frontend URL so confirm links never point at production.
     LEAD_CONFIRM_BASE_URL: str = "https://app.coachlenz.com"
+    # CAN-SPAM footer + RFC 8058 one-click unsubscribe for lead emails (Stage 2 QA M2).
+    # Both FAIL CLOSED: if either is empty, no lead email is sent at all.
+    # COMPANY_POSTAL_ADDRESS: the sender's physical postal address, printed in the footer.
+    # PUBLIC_API_URL: this backend's public base URL; the List-Unsubscribe header points
+    # one-click POSTs at {PUBLIC_API_URL}/leads/halftime-sheet/unsubscribe.
+    COMPANY_POSTAL_ADDRESS: str = ""
+    PUBLIC_API_URL: str = ""
 
     # Twilio
     TWILIO_ACCOUNT_SID: str = ""

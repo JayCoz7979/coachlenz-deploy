@@ -95,6 +95,15 @@ async def run(ac, tok, ids, check):
             id=uuid.uuid4(), game_id=live_a.id, organization_id=uuid.UUID(ids["org"]),
             event_type="play", side="offense", player="12", coach_note=OURS,
         )
+        # Two more plays so the same-org POST /live/report control clears the
+        # 3-play minimum from #296 (0-2 plays is a 422 with no row).
+        ev_live_more = [
+            Event(
+                id=uuid.uuid4(), game_id=live_a.id, organization_id=uuid.UUID(ids["org"]),
+                event_type="play", side="offense", player="12",
+            )
+            for _ in range(2)
+        ]
         # Mis-stamped: another org's note sitting on OUR game id. The worker must
         # drop it because the event query filters organization_id, not just game_id.
         ev_mis = Event(
@@ -116,7 +125,7 @@ async def run(ac, tok, ids, check):
             id=uuid.uuid4(), organization_id=org_b.id, game_id=game_b.id,
             title="Rival Clip", start_time=0, end_time=5, created_by=user_b.id,
         )
-        db.add_all([ev_b, ev_a, ev_live, ev_mis, report_b, job_b, clip_b])
+        db.add_all([ev_b, ev_a, ev_live, *ev_live_more, ev_mis, report_b, job_b, clip_b])
         await db.commit()
         B = {
             "org": str(org_b.id), "user": str(user_b.id), "game": str(game_b.id),
@@ -215,6 +224,25 @@ async def run(ac, tok, ids, check):
         "unknown report_type -> 422 and no row",
         r.status_code == 422 and THEIRS not in r.text and reports_after_type == reports_before_type,
     )
+
+    # $7 paywall (Stage 2 QA H1): an unpaid org cannot queue a live_game report
+    # through POST /reports either. 403 with the paywall code, nothing written.
+    reports_before_pay, jobs_before_pay = await n_rows()
+    r = await ac.post(
+        "/reports",
+        json={"title": "Unpaid live", "sport": "football", "game_ids": [A_LIVE], "report_type": "live_game"},
+        headers=member,
+    )
+    check(
+        "unpaid POST /reports live_game -> 403 paywall, no row, no job",
+        r.status_code == 403
+        and (r.json().get("detail") or {}).get("code") == "live_tracker_payment_required"
+        and await n_rows() == (reports_before_pay, jobs_before_pay),
+    )
+    async with AsyncSessionLocal() as db:
+        org_a = await db.get(Organization, uuid.UUID(ids["org"]))
+        org_a.live_tracker_purchased_at = datetime.utcnow()
+        await db.commit()
 
     # Same-org creates, one per report type the product accepts.
     created = {}

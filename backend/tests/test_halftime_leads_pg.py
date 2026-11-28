@@ -50,11 +50,11 @@ def outbox(monkeypatch):
     from backend.services import halftime_leads as svc
     sent = {"confirm": [], "pdf": []}
 
-    async def confirm(to, name, url):
+    async def confirm(to, name, url, unsub_token):
         sent["confirm"].append(url)
         return True
 
-    async def pdf(to, name):
+    async def pdf(to, name, unsub_token):
         sent["pdf"].append(to)
         return True
 
