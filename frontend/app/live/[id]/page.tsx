@@ -20,6 +20,11 @@ import {
   parseTermSystems, type TermSystem,
 } from '@/components/live/fields'
 import { TapGroup, GapSelector, RushLaneSelector, RouteTree, TargetAreaGrid, ShotZoneCourt } from '@/components/live/Selectors'
+import LiveTrackerPaywall from '@/components/live/Paywall'
+import {
+  TAP_MIN, resetEntry, stripForeign, switchPlayType, scoreDelta, applyScore, playSummary,
+  restoreFromPlays, paywallFromError, type LoggerMode,
+} from '@/components/live/logic'
 import { Zap, Loader2, Undo2, FileBarChart, ClipboardList, Flag, Trash2, X, ChevronDown } from 'lucide-react'
 
 type Cur = Record<string, any>
@@ -82,7 +87,7 @@ export default function LoggerPage() {
   const [config, setConfig] = useState<Config | null>(null)
   const [opponent, setOpponent] = useState('')
   const [plays, setPlays] = useState<Play[]>([])
-  const [mode, setMode] = useState<'us' | 'them' | 'st'>('us')
+  const [mode, setModeRaw] = useState<LoggerMode>('us')
   const [period, setPeriod] = useState('1')          // quarter or half
   const [scoreUs, setScoreUs] = useState('0')
   const [scoreThem, setScoreThem] = useState('0')
@@ -96,6 +101,9 @@ export default function LoggerPage() {
   const [editing, setEditing] = useState<string | null>(null)
   const [reportScope, setReportScope] = useState('full')
   const [online, setOnline] = useState(true)
+  // $7 Live Tracker gate. The server refuses every write for an unpaid org; when it
+  // does, the entry panel is replaced by the paywall (the log stays readable).
+  const [locked, setLocked] = useState<string | null>(null)
 
   const playsRef = useRef<Play[]>([])
   const syncing = useRef(false)
@@ -121,7 +129,9 @@ export default function LoggerPage() {
         ? { ...p, synced: true, _failed: false, event_id: p.event_id || uidToEvent[p.client_uid!] }
         : p))
       setOnline(true)
-    } catch {
+    } catch (e) {
+      const pw = paywallFromError(e)
+      if (pw) { setLocked(pw.message); return }   // not offline: the account is locked
       setOnline(false)   // stays queued + persisted; retried on reconnect / interval
     } finally { syncing.current = false }
   }, [sessionId])
@@ -143,14 +153,29 @@ export default function LoggerPage() {
       const server: Play[] = (r.data.plays || []).map((p: any) => ({ ...p, synced: true, client_uid: p.client_uid || p.event_id }))
       const serverUids = new Set(server.map(s => s.client_uid))
       const unsynced = (localPlays.length ? localPlays : []).filter(p => !p.synced && p.client_uid && !serverUids.has(p.client_uid))
-      setPlays([...server, ...unsynced])
+      const all = [...server, ...unsynced]
+      setPlays(all)
+      // A hard reload restores the score, period and possession of the last play, so
+      // the next play (and the report's Score & Momentum) doesn't restart at 0-0 Q1.
+      const restored = restoreFromPlays(all, r.data.config?.sport === 'basketball')
+      setScoreUs(restored.scoreUs); setScoreThem(restored.scoreThem)
+      if (restored.period) setPeriod(restored.period)
+      if (restored.mode) setModeRaw(restored.mode)
       setOnline(true)
       setTimeout(() => sync(), 0)
     }).catch(e => {
+      if (localCfg && localPlays.length) {
+        const restored = restoreFromPlays(localPlays, localCfg.sport === 'basketball')
+        setScoreUs(restored.scoreUs); setScoreThem(restored.scoreThem)
+        if (restored.period) setPeriod(restored.period)
+        if (restored.mode) setModeRaw(restored.mode)
+      }
       // Offline / server error: only hard-fail if we have nothing cached to work from.
       if (localCfg) { setOnline(false) }
       else { setError(e?.response?.data?.detail || 'Could not load this game session.') }
     })
+    // Read-only check so an unpaid coach sees the paywall before tapping anything.
+    api.get('/live/access').then(r => { if (r.data && r.data.has_access === false) setLocked('') }).catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, sessionId])
 
@@ -176,10 +201,21 @@ export default function LoggerPage() {
   // Numeric current period (OT -> 5 for football, 3 for basketball) for logging + report scope.
   const periodNum = period === 'OT' ? (isBB ? 3 : 5) : (Number(period) || 1)
 
-  const set = (k: string, v: any) => setCur(c => ({ ...c, [k]: v }))
+  // Switching play type clears the other type's detail (no run gap on a pass, etc.).
+  const set = (k: string, v: any) => setCur(c => (
+    (k === 'play_type' || k === 'opp_play_type') ? switchPlayType(c, k, v) : { ...c, [k]: v }))
+  // Switching Our Ball / Their Ball / Special Teams starts a clean entry (keeps only
+  // down, distance and ball spot), so a Special Teams play can never inherit the
+  // previous play's opp_formation / opp_play_type.
+  const setMode = (m: LoggerMode) => {
+    if (m === mode) return
+    setModeRaw(m)
+    setCur(c => resetEntry(c))
+  }
+  const toggleQuick = () => { setQuick(q => !q); setCur(c => resetEntry(c)) }
   const roster = (opp: boolean) => (opp ? config?.opponent_roster : config?.our_roster) || []
 
-  const buildPlay = (): Play => {
+  const buildPlay = (nextUs: string, nextThem: string): Play => {
     const possession = mode === 'them' ? 'them' : 'us'
     const p: Play = {
       possession,
@@ -187,10 +223,12 @@ export default function LoggerPage() {
       play_number: plays.length + 1,
       time_clock: clock || undefined,
       time_seconds: mmssToSec(clock) ?? undefined,
-      score_us: Number(scoreUs) || 0,
-      score_them: Number(scoreThem) || 0,
+      // The score AFTER this play (a scoring tap is already applied).
+      score_us: Number(nextUs) || 0,
+      score_them: Number(nextThem) || 0,
       is_quick_log: quick || undefined,
-      ...cur,
+      // Only this unit's fields are logged; nothing leaks from another mode.
+      ...stripForeign(mode, cur, quick),
     }
     if (isBB) { p.half = periodNum; if (lateGame) p.late_game = true }
     else { p.quarter = periodNum }
@@ -211,8 +249,9 @@ export default function LoggerPage() {
   }
 
   const advance = () => {
-    // football: auto-advance down/distance/field position from yards (offense only)
-    if (!isFB || mode !== 'us') return
+    // Every logged play starts the next one from a clean entry (no carried-over
+    // formation / play type / result). Football offense also auto-advances below.
+    if (!isFB || mode !== 'us' || quick) { setCur(c => resetEntry(c)); return }
     const gained = Number(cur.yards_gained) || 0
     const dist = Number(cur.distance) || 10
     const dn = Number(cur.down) || 1
@@ -229,21 +268,34 @@ export default function LoggerPage() {
 
   const log = useCallback(() => {
     if (!config) return
-    const play = buildPlay()
+    if (locked !== null) return
+    // A scoring result (Touchdown, Made FG, 2 pts, Gave Up 3, ...) moves the score
+    // boxes, and the play stores the score after it, which the report reads.
+    const delta = scoreDelta(sport, mode, cur, quick)
+    const [nextUs, nextThem] = applyScore(scoreUs, scoreThem, delta)
+    if (delta.us || delta.them) { setScoreUs(nextUs); setScoreThem(nextThem) }
+    const play = buildPlay(nextUs, nextThem)
     setError(''); setOk('')
     // Add to the local queue immediately (persisted by the effect above); the play is
     // safe even with no connection. Then attempt a flush — offline, it just stays queued.
     setPlays(ps => [...ps, { ...play, client_uid: newUid(), synced: false }])
     advance()
-    setOk('logged'); setTimeout(() => setOk(''), 1000)
+    setOk(delta.us || delta.them ? `logged · score ${nextUs}-${nextThem}` : 'logged'); setTimeout(() => setOk(''), 1400)
     setTimeout(() => sync(), 0)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config, cur, mode, period, clock, scoreUs, scoreThem, quick, sync, plays.length])
+  }, [config, cur, mode, period, clock, scoreUs, scoreThem, quick, sync, plays.length, locked, sport])
 
   const undo = async () => {
     const last = plays[plays.length - 1]
     if (!last) return
     setPlays(ps => ps.slice(0, -1))
+    // Roll the score back to before the undone play, but only if the coach hasn't
+    // hand-edited the boxes since (a manual correction always wins).
+    if (String(last.score_us ?? '') === String(Number(scoreUs) || 0) && String(last.score_them ?? '') === String(Number(scoreThem) || 0)) {
+      const prev = plays[plays.length - 2]
+      setScoreUs(String(prev ? Number(prev.score_us) || 0 : 0))
+      setScoreThem(String(prev ? Number(prev.score_them) || 0 : 0))
+    }
     if (last.event_id) { try { await api.delete(`/live/play/${last.event_id}`) } catch {} }
   }
 
@@ -265,14 +317,23 @@ export default function LoggerPage() {
     setEditing(null)
   }
 
+  // In-flight guard: a double tap (or Halftime + Generate together) sends one request.
+  const reporting = useRef(false)
   async function report(scope: string) {
+    if (reporting.current) return
+    reporting.current = true
     setBusy(true); setError('')
     try {
+      // Flush any queued plays first so the report includes the latest log.
+      await sync()
       const r = await api.post('/live/report', { session_id: sessionId, scope, period: periodNum })
       router.push(`/reports/${r.data.report_id}`)
     } catch (e: any) {
-      setError(reportFailureMessage(e))
+      const pw = paywallFromError(e)
+      if (pw) setLocked(pw.message)
+      else setError(reportFailureMessage(e))
       setBusy(false)
+      reporting.current = false
     }
   }
 
@@ -289,7 +350,7 @@ export default function LoggerPage() {
   }
 
   const periods = isBB ? ['1', '2', 'OT'] : ['1', '2', '3', '4', 'OT']
-  const modeBtn = (m: typeof mode, label: string) => (
+  const modeBtn = (m: LoggerMode, label: string) => (
     <button onClick={() => setMode(m)} style={{
       flex: 1, minHeight: 46, borderRadius: 8, fontSize: 14, fontWeight: 800, cursor: 'pointer',
       border: '1px solid ' + (mode === m ? 'var(--gold)' : 'var(--border2)'),
@@ -306,9 +367,9 @@ export default function LoggerPage() {
           <Zap size={18} style={{ color: 'var(--gold)' }} />
           <b style={{ fontSize: 15 }}>{config.team_name || 'Us'} vs {opponent}</b>
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
-            <input style={{ ...input, width: 54, minHeight: 36, textAlign: 'center', padding: 6 }} inputMode="numeric" value={scoreUs} onChange={e => setScoreUs(e.target.value)} />
+            <input aria-label="Our score" data-testid="score-us" style={{ ...input, width: 56, minHeight: TAP_MIN, textAlign: 'center', padding: 6, fontSize: 18, fontWeight: 800 }} inputMode="numeric" value={scoreUs} onChange={e => setScoreUs(e.target.value.replace(/\D/g, '').slice(0, 3))} />
             <span style={{ color: 'var(--text3)' }}>–</span>
-            <input style={{ ...input, width: 54, minHeight: 36, textAlign: 'center', padding: 6 }} inputMode="numeric" value={scoreThem} onChange={e => setScoreThem(e.target.value)} />
+            <input aria-label="Their score" data-testid="score-them" style={{ ...input, width: 56, minHeight: TAP_MIN, textAlign: 'center', padding: 6, fontSize: 18, fontWeight: 800 }} inputMode="numeric" value={scoreThem} onChange={e => setScoreThem(e.target.value.replace(/\D/g, '').slice(0, 3))} />
           </div>
         </div>
         <div style={{ maxWidth: 720, margin: '6px auto 0', display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, color: 'var(--text3)' }}>
@@ -321,7 +382,7 @@ export default function LoggerPage() {
             {!online ? `Offline · ${unsynced} queued` : unsynced ? `Saving ${unsynced}…` : 'All saved'}
           </span>
           <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6 }}>
-            <input style={{ ...input, width: 74, minHeight: 32, textAlign: 'center', padding: 5 }} placeholder="MM:SS" inputMode="numeric" value={clock} onChange={e => setClock(formatClockInput(e.target.value))} title="Just type the digits — 1042 becomes 10:42" />
+            <input aria-label="Game clock" style={{ ...input, width: 84, minHeight: TAP_MIN, textAlign: 'center', padding: 5 }} placeholder="MM:SS" inputMode="numeric" value={clock} onChange={e => setClock(formatClockInput(e.target.value))} title="Just type the digits — 1042 becomes 10:42" />
           </span>
         </div>
       </div>
@@ -342,9 +403,12 @@ export default function LoggerPage() {
           {lateGame && <div style={{ marginTop: 10, fontSize: 12, color: 'var(--gold)', fontWeight: 700 }}>⏱ Late game (&lt;2:00), flagged automatically</div>}
         </div>
 
+        {locked !== null && <LiveTrackerPaywall message={locked || undefined} />}
+
+        {locked === null && (<>
         {/* quick log toggle */}
-        <button onClick={() => setQuick(q => !q)} style={{
-          width: '100%', minHeight: 42, borderRadius: 8, marginBottom: 12, cursor: 'pointer', fontWeight: 700, fontSize: 13,
+        <button onClick={toggleQuick} style={{
+          width: '100%', minHeight: 48, borderRadius: 8, marginBottom: 12, cursor: 'pointer', fontWeight: 700, fontSize: 13,
           border: '1px solid ' + (quick ? 'var(--gold)' : 'var(--border2)'),
           background: quick ? 'rgba(201,168,76,0.14)' : 'var(--bg2)', color: quick ? 'var(--gold)' : 'var(--text2)',
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
@@ -373,11 +437,22 @@ export default function LoggerPage() {
           </div>
         </div>
 
-        {/* REPORTS — scope selector + one Generate button (as of this moment) */}
+        {/* REPORTS: the Halftime Sheet is the first-class action; other scopes below. */}
         <div style={{ ...card, marginBottom: 16 }}>
+          <button data-testid="halftime-sheet" onClick={() => report('halftime')} disabled={busy || !plays.length} style={{
+            width: '100%', minHeight: 56, borderRadius: 10, border: 'none', cursor: 'pointer',
+            background: 'var(--gold)', color: '#1c1c1c', fontSize: 16, fontWeight: 800,
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+            opacity: (busy || !plays.length) ? 0.5 : 1,
+          }}>
+            {busy ? <Loader2 size={18} className="animate-spin" /> : <FileBarChart size={18} />} Halftime Sheet
+          </button>
+          <p style={{ fontSize: 11.5, color: 'var(--text3)', margin: '8px 0 14px', textAlign: 'center' }}>
+            {isBB ? 'First half only.' : 'First half only (Q1 and Q2).'} Tap it at the break.
+          </p>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 10 }}>
-            <span style={lbl}>Report scope</span>
-            <span style={{ fontSize: 11, color: 'var(--text3)' }}>as of {isBB ? `Half ${period}` : (period === 'OT' ? 'OT' : `Q${period}`)}</span>
+            <span style={lbl}>Other report</span>
+            <span style={{ fontSize: 11, color: 'var(--text3)' }}>as of {isBB ? (period === 'OT' ? 'OT' : `Half ${period}`) : (period === 'OT' ? 'OT' : `Q${period}`)}</span>
           </div>
           <div style={{ marginBottom: 12 }}>
             <TapGroup
@@ -398,18 +473,19 @@ export default function LoggerPage() {
             {busy ? <Loader2 size={16} className="animate-spin" /> : <FileBarChart size={16} />} Generate Report
           </button>
           <p style={{ fontSize: 11.5, color: 'var(--text3)', margin: '10px 0 0', textAlign: 'center' }}>
-            {reportScope === 'this_quarter' ? 'Isolates what is happening now — the adjustment view.'
+            {reportScope === 'this_quarter' ? 'Isolates what is happening now: the adjustment view.'
               : reportScope === 'this_half' ? 'This half only.'
               : 'Everything logged so far.'}
           </p>
         </div>
+        </>)}
 
         {/* REVIEW */}
         {plays.length > 0 && (
           <div style={card}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
               <b style={{ fontSize: 14 }}>Play Log</b>
-              <select style={{ ...input, width: 'auto', minHeight: 34, padding: '4px 8px', marginLeft: 'auto', fontSize: 13 }} value={filterSide} onChange={e => setFilterSide(e.target.value)}>
+              <select aria-label="Filter plays" style={{ ...input, width: 'auto', minHeight: TAP_MIN, padding: '4px 8px', marginLeft: 'auto', fontSize: 13 }} value={filterSide} onChange={e => setFilterSide(e.target.value)}>
                 <option value="all">All</option>
                 <option value="offense">Our Offense</option>
                 <option value="defense">Our Defense</option>
@@ -429,7 +505,7 @@ export default function LoggerPage() {
                 return (
                   <div key={rowKey}>
                     <div onClick={() => setEditing(editing === rowKey ? null : rowKey)}
-                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 8, cursor: 'pointer', background: rowColor, border: '1px solid var(--border2)' }}>
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', minHeight: TAP_MIN, borderRadius: 8, cursor: 'pointer', background: rowColor, border: '1px solid var(--border2)' }}>
                       <span style={{ color: 'var(--text3)', fontSize: 12, width: 22 }}>{num}</span>
                       <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text3)', width: 30 }}>{side === 'special_teams' ? 'ST' : side === 'defense' ? 'DEF' : 'OFF'}</span>
                       <span style={{ fontSize: 13, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{playSummary(p, isBB)}</span>
@@ -449,7 +525,7 @@ export default function LoggerPage() {
         )}
 
         <div style={{ textAlign: 'center', marginTop: 10 }}>
-          <Link href="/live" style={{ fontSize: 13, color: 'var(--text3)' }}>← games</Link>
+          <Link href="/live" style={{ fontSize: 13, color: 'var(--text3)', display: 'inline-flex', alignItems: 'center', minHeight: TAP_MIN, padding: '0 12px' }}>← games</Link>
         </div>
       </div>
     </div>
@@ -459,10 +535,13 @@ export default function LoggerPage() {
 // ── situational row (down/distance/field position) ───────────────────────────
 function Situational({ cur, set }: { cur: Cur; set: (k: string, v: any) => void }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 12 }}>
+    // Down gets its own full-width row so each of 1-4 is a real thumb target at 390px.
+    <div style={{ marginBottom: 12 }}>
       <Field label="Down"><TapGroup options={['1', '2', '3', '4']} value={String(cur.down || '')} onChange={v => set('down', v)} cols={4} /></Field>
-      <Field label="Distance"><input style={input} inputMode="numeric" value={cur.distance || ''} onChange={e => set('distance', e.target.value)} /></Field>
-      <Field label="Ball On"><input style={input} value={cur.field_position || ''} onChange={e => set('field_position', e.target.value)} placeholder="OWN 35" /></Field>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <Field label="Distance"><input style={input} inputMode="numeric" value={cur.distance || ''} onChange={e => set('distance', e.target.value)} /></Field>
+        <Field label="Ball On"><input style={input} value={cur.field_position || ''} onChange={e => set('field_position', e.target.value)} placeholder="OWN 35" /></Field>
+      </div>
     </div>
   )
 }
@@ -519,10 +598,8 @@ function FootballPanel({ mode, sport, isFlag, systems, customRoutes, cur, set, r
               <Field label="Pass result"><TapGroup options={FB_PASS_RESULTS} value={cur.pass_result} onChange={v => set('pass_result', v)} cols={3} /></Field>
             </>
           )}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 10 }}>
-            <Field label="Yards"><input style={input} inputMode="numeric" value={cur.yards_gained ?? ''} onChange={e => set('yards_gained', e.target.value)} /></Field>
-            <Field label="Outcome"><TapGroup options={FB_OUTCOMES} value={cur.result} onChange={v => set('result', v)} cols={3} /></Field>
-          </div>
+          <Field label="Yards"><input style={{ ...input, maxWidth: 140 }} inputMode="numeric" value={cur.yards_gained ?? ''} onChange={e => set('yards_gained', e.target.value)} /></Field>
+          <Field label="Outcome"><TapGroup options={FB_OUTCOMES} value={cur.result} onChange={v => set('result', v)} cols={3} /></Field>
         </>
       ) : (
         <>
@@ -560,10 +637,8 @@ function FootballPanel({ mode, sport, isFlag, systems, customRoutes, cur, set, r
             <Jersey label="Stop by #" value={cur.stop_maker_jersey} onChange={v => set('stop_maker_jersey', v)} />
           </div>
           <Field label="Result"><TapGroup options={DEF_RESULTS} value={cur.result} onChange={v => set('result', v)} cols={3} /></Field>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 10 }}>
-            <Field label="Yards allowed"><input style={input} inputMode="numeric" value={cur.yards_gained ?? ''} onChange={e => set('yards_gained', e.target.value)} /></Field>
-            <Field label="Outcome"><TapGroup options={DEF_OUTCOMES} value={cur.opp_outcome} onChange={v => set('opp_outcome', v)} cols={2} /></Field>
-          </div>
+          <Field label="Yards allowed"><input style={{ ...input, maxWidth: 140 }} inputMode="numeric" value={cur.yards_gained ?? ''} onChange={e => set('yards_gained', e.target.value)} /></Field>
+          <Field label="Outcome"><TapGroup options={DEF_OUTCOMES} value={cur.opp_outcome} onChange={v => set('opp_outcome', v)} cols={2} /></Field>
         </>
       )}
     </>
@@ -652,24 +727,4 @@ function EditRow({ p, isBB, onFlag, onDelete, onSave, onClose }: any) {
       </div>
     </div>
   )
-}
-
-// ── one-line play summary for the review list ────────────────────────────────
-function playSummary(p: Play, isBB: boolean): string {
-  const parts: string[] = []
-  if (!isBB) {
-    if (p.down) parts.push(`${p.down}&${p.distance ?? ''}`)
-    parts.push(p.play_type || p.opp_play_type || p.st_unit || 'play')
-    if (p.route || p.opp_route) parts.push(String(p.route || p.opp_route))
-    if (p.run_category) parts.push(String(p.run_category))
-    if (p.yards_gained !== undefined && p.yards_gained !== '') parts.push(`${p.yards_gained} yd`)
-  } else {
-    parts.push(p.ball_entry || p.opp_primary_action || p.primary_action || 'poss')
-    if (p.shot_zone || p.shot_zone_allowed) parts.push(String(p.shot_zone || p.shot_zone_allowed))
-    if (p.possession_result || p.shot_result) parts.push(String(p.possession_result || p.shot_result))
-  }
-  const jersey = p.player || p.ball_carrier_jersey || p.shooter_jersey || p.target_jersey
-  if (jersey) parts.push(`#${jersey}`)
-  if (p.result && !parts.includes(p.result)) parts.push(String(p.result))
-  return parts.filter(Boolean).join(' · ')
 }

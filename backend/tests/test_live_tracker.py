@@ -50,12 +50,10 @@ def test_purchased_org_has_access():
     assert lt.access_reason(_org(**PAID)) == "purchased"
 
 
-def test_active_subscription_has_access():
-    assert lt.has_live_tracker_access(_org(stripe_subscription_status="active")) is True
-
-
-@pytest.mark.parametrize("status", ["trialing", "past_due", "canceled", "incomplete", ""])
-def test_non_active_subscription_states_do_not_unlock(status):
+# Product decision (Nov 28 2026): "Everyone pays $7, including current users."
+# No grandfathering, and a subscription does not unlock the Live Tracker.
+@pytest.mark.parametrize("status", ["active", "trialing", "past_due", "canceled", "incomplete", ""])
+def test_no_subscription_state_unlocks_without_the_7_purchase(status):
     assert lt.has_live_tracker_access(_org(stripe_subscription_status=status)) is False
 
 
@@ -67,31 +65,22 @@ def test_none_org_is_locked():
     assert lt.has_live_tracker_access(None) is False
 
 
-def test_grandfather_flag_defaults_off():
-    # The shipped default must grandfather NOBODY, however old the org is.
-    assert settings.LIVE_TRACKER_GRANDFATHER_BEFORE == ""
-    old = _org(created_at=datetime(2020, 1, 1, tzinfo=timezone.utc))
+def test_existing_org_from_years_ago_is_not_grandfathered():
+    old = _org(created_at=datetime(2020, 1, 1, tzinfo=timezone.utc), stripe_subscription_status="active")
     assert lt.has_live_tracker_access(old) is False
-
-
-def test_grandfather_flag_when_set_only_covers_older_orgs(monkeypatch):
-    monkeypatch.setattr(settings, "LIVE_TRACKER_GRANDFATHER_BEFORE", "2026-12-01")
-    assert lt.has_live_tracker_access(_org(created_at=datetime(2026, 11, 30, tzinfo=timezone.utc)))
-    assert lt.access_reason(_org(created_at=datetime(2026, 11, 30, tzinfo=timezone.utc))) == "grandfathered"
-    assert not lt.has_live_tracker_access(_org(created_at=datetime(2026, 12, 1, tzinfo=timezone.utc)))
-    assert not lt.has_live_tracker_access(_org(created_at=None))
-
-
-def test_malformed_grandfather_value_fails_closed(monkeypatch):
-    monkeypatch.setattr(settings, "LIVE_TRACKER_GRANDFATHER_BEFORE", "yes")
-    assert lt.has_live_tracker_access(_org(created_at=datetime(2001, 1, 1, tzinfo=timezone.utc))) is False
+    assert lt.access_reason(old) is None
+    assert not hasattr(settings, "LIVE_TRACKER_GRANDFATHER_BEFORE")
 
 
 def test_assert_access_raises_403_with_paywall_header():
     with pytest.raises(HTTPException) as exc:
         lt.assert_live_tracker_access(_org())
     assert exc.value.status_code == 403
-    assert "$7 one-time" in exc.value.detail
+    d = exc.value.detail
+    assert d["code"] == "live_tracker_payment_required"
+    assert "$7 one-time" in d["message"]
+    assert "past games and reports stay viewable" in d["message"]
+    assert d["checkout_url"] == "/live-tracker"
     assert exc.value.headers == {"X-CoachLenz-Locked": "live_tracker"}
 
 
@@ -178,7 +167,6 @@ def _client(org):
 SID = "00000000-0000-0000-0000-0000000000bb"
 GATED = [
     ("post", "/live/session", {"sport": "football", "team_name": "Us", "opponent": "Them"}),
-    ("get", f"/live/session/{SID}", None),
     ("post", "/live/plays", {"session_id": SID, "plays": [{"possession": "us"}]}),
     ("patch", f"/live/play/{SID}", {"yards_gained": 3}),
     ("delete", f"/live/play/{SID}", None),
@@ -192,8 +180,22 @@ def test_unpaid_org_is_refused_on_every_logger_route(method, path, body):
     c = _client(_org())
     r = c.request(method.upper(), path, json=body)
     assert r.status_code == 403, r.text
-    assert "$7 one-time" in r.json()["detail"]
+    detail = r.json()["detail"]
+    assert detail["code"] == "live_tracker_payment_required"
+    assert "$7 one-time" in detail["message"]
+    assert detail["checkout_url"] == "/live-tracker"
     assert r.headers.get("x-coachlenz-locked") == "live_tracker"
+
+
+@pytest.mark.parametrize("path", ["/live/sessions", f"/live/session/{SID}"])
+def test_existing_unpaid_org_keeps_read_access_to_past_games(path):
+    # An existing (pre-offer) unpaid coach is NOT paywalled from reading: the list
+    # answers 200 and a session read reaches the DB lookup (404 here: stub DB is
+    # empty), never the paywall 403.
+    c = _client(_org(created_at=datetime(2025, 8, 1, tzinfo=timezone.utc)))
+    r = c.get(path)
+    assert r.status_code in (200, 404), r.text
+    assert r.headers.get("x-coachlenz-locked") is None
 
 
 @pytest.mark.parametrize("method,path,body", [g for g in GATED if g[1] != "/live/session"])
@@ -213,7 +215,7 @@ def test_paid_org_session_create_reaches_the_consent_gate():
     r = c.post("/live/session", json={"sport": "football", "team_name": "Us", "opponent": "Them"})
     assert r.headers.get("x-coachlenz-locked") is None
     assert r.status_code == 403
-    assert "$7" not in r.json()["detail"]
+    assert "$7" not in str(r.json()["detail"])
 
 
 def test_paid_org_sport_lock_still_applies():
@@ -235,10 +237,11 @@ def test_access_endpoint_reports_state_without_gating(monkeypatch):
     assert r.json()["checkout_available"] is True
 
 
-def test_every_mutating_or_resume_route_depends_on_the_gate():
+def test_every_mutating_route_depends_on_the_gate():
     """Guard against a future route slipping past the paywall: every /live route
-    except the read-only access probe and the session list must depend on it."""
-    open_routes = {("GET", "/live/access"), ("GET", "/live/sessions")}
+    except the read-only ones (access probe, session list, session read) must
+    depend on it."""
+    open_routes = {("GET", "/live/access"), ("GET", "/live/sessions"), ("GET", "/live/session/{session_id}")}
 
     def deps(dependant):
         for d in dependant.dependencies:
@@ -369,3 +372,35 @@ def test_checkout_rejects_foreign_return_urls(monkeypatch, success, cancel):
                                                   org=_org(), db=_CheckoutDB()))
     assert exc.value.status_code == 400
     assert calls["n"] == 0
+
+
+# ── /live/plays idempotency (duplicate client_uid) ───────────────────────────
+def test_duplicate_client_uid_in_one_batch_writes_one_play(monkeypatch):
+    game = SimpleNamespace(id="00000000-0000-0000-0000-0000000000cc")
+
+    async def _load(db, sid, org_id):
+        return game
+
+    async def _absorb(db, g, plays):
+        return None
+
+    monkeypatch.setattr(live_game, "_load_session", _load)
+    monkeypatch.setattr(live_game, "_absorb_new_jerseys", _absorb)
+    added = []
+
+    class _DB(_StubDB):
+        def add_all(self, objs):
+            added.extend(objs)
+
+        async def refresh(self, o, *_a, **_k):
+            o.id = f"ev{added.index(o)}"
+
+    body = live_game.PlaysBatch(session_id=str(game.id), plays=[
+        live_game.PlayEntry(possession="us", play_type="Run", client_uid="dup"),
+        live_game.PlayEntry(possession="us", play_type="Run", client_uid="dup"),
+        live_game.PlayEntry(possession="us", play_type="Pass", client_uid="other"),
+    ])
+    user = SimpleNamespace(id="u1", organization_id="o1")
+    out = asyncio.run(live_game.add_plays(body, user=user, _org=_org(**PAID), db=_DB()))
+    assert out["plays_written"] == 2
+    assert sorted(out["synced_uids"]) == ["dup", "other"]

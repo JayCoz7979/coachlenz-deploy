@@ -6,8 +6,8 @@
 -- Numbered 066 on purpose: #294 carries 056-061 (and may add more), 062-064 stay
 -- free, and 065 is the live_game report-type fix from #296. Idempotent; only ADDS
 -- nullable columns, so old code keeps working and a code rollback needs no schema
--- rollback. Existing orgs are NOT backfilled: grandfathering is a data decision
--- (see LIVE_TRACKER_GRANDFATHER_BEFORE, default off).
+-- rollback. Existing orgs are NOT backfilled: everyone pays $7, including current
+-- users (product decision, Nov 28 2026). No grandfathering.
 -- The reverse lives in backend/migrations/down/ (the runner never applies that folder).
 
 ALTER TABLE organizations

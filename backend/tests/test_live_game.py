@@ -278,3 +278,46 @@ def test_score_rides_on_each_play_for_the_momentum_section():
     p = PlayEntry(possession="us", play_type="Run", result="Touchdown", score_us=6, score_them=0)
     x = _play_to_event(ORG, GAME, p).extra_data
     assert x["score_us"] == 6 and x["score_them"] == 0
+
+
+def test_reloaded_opponent_play_promotes_opp_fields_to_top_level():
+    # The Play Log reads p.opp_play_type at the top level (the shape it posted). Before
+    # the fix it only lived under extra, so an opponent play read "play · null yd".
+    p = PlayEntry(possession="them", opp_play_type="Pass", opp_formation="Spread",
+                  opp_route="Slant", opp_target="10", result="Gain of 4–6")
+    e = _play_to_event(ORG, GAME, p)
+    e.id = GAME
+    view = _event_to_play(e)
+    assert view["opp_play_type"] == "Pass"
+    assert view["opp_formation"] == "Spread"
+    assert view["opp_route"] == "Slant"
+    assert view["opp_target"] == "10"
+    assert view["side"] == "defense"
+    # First-class columns still win over anything in extra.
+    assert view["play_type"] is None and view["result"] == "Gain of 4–6"
+
+
+def test_reloaded_special_teams_play_promotes_unit_and_has_no_leak():
+    p = PlayEntry(possession="us", side="special_teams", st_unit="Kickoff Return",
+                  st_result="Returned", st_yards=22, opp_formation="Shotgun", opp_play_type="Run")
+    e = _play_to_event(ORG, GAME, p)
+    e.id = GAME
+    view = _event_to_play(e)
+    assert view["st_unit"] == "Kickoff Return" and view["st_result"] == "Returned"
+    assert "opp_play_type" not in view and "opp_formation" not in view
+
+
+def test_reloaded_play_carries_score_and_period_for_restore():
+    p = PlayEntry(possession="us", quarter=2, play_type="Run", result="Touchdown", score_us=6, score_them=3)
+    e = _play_to_event(ORG, GAME, p)
+    e.id = GAME
+    view = _event_to_play(e)
+    assert view["score_us"] == 6 and view["score_them"] == 3 and view["quarter"] == 2
+
+
+def test_defense_outcome_is_kept():
+    # "Touchdown Allowed" as the defense Outcome feeds the opponent score; it used
+    # to be dropped because opp_outcome was not a known extra key.
+    p = PlayEntry(possession="them", opp_play_type="Run", opp_outcome="Touchdown Allowed")
+    x = _play_to_event(ORG, GAME, p).extra_data
+    assert x["opp_outcome"] == "Touchdown Allowed"

@@ -6,18 +6,19 @@ place that records a purchase. The /live routes call ``assert_live_tracker_acces
 (server-side; the frontend paywall is only a convenience), and the Stripe webhook
 calls ``grant_live_tracker`` after a PAID Checkout Session.
 
-Who has access:
-  1. An org that bought the $7 unlock (``live_tracker_purchased_at`` is set).
-  2. An org with an ACTIVE paid subscription (``stripe_subscription_status ==
-     'active'``). They already pay for the bigger product; a Stripe trial
-     ('trialing'), past_due, canceled, or never-paid org does not count.
-  3. Optional, OFF by default: orgs created before LIVE_TRACKER_GRANDFATHER_BEFORE
-     (an ISO date). Empty = nobody is grandfathered.
+Who has access (locked product decision, Nov 28 2026: "Everyone pays $7,
+including current users"):
+  Only an org that bought the $7 unlock (``live_tracker_purchased_at`` is set).
+  No grandfathering by signup date, and an existing subscription does not count.
+
+Unpaid orgs keep READ access to their past live games (GET /live/sessions,
+GET /live/session/{id}) and their reports. Every write route refuses with 403
+``live_tracker_payment_required``.
 
 Nothing else. Consent, verified email, and sport lock stay separate gates and are
 never relaxed by this module.
 """
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import HTTPException
@@ -32,69 +33,45 @@ LIVE_TRACKER_KIND = "live_tracker"
 # Coach-facing copy for the server-side refusal. The frontend shows it verbatim and
 # links to /live-tracker. Keep it honest: $7 USD, one time.
 LIVE_TRACKER_LOCKED_MESSAGE = (
-    "The Live Tracker is a $7 one-time unlock. Unlock it at /live-tracker to chart "
-    "games live and get the Halftime Sheet."
+    "The Live Tracker is a $7 one-time unlock. Unlock it to chart games live and get "
+    "the Halftime Sheet. Your past games and reports stay viewable."
 )
+# Machine-readable code in the 403 body, plus where the paywall lives.
+LIVE_TRACKER_LOCKED_CODE = "live_tracker_payment_required"
+LIVE_TRACKER_CHECKOUT_PATH = "/live-tracker"
+
+
+def locked_detail() -> dict:
+    """The 403 body detail: code + coach-facing message + checkout link."""
+    return {
+        "code": LIVE_TRACKER_LOCKED_CODE,
+        "message": LIVE_TRACKER_LOCKED_MESSAGE,
+        "checkout_url": LIVE_TRACKER_CHECKOUT_PATH,
+        "price_usd": 7,
+    }
 
 # Machine-readable reason, sent as a response header so the UI can route to the
 # paywall without string-matching the message.
 LOCKED_HEADER = {"X-CoachLenz-Locked": LIVE_TRACKER_KIND}
 
 
-def _grandfather_cutoff() -> Optional[date]:
-    raw = (settings.LIVE_TRACKER_GRANDFATHER_BEFORE or "").strip()
-    if not raw:
-        return None
-    try:
-        return date.fromisoformat(raw)
-    except ValueError:
-        # A malformed value must not silently open the gate for everyone.
-        return None
-
-
-def _as_date(value: Any) -> Optional[date]:
-    if isinstance(value, datetime):
-        if value.tzinfo is not None:
-            value = value.astimezone(timezone.utc)
-        return value.date()
-    if isinstance(value, date):
-        return value
-    return None
-
-
 def has_live_tracker_access(org: Any) -> bool:
     if org is None:
         return False
-    if getattr(org, "live_tracker_purchased_at", None):
-        return True
-    if (getattr(org, "stripe_subscription_status", None) or "").strip().lower() == "active":
-        return True
-    cutoff = _grandfather_cutoff()
-    if cutoff is not None:
-        created = _as_date(getattr(org, "created_at", None))
-        if created is not None and created < cutoff:
-            return True
-    return False
+    return bool(getattr(org, "live_tracker_purchased_at", None))
 
 
 def access_reason(org: Any) -> Optional[str]:
     """Why this org has access (for the UI and logs), or None when locked."""
     if org is None:
         return None
-    if getattr(org, "live_tracker_purchased_at", None):
-        return "purchased"
-    if (getattr(org, "stripe_subscription_status", None) or "").strip().lower() == "active":
-        return "subscription"
-    if has_live_tracker_access(org):
-        return "grandfathered"
-    return None
+    return "purchased" if has_live_tracker_access(org) else None
 
 
 def assert_live_tracker_access(org: Any) -> None:
     """403 unless the org has unlocked the Live Tracker. Server-side gate."""
     if not has_live_tracker_access(org):
-        raise HTTPException(status_code=403, detail=LIVE_TRACKER_LOCKED_MESSAGE,
-                            headers=LOCKED_HEADER)
+        raise HTTPException(status_code=403, detail=locked_detail(), headers=LOCKED_HEADER)
 
 
 async def grant_live_tracker(db, org_id: str, checkout_session_id: Optional[str]) -> None:

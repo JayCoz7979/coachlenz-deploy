@@ -550,7 +550,7 @@ SESSION_BODY = {"sport": "football", "team_name": "Us", "opponent": "Rivals"}
 
 @pytest.mark.integration
 @needs_pg
-async def test_unpaid_org_cannot_start_or_resume_a_live_session(pg):
+async def test_existing_unpaid_org_is_paywalled_but_keeps_its_past_games(pg):
     await _apply(pg, include_065=True)
     org, user, game = await _seed(pg, "unpaid", plays=4, paid=False)
     await _consent(pg, org, user)
@@ -559,16 +559,33 @@ async def test_unpaid_org_cannot_start_or_resume_a_live_session(pg):
 
     r = await _api("POST", "/live/session", token, json=SESSION_BODY, headers={"Origin": origin})
     assert r.status_code == 403, r.text
-    assert "$7 one-time" in r.json()["detail"]
+    detail = r.json()["detail"]
+    assert detail["code"] == "live_tracker_payment_required"
+    assert "$7 one-time" in detail["message"]
+    assert detail["checkout_url"] == "/live-tracker"
     assert r.headers.get("x-coachlenz-locked") == "live_tracker"
     assert r.headers.get("access-control-allow-origin") == origin          # JSON + CORS
+    play_id = await pg.fetchval(
+        "SELECT id FROM events WHERE game_id = $1 AND event_type = 'play' LIMIT 1", game)
     for method, path, kw in (
-        ("GET", f"/live/session/{game}", {}),
         ("POST", "/live/plays", {"json": {"session_id": str(game), "plays": [{"possession": "us"}]}}),
+        ("PATCH", f"/live/play/{play_id}", {"json": {"yards_gained": 9}}),
+        ("DELETE", f"/live/play/{play_id}", {}),
+        ("POST", f"/live/play/{play_id}/flag", {"json": {"is_coaching_point": True}}),
         ("POST", "/live/report", {"json": {"session_id": str(game), "scope": "halftime"}}),
     ):
         r = await _api(method, path, token, **kw)
         assert r.status_code == 403, (path, r.text)
+        assert r.json()["detail"]["code"] == "live_tracker_payment_required"
+    # Nothing was written by the refused calls.
+    assert await pg.fetchval("SELECT count(*) FROM events WHERE game_id = $1 AND event_type = 'play'", game) == 4
+
+    # Reads stay open: the existing coach still sees the past game and its plays.
+    r = await _api("GET", "/live/sessions", token)
+    assert r.status_code == 200 and [s["session_id"] for s in r.json()["sessions"]] == [str(game)]
+    r = await _api("GET", f"/live/session/{game}", token)
+    assert r.status_code == 200, r.text
+    assert len(r.json()["plays"]) == 4
     assert await pg.fetchval("SELECT count(*) FROM games WHERE organization_id = $1", org) == 1
     assert await pg.fetchval("SELECT count(*) FROM tendency_reports WHERE organization_id = $1", org) == 0
 
@@ -637,3 +654,58 @@ async def test_paid_webhook_grants_once_then_the_coach_can_log(pg):
     r = await _post_report(sid, token, "halftime", period=2)
     assert r.status_code == 200, r.text
     assert r.json()["plays"] == 3
+
+
+@pytest.mark.integration
+@needs_pg
+async def test_paid_logger_round_trip_isolation_dedupe_and_opponent_reload(pg):
+    """Edge cases on real Postgres, fictional data only: a duplicate client_uid
+    writes one play; an opponent play reloads with its opp_* detail at the top
+    level (no "play · null yd"); a Special Teams play right after a Their Ball run
+    carries no leaked opp fields; and another org cannot read, write, or report on
+    this session."""
+    await _apply(pg, include_065=True)
+    org_a, user_a, game_a = await _seed(pg, "orga", plays=0)
+    org_b, user_b, _ = await _seed(pg, "orgb", plays=0)
+    ta, tb = _token(user_a, org_a), _token(user_b, org_b)
+
+    plays = [
+        {"possession": "them", "quarter": 1, "opp_formation": "Spread", "opp_play_type": "Run",
+         "result": "Stop at Line", "client_uid": "dup-1"},
+        {"possession": "them", "quarter": 1, "opp_formation": "Spread", "opp_play_type": "Run",
+         "result": "Stop at Line", "client_uid": "dup-1"},          # same uid again
+        # A Special Teams play whose payload still carries the previous play's opp
+        # fields (what the old UI sent): the server drops them.
+        {"possession": "us", "side": "special_teams", "quarter": 1, "st_unit": "Punt",
+         "st_result": "Downed", "opp_formation": "Spread", "opp_play_type": "Run", "client_uid": "st-1"},
+        {"possession": "us", "quarter": 2, "play_type": "Pass", "result": "Touchdown",
+         "score_us": 6, "score_them": 0, "client_uid": "td-1"},
+    ]
+    r = await _api("POST", "/live/plays", ta, json={"session_id": str(game_a), "plays": plays})
+    assert r.status_code == 200, r.text
+    # Replay of the whole batch (a reconnect flush) is still a no-op.
+    r = await _api("POST", "/live/plays", ta, json={"session_id": str(game_a), "plays": plays})
+    assert r.status_code == 200, r.text
+    assert await pg.fetchval(
+        "SELECT count(*) FROM events WHERE game_id = $1 AND event_type = 'play'", game_a) == 3
+
+    r = await _api("GET", f"/live/session/{game_a}", ta)
+    got = {p["client_uid"]: p for p in r.json()["plays"]}
+    assert got["dup-1"]["opp_play_type"] == "Run" and got["dup-1"]["opp_formation"] == "Spread"
+    assert got["dup-1"]["side"] == "defense"
+    assert got["st-1"]["st_unit"] == "Punt"
+    assert "opp_play_type" not in got["st-1"] and "opp_formation" not in got["st-1"]
+    assert got["td-1"]["score_us"] == 6
+
+    # Org isolation: org B sees a 404 on every path into org A's session / plays.
+    ev = got["td-1"]["event_id"]
+    assert (await _api("GET", f"/live/session/{game_a}", tb)).status_code == 404
+    assert (await _api("POST", "/live/plays", tb, json={"session_id": str(game_a), "plays": [{"possession": "us"}]})).status_code == 404
+    assert (await _api("PATCH", f"/live/play/{ev}", tb, json={"yards_gained": 99})).status_code == 404
+    assert (await _api("DELETE", f"/live/play/{ev}", tb)).status_code == 404
+    assert (await _api("POST", f"/live/play/{ev}/flag", tb, json={"is_coaching_point": True})).status_code == 404
+    assert (await _api("POST", "/live/report", tb, json={"session_id": str(game_a), "scope": "full"})).status_code == 404
+    sessions_b = (await _api("GET", "/live/sessions", tb)).json()["sessions"]
+    assert str(game_a) not in [s["session_id"] for s in sessions_b]
+    assert await pg.fetchval("SELECT count(*) FROM events WHERE game_id = $1 AND event_type = 'play'", game_a) == 3
+    assert await pg.fetchval("SELECT yards_gained FROM events WHERE id = $1", uuid.UUID(ev)) is None

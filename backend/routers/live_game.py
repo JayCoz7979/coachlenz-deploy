@@ -60,10 +60,12 @@ from backend.services.live_tracker import (
 )
 
 # The Live Game Logger + Halftime Sheet is the $7 one-time "Live Tracker" unlock
-# (backend/services/live_tracker.py). It is GATED SERVER-SIDE: starting a session,
-# resuming one, logging/editing plays, and generating a report all 403 for an org
-# that has not unlocked it. The frontend paywall is a convenience, never the only
-# check. Consent (student data) and sport lock still apply on top; the verified-
+# (backend/services/live_tracker.py). It is GATED SERVER-SIDE on every write route:
+# starting a session, logging/editing/deleting/flagging plays, and generating a
+# report all 403 (code live_tracker_payment_required) for an org that has not paid,
+# new or existing (no grandfathering). Reads stay open so an unpaid coach keeps
+# their past games: GET /sessions and GET /session/{id}. The frontend paywall is a
+# convenience, never the only check. Consent (student data) and sport lock still apply on top; the verified-
 # email requirement is unchanged. AI film analysis (routers/ai_detect.py) is a
 # separate paid product and is not touched here.
 router = APIRouter(prefix="/live", tags=["live-game"])
@@ -90,7 +92,7 @@ _EXTRA_KEYS = (
     # football / flag defense (ours) + opponent detail
     # (defensive_front is a first-class Event column — set below, not here)
     "opp_formation", "opp_play_type", "opp_ball_carrier", "opp_run_concept",
-    "opp_target", "opp_passer_jersey", "opp_run_gap", "opp_route",
+    "opp_target", "opp_passer_jersey", "opp_run_gap", "opp_route", "opp_outcome",
     "stop_maker_jersey", "pass_rush",
     # special teams
     "st_unit", "kicker_jersey", "returner_jersey", "st_result", "st_yards",
@@ -358,7 +360,13 @@ def _play_to_event(org_id, game_id, p: PlayEntry) -> Event:
 
 def _event_to_play(e: Event) -> Dict[str, Any]:
     extra = e.extra_data or {}
+    # Promote the per-unit detail that rides in extra_data (opp_play_type, st_unit,
+    # shooter_jersey, ...) to the top level, the same shape the logger posted. The
+    # Play Log reads p.opp_play_type etc., so without this an opponent play showed
+    # as "play · null yd" after a reload. First-class columns below win.
+    promoted = {k: extra[k] for k in _EXTRA_KEYS if extra.get(k) is not None}
     return {
+        **promoted,
         "event_id": str(e.id),
         "side": e.side,
         "possession": extra.get("possession"),
@@ -512,9 +520,10 @@ async def list_sessions(
 async def get_session(
     session_id: str,
     user: User = Depends(get_current_user),
-    _org: Organization = Depends(live_tracker_org),
     db: AsyncSession = Depends(get_db),
 ):
+    # READ-ONLY and intentionally not paywalled: an unpaid coach can still open a past
+    # game. Resuming logging is gated on the write routes (POST /plays etc).
     game = await _load_session(db, session_id, user.organization_id)
     meta = await _meta_event(db, game.id)
     plays_result = await db.execute(
@@ -552,8 +561,20 @@ async def add_plays(
         (e.extra_data or {}).get("client_uid")
         for e in existing.scalars().all() if (e.extra_data or {}).get("client_uid")
     }
-    to_write = [p for p in body.plays if not (p.client_uid and p.client_uid in existing_uids)]
-    already = [p.client_uid for p in body.plays if p.client_uid and p.client_uid in existing_uids]
+    # Also dedupe WITHIN the batch: a client that queued the same play twice (double
+    # tap during a slow request, two tabs merging a queue) must still get one row.
+    to_write: List[PlayEntry] = []
+    already: List[str] = []
+    seen_in_batch: set = set()
+    for p in body.plays:
+        if p.client_uid and p.client_uid in existing_uids:
+            already.append(p.client_uid)
+            continue
+        if p.client_uid and p.client_uid in seen_in_batch:
+            continue
+        if p.client_uid:
+            seen_in_batch.add(p.client_uid)
+        to_write.append(p)
 
     objs = [_play_to_event(user.organization_id, game.id, p) for p in to_write]
     db.add_all(objs)
