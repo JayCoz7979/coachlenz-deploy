@@ -26,6 +26,12 @@ router = APIRouter(prefix="/reports", tags=["reports"])
 SHARE_DEFAULT_DAYS = 7
 SHARE_MAX_DAYS = 30
 
+# App-level allowlist. An unknown value used to fall through to the database
+# constraint and surface as a 500. live_game inserts on Postgres depend on the
+# check widened in PR #296 (065_live_game_report_type.sql). This change adds no
+# migration of its own.
+REPORT_TYPES = ("opponent", "self_scout", "custom", "live_game")
+
 # Neutral titles for the public (no-login) shared-report view. The stored
 # report.title is coach free-text and can contain a student's name, so the public
 # endpoint derives a title from sport + report_type instead of echoing it.
@@ -58,6 +64,45 @@ class ReportCreate(BaseModel):
     team_id: Optional[str] = None
     report_type: str = "opponent"
 
+
+def _as_uuid(value) -> Optional[_uuid.UUID]:
+    try:
+        return _uuid.UUID(str(value))
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+async def _require_games_in_org(db: AsyncSession, game_ids, org_id) -> None:
+    """404 unless every id is a game or live session in this org.
+
+    Live sessions are games (status='live'), so one ownership check covers both.
+    404, not 403: a miss must not confirm that the id exists in another org.
+    Platform admins are not exempt. This route has never granted cross-org
+    access, and admin cross-org reads live only on /admin/*.
+    """
+    raw_ids = list(game_ids or [])
+    if not raw_ids:
+        return
+    wanted = set()
+    for raw in raw_ids:
+        uid = _as_uuid(raw)
+        if uid is None:
+            raise HTTPException(status_code=404, detail="Game not found")
+        wanted.add(uid)
+    try:
+        found = (await db.execute(
+            select(Game.id).where(
+                Game.id.in_(wanted),
+                Game.organization_id == org_id,
+            )
+        )).scalars().all()
+    except DataError:
+        await db.rollback()
+        raise HTTPException(status_code=404, detail="Game not found")
+    if {str(g) for g in found} != {str(g) for g in wanted}:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+
 @router.get("")
 async def list_reports(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(TendencyReport).where(TendencyReport.organization_id == user.organization_id).order_by(TendencyReport.created_at.desc()))
@@ -66,9 +111,24 @@ async def list_reports(user: User = Depends(get_current_user), db: AsyncSession 
 
 @router.post("")
 async def create_report(body: ReportCreate, user: User = Depends(get_current_user), org: Organization = Depends(get_current_org), db: AsyncSession = Depends(get_db)):
+    if body.report_type not in REPORT_TYPES:
+        raise HTTPException(
+            status_code=422,
+            detail="report_type must be one of: " + ", ".join(REPORT_TYPES),
+        )
+    # $7 Live Tracker paywall (Stage 2 QA H1): a live_game report is the Halftime
+    # Sheet / full-game live report. POST /live/report already refuses unpaid orgs;
+    # this route must not be a side door around it. Checked before ownership, so an
+    # unpaid caller learns nothing about whether the ids exist.
+    if body.report_type == "live_game":
+        from backend.services.live_tracker import assert_live_tracker_access
+        assert_live_tracker_access(org)
     # Entitlements: combining more than one game into a report is a paid feature.
+    # Checked before ownership so a locked trial still gets the upgrade 403 it
+    # already got, which does not confirm whether any id exists.
     if len(body.game_ids or []) > 1:
         assert_feature_allowed(org, "multi_game_reports")
+    await _require_games_in_org(db, body.game_ids, org.id)
     report = TendencyReport(
         organization_id=org.id,
         team_id=body.team_id,
@@ -185,6 +245,11 @@ async def retry_report(report_id: str, user: User = Depends(get_current_user),
         raise HTTPException(status_code=404, detail="Report not found")
     if report.generated_at:
         return {"ok": True, "status": "ready"}  # already done, nothing to retry
+    if report.report_type == "live_game":
+        # Same $7 paywall as POST /live/report and POST /reports (Stage 2 QA H1):
+        # re-queueing a live report is generating one.
+        from backend.services.live_tracker import assert_live_tracker_access
+        assert_live_tracker_access(org)
     report.error_reason = None
     # Re-analysis resets the report-scoped chat (Engine §13): the film is being
     # re-read, so prior answers no longer describe what the report will say.

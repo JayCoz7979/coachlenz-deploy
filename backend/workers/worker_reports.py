@@ -19,8 +19,55 @@ from backend.services.email_service import send_report_failure_alert
 from backend.config import settings
 from sqlalchemy import select, update, func, or_
 from sqlalchemy.dialects.postgresql import array
+from sqlalchemy.exc import DataError, StatementError
 
 logger = logging.getLogger(__name__)
+
+# Stored on the report and on the job when a report references a game the org
+# does not own. No jersey, note, film, or other-org detail: the caller already
+# knows the ids they sent, and a miss must not confirm those ids exist elsewhere.
+GAME_NOT_IN_ORG = "Report could not be generated because a referenced game was not found."
+
+
+class ReportInputError(Exception):
+    """One or more of the report's games are not in the report's org."""
+
+
+async def _load_owned_events(db, org_id, game_ids):
+    """Plays for this report, or raise before any other org's rows are read.
+
+    Every referenced game (film or live session) must belong to org_id. The
+    event query is also filtered by org_id, so a mismatched stamp cannot leak
+    into the tendency engine or the report writer.
+    """
+    wanted = []
+    seen = set()
+    for raw in game_ids or []:
+        key = str(raw)
+        if key in seen:
+            continue
+        seen.add(key)
+        wanted.append(raw)
+    if not wanted:
+        return []
+    try:
+        owned = (await db.execute(
+            select(Game.id).where(
+                Game.id.in_(wanted),
+                Game.organization_id == org_id,
+            )
+        )).scalars().all()
+    except (DataError, StatementError):
+        await db.rollback()
+        raise ReportInputError(GAME_NOT_IN_ORG)
+    if {str(g) for g in owned} != seen:
+        raise ReportInputError(GAME_NOT_IN_ORG)
+    return (await db.execute(
+        select(Event).where(
+            Event.game_id.in_(wanted),
+            Event.organization_id == org_id,
+        )
+    )).scalars().all()
 
 
 def _apply_event_filter(events, flt):
@@ -93,11 +140,16 @@ class ReportsWorker(BaseWorker):
                 raise ValueError(f"Report {report_id} not found")
             org_id, title = report.organization_id, report.title
             sport, report_type, is_trial = report.sport, report.report_type, report.is_trial
+            game_ids = list(report.game_ids or [])
 
-            events_result = await db.execute(
-                select(Event).where(Event.game_id.in_(report.game_ids))
-            )
-            events = events_result.scalars().all()
+            # Refuse before any play, session, or film row from another org is
+            # loaded. A direct-inserted cross-org job fails the same way as one
+            # the API would have rejected. Data never reaches the model.
+            try:
+                events = await _load_owned_events(db, org_id, game_ids)
+            except ReportInputError as e:
+                await self._mark_failed(report_id, org_id, title, e)
+                raise
 
             # Live Game Play Logger (migration 037): an optional per-report filter
             # scopes a halftime report to first-half plays only. Absent/NULL for
@@ -121,7 +173,11 @@ class ReportsWorker(BaseWorker):
                 prior_game_count = len(prior_ids)
                 if prior_ids:
                     se = await db.execute(
-                        select(Event).where(Event.game_id.in_(prior_ids), Event.event_type == "play")
+                        select(Event).where(
+                            Event.game_id.in_(prior_ids),
+                            Event.organization_id == org_id,
+                            Event.event_type == "play",
+                        )
                     )
                     season_events = se.scalars().all()
 

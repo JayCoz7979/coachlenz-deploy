@@ -1,3 +1,4 @@
+import logging
 import resend
 from backend.config import settings
 
@@ -254,4 +255,130 @@ async def send_privacy_request_resolution(to: str, name: str, subject: str, mess
             f"<p style='color:#666;font-size:12px'>Powered by "
             f"<a href='https://cosbyaisolutions.com'>Cosby AI Solutions</a></p>"
         ),
+    })
+
+
+# ── Free Halftime Sheet PDF (double opt-in lead form on /live-tracker) ─────────
+# OUTBOUND SAFETY: these two sends are the only lead emails. They go out ONLY when a
+# human has set LEAD_EMAIL_LIVE_SEND=true, or the recipient is on LEAD_EMAIL_ALLOWLIST
+# (QA inboxes). Default is allowlist-only, so staging never emails a real coach.
+# No SMS anywhere; the optional phone number is never used for sending.
+
+def lead_email_allowed(to: str) -> bool:
+    if settings.LEAD_EMAIL_LIVE_SEND:
+        return True
+    addr = (to or "").strip().lower()
+    domain = "@" + addr.rsplit("@", 1)[-1] if "@" in addr else ""
+    for entry in (settings.LEAD_EMAIL_ALLOWLIST or "").split(","):
+        e = entry.strip().lower()
+        if e and (e == addr or (e.startswith("@") and e == domain)):
+            return True
+    return False
+
+
+class LeadEmailNotConfigured(RuntimeError):
+    """A required compliance setting is missing, so no lead email is sent (fail closed)."""
+
+
+def lead_unsubscribe_links(unsubscribe_token: str) -> tuple:
+    """(page_url, one_click_url) for a lead's signed unsubscribe token.
+
+    page_url is the human link in the footer (frontend page with a button).
+    one_click_url is what List-Unsubscribe points at; mail clients POST
+    'List-Unsubscribe=One-Click' to it (RFC 8058)."""
+    from urllib.parse import quote
+    api = (settings.PUBLIC_API_URL or "").strip().rstrip("/")
+    if not api:
+        raise LeadEmailNotConfigured("PUBLIC_API_URL is not set; lead email not sent")
+    tok = quote(unsubscribe_token or "", safe="")
+    base = (settings.LEAD_CONFIRM_BASE_URL or APP_BASE).rstrip("/")
+    return (f"{base}/live-tracker/halftime-sheet/unsubscribe?token={tok}",
+            f"{api}/leads/halftime-sheet/unsubscribe?token={tok}")
+
+
+def lead_compliance(unsubscribe_token: str) -> tuple:
+    """(footer_html, headers) every lead email must carry: a working unsubscribe link,
+    List-Unsubscribe + List-Unsubscribe-Post headers, and the postal address.
+    Raises LeadEmailNotConfigured when COMPANY_POSTAL_ADDRESS or PUBLIC_API_URL is
+    unset, so the caller sends nothing."""
+    import html as _html
+    address = (settings.COMPANY_POSTAL_ADDRESS or "").strip()
+    if not address:
+        raise LeadEmailNotConfigured("COMPANY_POSTAL_ADDRESS is not set; lead email not sent")
+    if not (unsubscribe_token or "").strip():
+        raise LeadEmailNotConfigured("no unsubscribe token; lead email not sent")
+    page_url, one_click_url = lead_unsubscribe_links(unsubscribe_token)
+    footer = (
+        f"<hr style='border:none;border-top:1px solid #ddd;margin:20px 0 10px'/>"
+        f"<p style='color:#666;font-size:12px'>You are getting this because you asked for the "
+        f"CoachLenz Halftime Sheet PDF. "
+        f"<a href='{_html.escape(page_url, quote=True)}'>Unsubscribe</a> from CoachLenz emails "
+        f"about it.</p>"
+        f"<p style='color:#666;font-size:12px'>CoachLenz, {_html.escape(address)}</p>"
+    )
+    headers = {
+        "List-Unsubscribe": f"<{one_click_url}>",
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    }
+    return footer, headers
+
+
+def _lead_send(payload: dict) -> bool:
+    """Send via Resend if allowed. Returns False (and sends nothing) when suppressed.
+    Raises on a real provider failure so the caller can report it honestly."""
+    to = payload["to"]
+    if not lead_email_allowed(to):
+        logging.getLogger(__name__).info(
+            "[halftime_leads] outbound suppressed (LEAD_EMAIL_LIVE_SEND off, recipient not on allowlist)")
+        return False
+    if not settings.RESEND_API_KEY:
+        raise RuntimeError("email provider not configured")
+    resend.Emails.send(payload)
+    return True
+
+
+async def send_halftime_confirm_email(to: str, name: str, confirm_url: str, unsubscribe_token: str) -> bool:
+    import html as _html
+    footer, headers = lead_compliance(unsubscribe_token)     # fail closed before anything else
+    first = _html.escape((name or "Coach").split(" ")[0])
+    url = _html.escape(confirm_url, quote=True)
+    return _lead_send({
+        "from": FROM,
+        "to": to,
+        "subject": "Confirm your email to get the Halftime Sheet PDF",
+        "html": (
+            f"<p>Hi {first},</p>"
+            f"<p>Click below to confirm your email. As soon as you do, we will email you the "
+            f"printable CoachLenz Halftime Sheet PDF.</p>"
+            f"<p><a href='{url}' style='display:inline-block;padding:12px 20px;background:#d4a017;"
+            f"color:#1c1c1c;font-weight:700;border-radius:8px;text-decoration:none'>Confirm my email</a></p>"
+            f"<p style='color:#666;font-size:13px'>This link works once and expires in 24 hours. "
+            f"If you did not ask for this, ignore this email and nothing else will be sent.</p>"
+            f"<p>Powered by <a href='https://cosbyaisolutions.com'>Cosby AI Solutions</a></p>"
+            f"{footer}"
+        ),
+        "headers": headers,
+    })
+
+
+async def send_halftime_pdf_email(to: str, name: str, pdf: bytes, filename: str, unsubscribe_token: str) -> bool:
+    import html as _html
+    footer, headers = lead_compliance(unsubscribe_token)     # fail closed before anything else
+    first = _html.escape((name or "Coach").split(" ")[0])
+    base = _html.escape((settings.LEAD_CONFIRM_BASE_URL or APP_BASE).rstrip("/"), quote=True)
+    return _lead_send({
+        "from": FROM,
+        "to": to,
+        "subject": "Your CoachLenz Halftime Sheet (printable PDF)",
+        "html": (
+            f"<p>Hi {first},</p>"
+            f"<p>Thanks for confirming. Your printable Halftime Sheet is attached. Print it, chart "
+            f"the first half on the sideline, and fill in the Halftime Sheet box at the break.</p>"
+            f"<p>Want it on your phone instead? The Live Tracker charts the game live and builds "
+            f"the Halftime Sheet for you: <a href='{base}/live-tracker'>{base}/live-tracker</a></p>"
+            f"<p>Powered by <a href='https://cosbyaisolutions.com'>Cosby AI Solutions</a></p>"
+            f"{footer}"
+        ),
+        "headers": headers,
+        "attachments": [{"filename": filename, "content": list(pdf), "content_type": "application/pdf"}],
     })

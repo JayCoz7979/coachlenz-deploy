@@ -34,6 +34,14 @@ class Organization(Base):
     learning_loop_manual = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     # Channel attribution: the source this account came from, captured at signup.
     signup_source = Column(String)
+    # $7 one-time Live Tracker unlock (migration 066). NULL = not purchased; the /live
+    # gate refuses. Set once by the Stripe webhook after a PAID Checkout Session.
+    live_tracker_purchased_at = Column(DateTime(timezone=True), nullable=True)
+    live_tracker_checkout_session_id = Column(String, nullable=True)
+    # The org's one open $7 Checkout Session (migration 068). Reused while Stripe still
+    # reports it open so two tabs cannot each start (and pay) their own session.
+    live_tracker_open_session_id = Column(String, nullable=True)
+    live_tracker_open_session_expires_at = Column(DateTime(timezone=True), nullable=True)
     referral_code = Column(String, unique=True)
     referred_by_org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"))
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
